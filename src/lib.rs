@@ -18,5 +18,5 @@ pub fn run(path: &str) {
 	//println!("{:?}", file.bodies);
 	println!("{:?}", file.bodies.len());
 
-	validator::validate(&file, 4);
+	validator::validate(&file, 7);
 }

@@ -1,6 +1,6 @@
 use std::ops::{Index, IndexMut};
 
-use wasmparser::{Type, Operator};
+use wasmparser::{Type, Operator, BrTable};
 
 use None as Unknown;
 
@@ -178,6 +178,10 @@ impl<'a> Validator<'a> {
 	pub fn pop_ctrl(&mut self) -> ControlFrame<'a> {
 		self.control_stack.pop(&mut self.value_stack)
 	}
+
+	pub fn mark_unreachable(&mut self) {
+		self.control_stack.mark_unreachable(&mut self.value_stack);
+	}
 }
 
 pub fn validate(wasm_file: &WasmFile, func: usize) {
@@ -197,13 +201,35 @@ pub fn validate(wasm_file: &WasmFile, func: usize) {
 
 		match op {
 			Operator::I32Const { .. } => validator.push_value(Type::I32),
+			Operator::I32Eqz { .. } => validator.push_pop_values(&[Type::I32], &[Type::I32]),
 			Operator::I32Add { .. } |
+			Operator::I32Sub { .. } |
+			Operator::I32Mul { .. } |
+			Operator::I32DivS { .. } |
+			Operator::I32DivU { .. } |
+			Operator::I32RemS { .. } |
+			Operator::I32RemU { .. } |
+			Operator::I32Shl { .. } |
+			Operator::I32ShrS { .. } |
+			Operator::I32ShrU { .. } |
+			Operator::I32Xor { .. } |
+			Operator::I32And { .. } |
+			Operator::I32Or { .. } |
 			Operator::I32GtS { .. } |
 			Operator::I32GtU { .. } |
 			Operator::I32LtS { .. } |
 			Operator::I32LtU { .. } |
-			Operator::I32Eq {.. } => validator.push_pop_values(&[Type::I32, Type::I32], &[Type::I32]),
-			Operator::I32Load { .. } => validator.push_pop_values(&[Type::I32], &[Type::I32]),
+			Operator::I32LeS { .. } |
+			Operator::I32LeU { .. } |
+			Operator::I32GeS { .. } |
+			Operator::I32GeU { .. } |
+			Operator::I32Eq {.. } |
+			Operator::I32Ne { .. } => validator.push_pop_values(&[Type::I32, Type::I32], &[Type::I32]),
+			Operator::I32Load { .. } |
+			Operator::I32Load16U { .. } |
+			Operator::I32Load16S { .. } |
+			Operator::I32Load8U { .. } |
+			Operator::I32Load8S { .. } => validator.push_pop_values(&[Type::I32], &[Type::I32]),
 			Operator::I32Store { .. } |
 			Operator::I32Store16 { .. } |
 			Operator::I32Store8 { .. } => { validator.pop_values(&[Type::I32, Type::I32]); }
@@ -214,6 +240,20 @@ pub fn validate(wasm_file: &WasmFile, func: usize) {
 			Operator::LocalTee { local_index } => {
 				let ty = locals[*local_index as usize];
 				validator.push_pop_values(&[ty], &[ty]);
+			}
+			Operator::Select => {
+				validator.pop_value_ty(Some(Type::I32));
+				let t = validator.pop_value().unwrap();
+				validator.pop_value_ty(Some(t));
+				validator.push_value(t);
+			}
+			Operator::Drop => {
+				validator.pop_value();
+			}
+			&Operator::Call { function_index } => {
+				let called_ty = wasm_file.func_type(function_index as usize);
+				validator.pop_values(&called_ty.params);
+				validator.push_values(&called_ty.returns);
 			}
 			Operator::Block { ty } => {
 				let start_types = wasm_file.types.start_types(*ty);
@@ -228,6 +268,27 @@ pub fn validate(wasm_file: &WasmFile, func: usize) {
 			Operator::End => {
 				let frame = validator.pop_ctrl();
 				validator.push_values(&frame.end_types);
+			}
+			&Operator::Br { relative_depth } => {
+				let label_types = validator.control_stack[TopIndex(relative_depth as usize)].label_types().to_owned();
+				validator.pop_values(&label_types);
+				validator.mark_unreachable();
+			}
+			Operator::BrTable { table } => {
+				validator.pop_value_ty(Some(Type::I32));
+
+				let default_label_types = validator.control_stack[TopIndex(table.default() as usize)].label_types().to_owned();
+				let arity = default_label_types.len();
+
+				for arm in table.targets() {
+					let arm = arm.unwrap();
+					let arm_label_types = validator.control_stack[TopIndex(arm as usize)].label_types().to_owned();
+					assert_eq!(arm_label_types.len(), arity);
+					validator.push_pop_values(&arm_label_types, &arm_label_types);
+				}
+
+				validator.pop_values(&default_label_types);
+				validator.mark_unreachable();
 			}
 			&Operator::BrIf { relative_depth } => {
 				validator.pop_value_ty(Some(Type::I32));
