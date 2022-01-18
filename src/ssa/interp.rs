@@ -132,6 +132,19 @@ impl SsaInterpreter {
 				var_context.insert(dst.into_untyped(), result);
 			}
 
+			fn do_unaryop(dst: TypedSsaVar, src: TypedSsaVar, var_context: &mut VarContext, f: impl FnOnce(i32) -> i32, g: impl FnOnce(i64) -> i64) {
+				let s = var_context.get_typed(src).expect("src was uninit");
+
+				let result = match s {
+					TypedValue::I32(s) => TypedValue::I32(f(s)),
+					TypedValue::I64(s) => TypedValue::I64(g(s)),
+				};
+
+				assert_eq!(dst.ty(), result.ty());
+
+				var_context.insert(dst.into_untyped(), result);
+			}
+
 			match &block.body[pc.instr] {
 				&super::SsaInstr::I32Set(dst, val) => {
 					assert_eq!(dst.ty(), Type::I32);
@@ -168,6 +181,11 @@ impl SsaInterpreter {
 				super::SsaInstr::LeU(_, _, _) => todo!(),
 				super::SsaInstr::Eq(_, _, _) => todo!(),
 				super::SsaInstr::Ne(_, _, _) => todo!(),
+
+				&super::SsaInstr::Popcnt(dst, src) => do_unaryop(dst, src, &mut self.var_context, |a| a.count_ones() as i32, |a| a.count_ones() as i64),
+				// TODO: Determine behavior when it is entirely zeros
+				&super::SsaInstr::Clz(dst, src) => do_unaryop(dst, src, &mut self.var_context, |a| a.leading_zeros() as i32, |a| a.leading_zeros() as i64),
+				&super::SsaInstr::Ctz(dst, src) => do_unaryop(dst, src, &mut self.var_context, |a| a.trailing_zeros() as i32, |a| a.trailing_zeros() as i64),
 
 				super::SsaInstr::Eqz(_, _) => todo!(),
 

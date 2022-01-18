@@ -106,6 +106,12 @@ pub enum SsaInstr {
 	Eq(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	Ne(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 
+	// unary instructions: dst, src
+
+	Popcnt(TypedSsaVar, TypedSsaVar),
+	Clz(TypedSsaVar, TypedSsaVar),
+	Ctz(TypedSsaVar, TypedSsaVar),
+
 	// test instructions: dst, src
 
 	Eqz(TypedSsaVar, TypedSsaVar),
@@ -178,6 +184,10 @@ impl SsaInstr {
 			SsaInstr::Eq(_, lhs, rhs) |
 			SsaInstr::Ne(_, lhs, rhs) => vec![*lhs, *rhs],
 
+			SsaInstr::Popcnt(_, src) |
+			SsaInstr::Clz(_, src) |
+			SsaInstr::Ctz(_, src) => vec![*src],
+
 			SsaInstr::Eqz(_, src) => vec![*src],
 
 			SsaInstr::Load(_, _, addr) | 
@@ -229,6 +239,10 @@ impl SsaInstr {
 			SsaInstr::LeU(dst, _, _) |
 			SsaInstr::Eq(dst, _, _) |
 			SsaInstr::Ne(dst, _, _) => vec![*dst],
+
+			SsaInstr::Popcnt(dst, _) |
+			SsaInstr::Clz(dst, _) |
+			SsaInstr::Ctz(dst, _) => vec![*dst],
 
 			SsaInstr::Eqz(dst, _) => vec![*dst],
 
