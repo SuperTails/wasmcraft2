@@ -345,7 +345,7 @@ fn make_params(builder: &mut SsaFuncBuilder, validator: &mut Validator, t: &[Typ
 	}
 }
 
-pub fn validate(wasm_file: &WasmFile, func: usize) {
+pub fn validate(wasm_file: &WasmFile, func: usize) -> Vec<(BlockId, SsaBasicBlock)> {
 	let func_ty = wasm_file.func_type(func);
 	let func_body = wasm_file.func_body(func);
 	let locals = wasm_file.func_locals(func);
@@ -425,6 +425,11 @@ pub fn validate(wasm_file: &WasmFile, func: usize) {
 				builder.current_block_mut().body.push(SsaInstr::I32Set(var, value));
 				validator.push_value(var);
 			},
+			&Operator::I64Const { value } => {
+				let var = alloc.new_i64();
+				builder.current_block_mut().body.push(SsaInstr::I64Set(var, value));
+				validator.push_value(var);
+			}
 
 			Operator::I32Eqz => {
 				let src = validator.pop_value_ty(Type::I32.into()).unwrap();
@@ -664,6 +669,8 @@ pub fn validate(wasm_file: &WasmFile, func: usize) {
 				builder.finish_block(SsaTerminator::BranchIf { cond, true_target, false_target });
 				builder.set_block(next_block);
 			}
+
+			Operator::Nop => {},
 			_ => todo!("{:?}", op),
 		}
 	}
@@ -685,4 +692,6 @@ pub fn validate(wasm_file: &WasmFile, func: usize) {
 		}
 		println!("{:?}\n", block.term);
 	}
+
+	blocks
 }

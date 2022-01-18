@@ -216,11 +216,17 @@ pub struct WasmFile<'a> {
 impl<'a> WasmFile<'a> {
     pub fn func_body(&self, func_idx: usize) -> &FunctionBody<'a> {
         let import_count = self.imports.func_imports.len();
-        if func_idx < import_count {
+        if !self.func_is_defined(func_idx) {
             panic!("tried to get the body of an imported function ({})", func_idx)
         } else {
             &self.bodies[func_idx - import_count]
         }
+    }
+
+    pub fn func_is_defined(&self, func_idx: usize) -> bool {
+        let import_count = self.imports.func_imports.len();
+        assert!(func_idx <= import_count + self.bodies.len());
+        func_idx >= import_count
     }
 
     pub fn func_type_idx(&self, func_idx: usize) -> u32 {
