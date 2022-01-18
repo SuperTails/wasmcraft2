@@ -1,5 +1,6 @@
 mod wasm_file;
 mod validator;
+mod ssa;
 
 pub fn run(path: &str) {
 	let bytes = std::fs::read(path).unwrap();
@@ -18,7 +19,7 @@ pub fn run(path: &str) {
 	//println!("{:?}", file.bodies);
 	println!("{:?}", file.bodies.len());
 
-	for i in 6..=6 {
+	for i in 5..=5 {
 		validator::validate(&file, i);
 	}
 }

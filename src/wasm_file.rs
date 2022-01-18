@@ -1,4 +1,4 @@
-use wasmparser::{Data, DataKind, Element, Export, FuncType, Global, GlobalType, Import, ImportSectionEntryType, MemoryType, Operator, Parser, Payload, TableType, Type, TypeDef, TypeOrFuncType};
+use wasmparser::{Data, Element, Export, FuncType, Global, Import, ImportSectionEntryType, MemoryType, Operator, Parser, Payload, TableType, Type, TypeDef, TypeOrFuncType};
 
 #[derive(Debug)]
 pub struct DataList<'a> {
