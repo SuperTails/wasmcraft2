@@ -172,6 +172,15 @@ impl ControlStack {
 		top.unreachable = true;
 	}
 
+	pub fn reachable(&self) -> bool {
+		if let Some(top) = self.top() {
+			!top.unreachable
+		} else {
+			true
+		}
+	}
+
+
 	pub fn top(&self) -> Option<&ControlFrame> {
 		self.0.last()
 	}
@@ -323,6 +332,10 @@ impl Validator {
 	pub fn mark_unreachable(&mut self) {
 		self.control_stack.mark_unreachable(&mut self.value_stack);
 	}
+
+	pub fn reachable(&self) -> bool {
+		self.control_stack.reachable()
+	}
 }
 
 fn make_params(builder: &mut SsaFuncBuilder, validator: &mut Validator, t: &[Type], alloc: &mut SsaVarAlloc) {
@@ -371,61 +384,133 @@ impl ValidationState<'_> {
 			where
 				F: FnOnce(TypedSsaVar, TypedSsaVar, TypedSsaVar) -> SsaInstr
 		{
-			let rhs = validator.pop_value_ty(Type::I32.into()).unwrap();
-			let lhs = validator.pop_value_ty(Type::I32.into()).unwrap();
+			let rhs = validator.pop_value_ty(Type::I32.into());
+			let lhs = validator.pop_value_ty(Type::I32.into());
+
 			let dst = alloc.new_i32();
 			validator.push_value(dst);
-			builder.current_block_mut().body.push(f(dst, lhs, rhs));
+
+			if validator.reachable() {
+				builder.current_block_mut().body.push(f(dst, lhs.unwrap(), rhs.unwrap()));
+			}
+		}
+
+		fn make_i64_binop<F>(f: F, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
+			where
+				F: FnOnce(TypedSsaVar, TypedSsaVar, TypedSsaVar) -> SsaInstr
+		{
+			let rhs = validator.pop_value_ty(Type::I64.into());
+			let lhs = validator.pop_value_ty(Type::I64.into());
+
+			let dst = alloc.new_i64();
+			validator.push_value(dst);
+
+			if validator.reachable() {
+				builder.current_block_mut().body.push(f(dst, lhs.unwrap(), rhs.unwrap()));
+			}
 		}
 
 		fn make_i32_unaryop<F>(f: F, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
 			where
 				F: FnOnce(TypedSsaVar, TypedSsaVar) -> SsaInstr
 		{
-			let src = validator.pop_value_ty(Type::I32.into()).unwrap();
+			let src = validator.pop_value_ty(Type::I32.into());
 			let dst = alloc.new_i32();
 			validator.push_value(dst);
-			builder.current_block_mut().body.push(f(dst, src));
+
+			if validator.reachable() {
+				builder.current_block_mut().body.push(f(dst, src.unwrap()));
+			}
+		}
+
+		fn make_i64_unaryop<F>(f: F, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
+			where
+				F: FnOnce(TypedSsaVar, TypedSsaVar) -> SsaInstr
+		{
+			let src = validator.pop_value_ty(Type::I64.into());
+			let dst = alloc.new_i64();
+			validator.push_value(dst);
+
+			if validator.reachable() {
+				builder.current_block_mut().body.push(f(dst, src.unwrap()));
+			}
 		}
 
 		fn make_i32_load<F>(f: F, memarg: MemoryImmediate, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
 			where
 				F: FnOnce(MemoryImmediate, TypedSsaVar, TypedSsaVar) -> SsaInstr,
 		{
-			let addr = validator.pop_value_ty(Type::I32.into()).unwrap();
+			let addr = validator.pop_value_ty(Type::I32.into());
 			let dst = alloc.new_i32();
 			validator.push_value(dst);
-			builder.current_block_mut().body.push(f(memarg, dst, addr));
+
+			if validator.reachable() {
+				builder.current_block_mut().body.push(f(memarg, dst, addr.unwrap()));
+			}
 		}
 
 		fn make_i64_load<F>(f: F, memarg: MemoryImmediate, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
 			where
 				F: FnOnce(MemoryImmediate, TypedSsaVar, TypedSsaVar) -> SsaInstr,
 		{
-			let addr = validator.pop_value_ty(Type::I32.into()).unwrap();
+			let addr = validator.pop_value_ty(Type::I32.into());
 			let dst = alloc.new_i64();
 			validator.push_value(dst);
-			builder.current_block_mut().body.push(f(memarg, dst, addr));
+			
+			if validator.reachable() {
+				builder.current_block_mut().body.push(f(memarg, dst, addr.unwrap()));
+			}
 		}
 
 		fn make_i32_store<F>(f: F, memarg: MemoryImmediate, builder: &mut SsaFuncBuilder, validator: &mut Validator, _: &mut SsaVarAlloc)
 			where
 				F: FnOnce(MemoryImmediate, TypedSsaVar, TypedSsaVar) -> SsaInstr,
 		{
-			let src = validator.pop_value_ty(Type::I32.into()).unwrap();
-			let addr = validator.pop_value_ty(Type::I32.into()).unwrap();
-			builder.current_block_mut().body.push(f(memarg, src, addr));
+			let src = validator.pop_value_ty(Type::I32.into());
+			let addr = validator.pop_value_ty(Type::I32.into());
+
+			if validator.reachable() {
+				builder.current_block_mut().body.push(f(memarg, src.unwrap(), addr.unwrap()));
+			}
 		}
 
 		fn make_i64_store<F>(f: F, memarg: MemoryImmediate, builder: &mut SsaFuncBuilder, validator: &mut Validator, _: &mut SsaVarAlloc)
 			where
 				F: FnOnce(MemoryImmediate, TypedSsaVar, TypedSsaVar) -> SsaInstr,
 		{
-			let src = validator.pop_value_ty(Type::I64.into()).unwrap();
-			let addr = validator.pop_value_ty(Type::I32.into()).unwrap();
-			builder.current_block_mut().body.push(f(memarg, src, addr));
+			let src = validator.pop_value_ty(Type::I64.into());
+			let addr = validator.pop_value_ty(Type::I32.into());
+
+			if validator.reachable() {
+				builder.current_block_mut().body.push(f(memarg, src.unwrap(), addr.unwrap()));
+			}
 		}
 
+		fn make_i32_extend<F>(f: F, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
+			where
+				F: FnOnce(TypedSsaVar, TypedSsaVar) -> SsaInstr,
+		{
+			let src = validator.pop_value_ty(Type::I32.into());
+			let dst = alloc.new_i32();
+			validator.push_value(dst);
+
+			if validator.reachable() {
+				builder.current_block_mut().body.push(f(dst, src.unwrap()));
+			}
+		}
+
+		fn make_i64_extend<F>(f: F, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
+			where
+				F: FnOnce(TypedSsaVar, TypedSsaVar) -> SsaInstr,
+		{
+			let src = validator.pop_value_ty(Type::I32.into());
+			let dst = alloc.new_i64();
+			validator.push_value(dst);
+
+			if validator.reachable() {
+				builder.current_block_mut().body.push(f(dst, src.unwrap()));
+			}
+		}
 
 		match op {
 			&Operator::I32Const { value } => {
@@ -445,6 +530,7 @@ impl ValidationState<'_> {
 				builder.current_block_mut().body.push(SsaInstr::Eqz(dst, src));
 				validator.push_value(dst);
 			}
+
 			Operator::I32Add => make_i32_binop(SsaInstr::Add, builder, validator, alloc),
 			Operator::I32Sub => make_i32_binop(SsaInstr::Sub, builder, validator, alloc),
 			Operator::I32Mul => make_i32_binop(SsaInstr::Mul, builder, validator, alloc),
@@ -455,13 +541,35 @@ impl ValidationState<'_> {
 			Operator::I32Shl => make_i32_binop(SsaInstr::Shl, builder, validator, alloc),
 			Operator::I32ShrS => make_i32_binop(SsaInstr::ShrS, builder, validator, alloc),
 			Operator::I32ShrU => make_i32_binop(SsaInstr::ShrU, builder, validator, alloc),
+			Operator::I32Rotl => make_i32_binop(SsaInstr::Rotl, builder, validator, alloc),
+			Operator::I32Rotr => make_i32_binop(SsaInstr::Rotr, builder, validator, alloc),
 			Operator::I32Xor => make_i32_binop(SsaInstr::Xor, builder, validator, alloc),
 			Operator::I32And => make_i32_binop(SsaInstr::And, builder, validator, alloc),
 			Operator::I32Or => make_i32_binop(SsaInstr::Or, builder, validator, alloc),
 
+			Operator::I64Add => make_i64_binop(SsaInstr::Add, builder, validator, alloc),
+			Operator::I64Sub => make_i64_binop(SsaInstr::Sub, builder, validator, alloc),
+			Operator::I64Mul => make_i64_binop(SsaInstr::Mul, builder, validator, alloc),
+			Operator::I64DivS => make_i64_binop(SsaInstr::DivS, builder, validator, alloc),
+			Operator::I64DivU => make_i64_binop(SsaInstr::DivU, builder, validator, alloc),
+			Operator::I64RemS => make_i64_binop(SsaInstr::RemS, builder, validator, alloc),
+			Operator::I64RemU => make_i64_binop(SsaInstr::RemU, builder, validator, alloc),
+			Operator::I64Shl => make_i64_binop(SsaInstr::Shl, builder, validator, alloc),
+			Operator::I64ShrS => make_i64_binop(SsaInstr::ShrS, builder, validator, alloc),
+			Operator::I64ShrU => make_i64_binop(SsaInstr::ShrU, builder, validator, alloc),
+			Operator::I64Rotl => make_i64_binop(SsaInstr::Rotl, builder, validator, alloc),
+			Operator::I64Rotr => make_i64_binop(SsaInstr::Rotr, builder, validator, alloc),
+			Operator::I64Xor => make_i64_binop(SsaInstr::Xor, builder, validator, alloc),
+			Operator::I64And => make_i64_binop(SsaInstr::And, builder, validator, alloc),
+			Operator::I64Or => make_i64_binop(SsaInstr::Or, builder, validator, alloc),
+
 			Operator::I32Popcnt => make_i32_unaryop(SsaInstr::Popcnt, builder, validator, alloc),
 			Operator::I32Clz => make_i32_unaryop(SsaInstr::Clz, builder, validator, alloc),
 			Operator::I32Ctz => make_i32_unaryop(SsaInstr::Ctz, builder, validator, alloc),
+
+			Operator::I64Popcnt => make_i64_unaryop(SsaInstr::Popcnt, builder, validator, alloc),
+			Operator::I64Clz => make_i64_unaryop(SsaInstr::Clz, builder, validator, alloc),
+			Operator::I64Ctz => make_i64_unaryop(SsaInstr::Ctz, builder, validator, alloc),
 
 			Operator::I32GtS => make_i32_binop(SsaInstr::GtS, builder, validator, alloc),
 			Operator::I32GtU => make_i32_binop(SsaInstr::GtU, builder, validator, alloc),
@@ -473,6 +581,13 @@ impl ValidationState<'_> {
 			Operator::I32LeU => make_i32_binop(SsaInstr::LeU, builder, validator, alloc),
 			Operator::I32Eq => make_i32_binop(SsaInstr::Eq, builder, validator, alloc),
 			Operator::I32Ne => make_i32_binop(SsaInstr::Ne, builder, validator, alloc),
+
+			Operator::I32Extend8S => make_i32_extend(SsaInstr::Extend8S, builder, validator, alloc),
+			Operator::I32Extend16S => make_i32_extend(SsaInstr::Extend16S, builder, validator, alloc),
+
+			Operator::I64Extend8S => make_i64_extend(SsaInstr::Extend8S, builder, validator, alloc),
+			Operator::I64Extend16S => make_i64_extend(SsaInstr::Extend16S, builder, validator, alloc),
+			Operator::I64Extend32S => make_i64_extend(SsaInstr::Extend32S, builder, validator, alloc),
 
 			&Operator::I32Load { memarg } => make_i32_load(SsaInstr::Load, memarg, builder, validator, alloc),
 			&Operator::I32Load16S { memarg } => make_i32_load(SsaInstr::Load16S, memarg, builder, validator, alloc),
@@ -596,15 +711,19 @@ impl ValidationState<'_> {
 			Operator::End => {
 				let (end_vals, frame) = validator.pop_ctrl();
 
-				let end_vals = end_vals.into_iter().map(|v| v.unwrap()).collect::<Vec<_>>();
-
 				match frame.operator {
 					ControlOp::Loop(_) => {
 						validator.push_values(&end_vals);
 					},
 					ControlOp::Block(label) => {
-						let target = JumpTarget { label, params: end_vals.clone() };
-						builder.finish_block(SsaTerminator::Jump(target));
+						if validator.reachable() {
+							let end_vals = end_vals.iter().map(|v| v.unwrap()).collect::<Vec<_>>();
+							let target = JumpTarget { label, params: end_vals };
+							builder.finish_block(SsaTerminator::Jump(target));
+						} else {
+							builder.finish_block(SsaTerminator::Unreachable);
+						}
+
 						builder.set_block(label);
 
 						validator.push_values(&end_vals);
@@ -613,8 +732,14 @@ impl ValidationState<'_> {
 					}
 					ControlOp::If { false_label: _, next_label: _ } => unreachable!(),
 					ControlOp::Else { next_label } => {
-						let target = JumpTarget { label: next_label, params: end_vals.clone() };
-						builder.finish_block(SsaTerminator::Jump(target));
+						if validator.reachable() {
+							let end_vals = end_vals.iter().map(|v| v.unwrap()).collect::<Vec<_>>();
+							let target = JumpTarget { label: next_label, params: end_vals };
+							builder.finish_block(SsaTerminator::Jump(target));
+						} else {
+							builder.finish_block(SsaTerminator::Unreachable);
+						}
+
 						builder.set_block(next_label);
 
 						validator.push_values(&end_vals);
@@ -735,7 +860,8 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> Vec<(BlockId, SsaBasicBloc
 
 	assert_eq!(state.builder.current_block, 1);
 
-	state.builder.finish_block(SsaTerminator::Return);
+	let return_vals = state.validator.value_stack.0.iter().map(|v| v.unwrap()).collect();
+	state.builder.finish_block(SsaTerminator::Return(return_vals));
 
 	println!("{:?}", func_ty);
 	println!("{:?}", state.validator.control_stack);

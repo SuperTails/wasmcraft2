@@ -89,6 +89,8 @@ pub enum SsaInstr {
 	Shl(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	ShrS(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	ShrU(TypedSsaVar, TypedSsaVar, TypedSsaVar),
+	Rotl(TypedSsaVar, TypedSsaVar, TypedSsaVar),
+	Rotr(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	Xor(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	And(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	Or(TypedSsaVar, TypedSsaVar, TypedSsaVar),
@@ -138,6 +140,15 @@ pub enum SsaInstr {
 	LocalSet(u32, TypedSsaVar),
 	LocalGet(TypedSsaVar, u32),
 
+	// conversion ops: dst, src
+
+	Extend8S(TypedSsaVar, TypedSsaVar),
+	//Extend8U(TypedSsaVar, TypedSsaVar),
+	Extend16S(TypedSsaVar, TypedSsaVar),
+	//Extend16U(TypedSsaVar, TypedSsaVar),
+	Extend32S(TypedSsaVar, TypedSsaVar),
+	//Extend32U(TypedSsaVar, TypedSsaVar),
+
 	// misc instructions
 
 	Select {
@@ -170,6 +181,8 @@ impl SsaInstr {
 			SsaInstr::Shl(_, lhs, rhs) |
 			SsaInstr::ShrS(_, lhs, rhs) |
 			SsaInstr::ShrU(_, lhs, rhs) |
+			SsaInstr::Rotl(_, lhs, rhs) |
+			SsaInstr::Rotr(_, lhs, rhs) |
 			SsaInstr::Xor(_, lhs, rhs) |
 			SsaInstr::And(_, lhs, rhs) |
 			SsaInstr::Or(_, lhs, rhs) |
@@ -206,6 +219,10 @@ impl SsaInstr {
 			SsaInstr::LocalSet(_, src) => vec![*src],
 			SsaInstr::LocalGet(_, _) => vec![], 
 
+			SsaInstr::Extend8S(_, src) |
+			SsaInstr::Extend16S(_, src) |
+			SsaInstr::Extend32S(_, src) => vec![*src],
+
 			SsaInstr::Select { dst: _, true_var, false_var, cond } => vec![*true_var, *false_var, *cond],
 			SsaInstr::Call { function_index: _, params, returns: _ } => params.clone(),
 		}
@@ -226,6 +243,8 @@ impl SsaInstr {
 			SsaInstr::Shl(dst, _, _) |
 			SsaInstr::ShrS(dst, _, _) |
 			SsaInstr::ShrU(dst, _, _) |
+			SsaInstr::Rotl(dst, _, _) |
+			SsaInstr::Rotr(dst, _, _) |
 			SsaInstr::Xor(dst, _, _) |
 			SsaInstr::And(dst, _, _) |
 			SsaInstr::Or(dst, _, _) |
@@ -262,6 +281,10 @@ impl SsaInstr {
 			SsaInstr::LocalSet(_, _) => vec![],
 			SsaInstr::LocalGet(dst, _) => vec![*dst], 
 
+			SsaInstr::Extend8S(dst, _) |
+			SsaInstr::Extend16S(dst, _) |
+			SsaInstr::Extend32S(dst, _) => vec![*dst],
+
 			SsaInstr::Select { dst, true_var: _, false_var: _, cond: _ } => vec![*dst],
 			SsaInstr::Call { function_index: _, params: _, returns } => returns.clone(),
 		}
@@ -280,6 +303,6 @@ pub enum SsaTerminator {
 	Jump(JumpTarget),
 	BranchIf { cond: TypedSsaVar, true_target: JumpTarget, false_target: JumpTarget },
 	BranchTable { cond: TypedSsaVar, default: JumpTarget, arms: Vec<JumpTarget> },
-	Return,
+	Return(Vec<TypedSsaVar>),
 }
 

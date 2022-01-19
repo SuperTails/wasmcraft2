@@ -1,4 +1,4 @@
-use wasmparser::{Data, Element, Export, FuncType, Global, Import, ImportSectionEntryType, MemoryType, Operator, Parser, Payload, TableType, Type, TypeDef, TypeOrFuncType};
+use wasmparser::{Data, Element, Export, FuncType, Global, Import, ImportSectionEntryType, MemoryType, Operator, Parser, Payload, TableType, Type, TypeDef, TypeOrFuncType, ExternalKind};
 
 #[derive(Debug)]
 pub struct DataList<'a> {
@@ -88,33 +88,40 @@ impl<'a> ImportList<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ExportList<'a> {
     pub exports: Vec<Export<'a>>,
 }
 
 impl<'a> ExportList<'a> {
     pub fn new() -> Self {
-        ExportList {
-            exports: Vec::new(),
-        }
+        Self::default()
     }
 
     pub fn add_export(&mut self, export: Export<'a>) {
         self.exports.push(export);
     }
+
+    pub fn find_func(&self, name: &str) -> Option<usize> {
+        for export in self.exports.iter() {
+            if export.field == name {
+                assert!(matches!(export.kind, ExternalKind::Function));
+                return Some(export.index as usize);
+            }
+        }
+
+        None
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MemoryList {
     pub memory: Vec<MemoryType>,
 }
 
 impl MemoryList {
     pub fn new() -> Self {
-        MemoryList {
-            memory: Vec::new()
-        }
+        Default::default()
     }
 
     pub fn add_memory(&mut self, memory: MemoryType) {
@@ -252,6 +259,10 @@ impl<'a> WasmFile<'a> {
         }
 
         result
+    }
+
+    pub fn find_func(&self, name: &str) -> Option<usize> {
+        self.exports.find_func(name)
     }
 }
 
