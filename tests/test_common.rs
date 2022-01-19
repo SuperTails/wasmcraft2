@@ -5,6 +5,7 @@ pub mod wasm_suite_prelude {
 	use std::collections::HashMap;
 
 	use wasm_runner::{wasm_file::WasmFile, ssa::{interp::{SsaInterpreter, TypedValue}, BlockId, SsaBasicBlock}, validator};
+use wasmparser::{InitExpr, Operator};
 
 	use super::sexpr::SExpr;
 
@@ -14,48 +15,83 @@ pub mod wasm_suite_prelude {
 		interp: SsaInterpreter
 	}
 
+	pub fn eval_init_expr(init_expr: &InitExpr) -> Vec<TypedValue> {
+		let ops = init_expr.get_operators_reader().into_iter().map(|o| o.unwrap()).collect::<Vec<_>>();
+
+		match &ops[..] {
+			&[Operator::I32Const { value }, Operator::End] => {
+				vec![TypedValue::I32(value)]
+			}
+			ops => todo!("{:?}", ops)
+		}
+	}
+
+	pub fn eval_init_expr_single(init_expr: &InitExpr) -> TypedValue {
+		let result = eval_init_expr(init_expr);
+		assert_eq!(result.len(), 1);
+		result.into_iter().next().unwrap()
+	}
+
+	pub fn eval(expr: &SExpr, test_state: Option<&mut TestState>) -> Vec<TypedValue> {
+		match expr {
+			SExpr::Node { name, params } if name == "invoke" => {
+				let test_state = test_state.unwrap();
+				
+				let func_name = &params[0];
+				let func_params = &params[1..];
+
+				let func_name = if let SExpr::String(s) = func_name {
+					&**s
+				} else {
+					panic!()
+				};
+
+				let func_params = func_params.iter().map(|p| eval_single(p, Some(test_state))).collect::<Vec<_>>();
+
+				let func_idx = test_state.wasm_file.find_func(func_name).unwrap();
+
+				test_state.interp.call(func_idx, func_params);
+
+				test_state.interp.run_until_halted()
+			}
+			SExpr::Node { name, params } if name == "i32.const" => {
+				if let [SExpr::Int(i)] = &params[..] {
+					vec![TypedValue::I32((*i) as i32)]
+				} else {
+					panic!()
+				}
+			}
+			SExpr::Node { name, params } if name == "i64.const" => {
+				if let [SExpr::Int(i)] = &params[..] {
+					vec![TypedValue::I64(*i)]
+				} else {
+					panic!()
+				}
+			}
+			_ => todo!("{:?}", expr)
+		}
+	}
+
+	pub fn eval_single(expr: &SExpr, test_state: Option<&mut TestState>) -> TypedValue {
+		let values = eval(expr, test_state);
+
+		assert_eq!(values.len(), 1);
+
+		values.into_iter().next().unwrap()
+	}
+
 	impl<'a> TestState<'a> {
 		pub fn eval(&mut self, expr: &SExpr) -> Vec<TypedValue> {
-			match expr {
-				SExpr::Node { name, params } if name == "invoke" => {
-					let func_name = &params[0];
-					let func_params = &params[1..];
-
-					let func_name = if let SExpr::String(s) = func_name {
-						&**s
-					} else {
-						panic!()
-					};
-
-					let func_params = func_params.iter().map(|p| self.eval_single(p)).collect::<Vec<_>>();
-
-					let func_idx = self.wasm_file.find_func(func_name).unwrap();
-
-					self.interp.call(func_idx, func_params);
-
-					self.interp.run_until_halted()
-				}
-				SExpr::Node { name, params } if name == "i32.const" => {
-					if let [SExpr::Int(i)] = &params[..] {
-						vec![TypedValue::I32((*i) as i32)]
-					} else {
-						panic!()
-					}
-				}
-				_ => todo!("{:?}", expr)
-			}
-
+			eval(expr, Some(self))
 		}
 
 		pub fn eval_single(&mut self, expr: &SExpr) -> TypedValue {
-			let values = self.eval(expr);
-
-			assert_eq!(values.len(), 1);
-
-			values.into_iter().next().unwrap()
+			eval_single(expr, Some(self))
 		}
 
 		pub fn run_check(&mut self, arg: &str) {
+			println!("\n{}", arg);
+
 			let arg: SExpr = arg.parse().unwrap();
 
 			match arg {
@@ -91,7 +127,13 @@ pub mod wasm_suite_prelude {
 			}
 		}
 
-		let interp = SsaInterpreter::new(local_types, blocks);
+		let globals = wasm_file.globals().iter().map(|global| {
+			let val = eval_init_expr_single(&global.init_expr);
+			assert_eq!(val.ty(), global.ty.content_type);
+			val
+		}).collect();
+
+		let interp = SsaInterpreter::new(local_types, globals, &wasm_file.memory.memory, blocks);
 
 		TestState { wasm_file, interp }
 	}

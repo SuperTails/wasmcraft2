@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use wasmparser::Type;
+use wasmparser::{Type, MemoryType};
 
 use crate::ssa::TypedSsaVar;
 
@@ -124,16 +124,41 @@ impl VarContext {
 	}	
 }
 
+struct Memory {
+	data: Vec<u8>,
+	maximum: Option<usize>,
+}
+
+impl Memory {
+	pub fn new(initial: usize, maximum: Option<usize>) -> Memory {
+		Memory {
+			data: vec![0; 65536 * initial],
+			maximum,
+		}
+	}
+}
+
 pub struct SsaInterpreter {
 	local_types: HashMap<usize, Vec<Type>>,
+	globals: Vec<TypedValue>,
+	memory: Vec<Memory>,
 	program: HashMap<BlockId, SsaBasicBlock>,
 	call_stack: CallStack,
 }
 
 impl SsaInterpreter {
-	pub fn new(local_types: HashMap<usize, Vec<Type>>, program: HashMap<BlockId, SsaBasicBlock>) -> Self {
+	pub fn new(local_types: HashMap<usize, Vec<Type>>, globals: Vec<TypedValue>, memory: &[MemoryType], program: HashMap<BlockId, SsaBasicBlock>) -> Self {
+		let memory = memory.iter().map(|mem_ty| {
+			assert!(!mem_ty.memory64);
+			assert!(!mem_ty.shared);
+
+			Memory::new(mem_ty.initial as usize, mem_ty.maximum.map(|m| m as usize))
+		}).collect();
+
 		Self {
 			local_types,
+			globals,
+			memory,
 			program,
 			call_stack: CallStack(Vec::new()),
 		}
@@ -184,7 +209,30 @@ impl SsaInterpreter {
 
 					None
 				}
-				super::SsaTerminator::BranchIf { cond, true_target, false_target } => todo!(),
+				super::SsaTerminator::BranchIf { cond, true_target, false_target } => {
+					assert_eq!(cond.ty(), Type::I32);
+					let cond = frame.var_context.get(cond.into_untyped()).unwrap();
+					let cond = if let TypedValue::I32(cond) = cond {
+						cond
+					} else {
+						panic!()
+					};
+
+					let target = if cond != 0 { true_target } else { false_target };
+
+					let target_block = self.program.get(&target.label).unwrap();
+					assert_eq!(target_block.params.len(), target.params.len());
+					for (&dst, &src) in target_block.params.iter().zip(target.params.iter()) {
+						assert_eq!(dst.ty(), src.ty());
+
+						let val = frame.var_context.get_typed(src).unwrap();
+						frame.var_context.insert(dst.into_untyped(), val);
+					}
+
+					frame.pc = Pc { block: target.label, instr: 0 };
+
+					None
+				}
 				super::SsaTerminator::BranchTable { cond, default, arms } => todo!(),
 				super::SsaTerminator::Return(values) => {
 					let return_vals = values.iter().map(|v| frame.var_context.get_typed(*v).unwrap()).collect::<Vec<_>>();
@@ -308,9 +356,9 @@ impl SsaInterpreter {
 				&super::SsaInstr::GtS(dst, lhs, rhs) => do_compare_op(dst, lhs, rhs, &mut frame.var_context, |a, b| a > b, |a, b| a > b),
 				&super::SsaInstr::GtU(dst, lhs, rhs) => do_compare_op(dst, lhs, rhs, &mut frame.var_context, |a, b| (a as u32) > (b as u32), |a, b| (a as u64) > (b as u64)),
 				&super::SsaInstr::GeS(dst, lhs, rhs) => do_compare_op(dst, lhs, rhs, &mut frame.var_context, |a, b| a >= b, |a, b| a >= b),
-				&super::SsaInstr::GeU(dst, lhs, rhs) => do_compare_op(dst, lhs, rhs, &mut frame.var_context, |a, b| (a as u32) >= (b as u32), |a, b| (a as u32) >= (b as u32)),
+				&super::SsaInstr::GeU(dst, lhs, rhs) => do_compare_op(dst, lhs, rhs, &mut frame.var_context, |a, b| (a as u32) >= (b as u32), |a, b| (a as u64) >= (b as u64)),
 				&super::SsaInstr::LtS(dst, lhs, rhs) => do_compare_op(dst, lhs, rhs, &mut frame.var_context, |a, b| a < b, |a, b| a < b),
-				&super::SsaInstr::LtU(dst, lhs, rhs) => do_compare_op(dst, lhs, rhs, &mut frame.var_context, |a, b| (a as u32) < (b as u32), |a, b| (a as u32) < (b as u32)),
+				&super::SsaInstr::LtU(dst, lhs, rhs) => do_compare_op(dst, lhs, rhs, &mut frame.var_context, |a, b| (a as u32) < (b as u32), |a, b| (a as u64) < (b as u64)),
 				&super::SsaInstr::LeS(dst, lhs, rhs) => do_compare_op(dst, lhs, rhs, &mut frame.var_context, |a, b| a <= b, |a, b| a <= b),
 				&super::SsaInstr::LeU(dst, lhs, rhs) => do_compare_op(dst, lhs, rhs, &mut frame.var_context, |a, b| (a as u32) <= (b as u32), |a, b| (a as u64) <= (b as u64)),
 				&super::SsaInstr::Eq(dst, lhs, rhs) => do_compare_op(dst, lhs, rhs, &mut frame.var_context, |a, b| a == b, |a, b| a == b),
@@ -321,8 +369,18 @@ impl SsaInterpreter {
 				&super::SsaInstr::Clz(dst, src) => do_unaryop(dst, src, &mut frame.var_context, |a| a.leading_zeros() as i32, |a| a.leading_zeros() as i64),
 				&super::SsaInstr::Ctz(dst, src) => do_unaryop(dst, src, &mut frame.var_context, |a| a.trailing_zeros() as i32, |a| a.trailing_zeros() as i64),
 
-				&super::SsaInstr::Eqz(dst, src) => do_unaryop(dst, src, &mut frame.var_context, |a| (a == 0) as i32, |a| (a == 0) as i64),
+				&super::SsaInstr::Eqz(dst, src) => {
+					assert_eq!(dst.ty(), Type::I32);
 
+					match frame.var_context.get_typed(src).unwrap() {
+						TypedValue::I32(s) => {
+							frame.var_context.insert(dst.into_untyped(), TypedValue::I32((s == 0) as i32));
+						}
+						TypedValue::I64(s) => {
+							frame.var_context.insert(dst.into_untyped(), TypedValue::I32((s == 0) as i32));
+						}
+					}
+				}
 				super::SsaInstr::Load(_, _, _) => todo!(),
 				super::SsaInstr::Load32S(_, _, _) => todo!(),
 				super::SsaInstr::Load32U(_, _, _) => todo!(),
@@ -334,6 +392,18 @@ impl SsaInterpreter {
 				super::SsaInstr::Store32(_, _, _) => todo!(),
 				super::SsaInstr::Store16(_, _, _) => todo!(),
 				super::SsaInstr::Store8(_, _, _) => todo!(),
+
+				&super::SsaInstr::GlobalSet(dst, src) => {
+					let src = frame.var_context.get_typed(src).unwrap();
+					let dst = &mut self.globals[dst as usize];
+					assert_eq!(dst.ty(), src.ty());
+					*dst = src;
+				}
+				&super::SsaInstr::GlobalGet(dst, src) => {
+					let src = self.globals[src as usize];
+					assert_eq!(dst.ty(), src.ty());
+					frame.var_context.insert(dst.into_untyped(), src);
+				}
 
 				&super::SsaInstr::LocalSet(dst, src) => {
 					let src = frame.var_context.get_typed(src).unwrap();
@@ -347,12 +417,45 @@ impl SsaInterpreter {
 					frame.var_context.insert(dst.into_untyped(), *src);
 				}
 
-				&super::SsaInstr::Extend8S(dst, src) => do_i32_cvtop(dst, src, &mut frame.var_context, |a| a as i8 as i32, |a| a as i8 as i64),
-				&super::SsaInstr::Extend16S(dst, src) => do_i32_cvtop(dst, src, &mut frame.var_context, |a| a as i16 as i32, |a| a as i16 as i64),
-				&super::SsaInstr::Extend32S(dst, src) => do_i32_cvtop(dst, src, &mut frame.var_context, |_| panic!(), |a| a as i64),
+				&super::SsaInstr::Extend8S(dst, src) => do_unaryop(dst, src, &mut frame.var_context, |a| a as i8 as i32, |a| a as i8 as i64),
+				&super::SsaInstr::Extend16S(dst, src) => do_unaryop(dst, src, &mut frame.var_context, |a| a as i16 as i32, |a| a as i16 as i64),
+				&super::SsaInstr::Extend32S(dst, src) => do_unaryop(dst, src, &mut frame.var_context, |_| panic!(), |a| a as i32 as i64),
+
+				&super::SsaInstr::Wrap(dst, src) => {
+					let src = frame.var_context.get_typed(src).unwrap();
+					if let TypedValue::I64(src) = src {
+						assert_eq!(dst.ty(), Type::I32);
+						frame.var_context.insert(dst.into_untyped(), TypedValue::I32(src as i32));
+					} else {
+						panic!()
+					};
+				}
 
 				super::SsaInstr::Select { dst, true_var, false_var, cond } => todo!(),
-				super::SsaInstr::Call { function_index, params, returns } => todo!(),
+				super::SsaInstr::Call { function_index, params, returns } => {
+					incr_pc = false;
+
+					let block = BlockId { func: *function_index as usize, block: 0 };
+
+					let local_tys = self.local_types.get(&(*function_index as usize)).unwrap();
+
+					let mut new_frame = CallFrame::new(block, local_tys, Some(returns.clone()));
+
+					assert!(new_frame.locals.len() >= params.len());
+
+					for (local, param) in new_frame.locals.iter_mut().zip(params.iter()) {
+						assert_eq!(local.ty(), param.ty());
+						let param = frame.var_context.get(param.into_untyped()).unwrap();
+						assert_eq!(local.ty(), param.ty());
+						*local = param;
+					}
+
+					self.call_stack.incr(&self.program);
+
+					self.call_stack.0.push(new_frame);
+				}
+
+				super::SsaInstr::CallIndirect { .. } => todo!(),
 			}
 
 			if incr_pc {

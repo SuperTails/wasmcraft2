@@ -33,12 +33,31 @@ impl From<TypedSsaVar> for UncertainVar {
 	}
 }
 
+impl From<UncertainVar> for Option<TypedSsaVar> {
+	fn from(v: UncertainVar) -> Self {
+		match v {
+			UncertainVar::Unknown => None,
+			UncertainVar::Known(v) => Some(v),
+		}
+	}
+}
+
 use UncertainVar::Unknown as UnknownVar;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UncertainType {
 	Unknown,
 	Known(Type),
+}
+
+impl UncertainType {
+	pub fn matches(self, other: UncertainType) -> bool {
+		if let (UncertainType::Known(lhs), UncertainType::Known(rhs)) = (self, other) {
+			lhs == rhs
+		} else {
+			true
+		}
+	}
 }
 
 use UncertainType::Unknown as UnknownType;
@@ -93,11 +112,11 @@ impl ValueStack {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ControlOp {
 	Loop(BlockId),
 	Block(BlockId),
-	If { false_label: BlockId, next_label: BlockId },
+	If { start_vars: Vec<UncertainVar>, false_label: BlockId, next_label: BlockId },
 	Else { next_label: BlockId },
 }
 
@@ -106,7 +125,7 @@ impl ControlOp {
 		match self {
 			ControlOp::Loop(l) => *l,
 			ControlOp::Block(l) => *l,
-			ControlOp::If { false_label: _, next_label } => *next_label,
+			ControlOp::If { start_vars, false_label: _, next_label } => *next_label,
 			ControlOp::Else { next_label } => *next_label,
 		}
 	}
@@ -137,12 +156,10 @@ struct TopIndex(usize);
 struct ControlStack(Vec<ControlFrame>);
 
 impl ControlStack {
-	pub fn push(&mut self, operator: ControlOp, start_vars: &[TypedSsaVar], end_types: Box<[Type]>, value_stack: &mut ValueStack) {
+	pub fn push(&mut self, operator: ControlOp, start_vars: &[UncertainVar], start_types: Box<[Type]>, end_types: Box<[Type]>, value_stack: &mut ValueStack) {
 		let height = value_stack.0.len();
 
 		value_stack.push_many(start_vars);
-
-		let start_types = start_vars.iter().map(|v| v.ty()).collect();
 
 		let frame = ControlFrame {
 			operator,
@@ -321,8 +338,8 @@ impl Validator {
 		self.value_stack.pop_many(tys, &self.control_stack)
 	}
 	
-	pub fn push_ctrl(&mut self, operator: ControlOp, start_vars: &[TypedSsaVar], end_types: Box<[Type]>) {
-		self.control_stack.push(operator, start_vars, end_types, &mut self.value_stack);
+	pub fn push_ctrl(&mut self, operator: ControlOp, start_vars: &[UncertainVar], start_types: Box<[Type]>, end_types: Box<[Type]>) {
+		self.control_stack.push(operator, start_vars, start_types, end_types, &mut self.value_stack);
 	}
 
 	pub fn pop_ctrl(&mut self) -> (Vec<UncertainVar>, ControlFrame) {
@@ -348,7 +365,7 @@ fn make_params(builder: &mut SsaFuncBuilder, validator: &mut Validator, t: &[Typ
 	let suffix_idx = validator.value_stack.0.len() - t.len();
 	let suffix = &mut validator.value_stack.0[suffix_idx..];
 
-	assert!(suffix.iter().zip(t).all(|(s, t)| s.unwrap().ty() == *t));
+	assert!(suffix.iter().zip(t).all(|(s, t)| s.ty() == UnknownType || s.ty() == (*t).into()));
 
 	validator.pop_values(t);
 	for &ty in t {
@@ -356,6 +373,49 @@ fn make_params(builder: &mut SsaFuncBuilder, validator: &mut Validator, t: &[Typ
 		validator.push_value(val);
 		builder.current_block_mut().params.push(val);
 	}
+}
+
+macro_rules! zip_vars {
+	( $( $opt:ident ),* ) => {
+		zip_vars!( $( $opt , )* )
+	};
+	( $( $opt:ident, )* ) => {
+		match ( $( $opt , )* ) {
+			( $( UncertainVar::Known ( $opt ) , )* ) => Some ( ( $( $opt , )* ) ),
+			_ => None
+		}
+	};
+}
+
+macro_rules! generic_zip_all {
+	( $somevar:path , $nonevar:path , $( $opt:expr ),* ) => {
+		zip_all!( $somevar , $nonevar , $( $opt , )* )
+	};
+	( $somevar:path , $nonevar:path , $( $opt:expr , )* ) => {
+		match ( $( $opt , )* ) {
+			( $( $somevar ( $opt ) )* ) => $somevar ( $( $opt , )* ),
+			_ => $nonevar
+		}
+	};
+}
+
+
+macro_rules! generic_zip_all {
+	( $somevar:path , $nonevar:path , $( $opt:expr ),* ) => {
+		zip_all!( $somevar , $nonevar , $( $opt , )* )
+	};
+	( $somevar:path , $nonevar:path , $( $opt:expr , )* ) => {
+		match ( $( $opt , )* ) {
+			( $( $somevar ( $opt ) )* ) => $somevar ( $( $opt , )* ),
+			_ => $nonevar
+		}
+	};
+}
+
+macro_rules! zip_all {
+	( $($in:tt)* ) => {
+		generic_zip_all!( Some, None, $($in)* )
+	};
 }
 
 struct ValidationState<'a> {
@@ -403,6 +463,21 @@ impl ValidationState<'_> {
 			let lhs = validator.pop_value_ty(Type::I64.into());
 
 			let dst = alloc.new_i64();
+			validator.push_value(dst);
+
+			if validator.reachable() {
+				builder.current_block_mut().body.push(f(dst, lhs.unwrap(), rhs.unwrap()));
+			}
+		}
+
+		fn make_i64_comp<F>(f: F, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
+			where
+				F: FnOnce(TypedSsaVar, TypedSsaVar, TypedSsaVar) -> SsaInstr
+		{
+			let rhs = validator.pop_value_ty(Type::I64.into());
+			let lhs = validator.pop_value_ty(Type::I64.into());
+
+			let dst = alloc.new_i32();
 			validator.push_value(dst);
 
 			if validator.reachable() {
@@ -503,7 +578,7 @@ impl ValidationState<'_> {
 			where
 				F: FnOnce(TypedSsaVar, TypedSsaVar) -> SsaInstr,
 		{
-			let src = validator.pop_value_ty(Type::I32.into());
+			let src = validator.pop_value_ty(Type::I64.into());
 			let dst = alloc.new_i64();
 			validator.push_value(dst);
 
@@ -525,9 +600,19 @@ impl ValidationState<'_> {
 			}
 
 			Operator::I32Eqz => {
-				let src = validator.pop_value_ty(Type::I32.into()).unwrap();
+				let src = validator.pop_value_ty(Type::I32.into());
 				let dst = alloc.new_i32();
-				builder.current_block_mut().body.push(SsaInstr::Eqz(dst, src));
+				if let UncertainVar::Known(src) = src {
+					builder.current_block_mut().body.push(SsaInstr::Eqz(dst, src));
+				}
+				validator.push_value(dst);
+			}
+			Operator::I64Eqz => {
+				let src = validator.pop_value_ty(Type::I64.into());
+				let dst = alloc.new_i32();
+				if let UncertainVar::Known(src) = src {
+					builder.current_block_mut().body.push(SsaInstr::Eqz(dst, src));
+				}
 				validator.push_value(dst);
 			}
 
@@ -582,12 +667,32 @@ impl ValidationState<'_> {
 			Operator::I32Eq => make_i32_binop(SsaInstr::Eq, builder, validator, alloc),
 			Operator::I32Ne => make_i32_binop(SsaInstr::Ne, builder, validator, alloc),
 
+			Operator::I64GtS => make_i64_comp(SsaInstr::GtS, builder, validator, alloc),
+			Operator::I64GtU => make_i64_comp(SsaInstr::GtU, builder, validator, alloc),
+			Operator::I64GeS => make_i64_comp(SsaInstr::GeS, builder, validator, alloc),
+			Operator::I64GeU => make_i64_comp(SsaInstr::GeU, builder, validator, alloc),
+			Operator::I64LtS => make_i64_comp(SsaInstr::LtS, builder, validator, alloc),
+			Operator::I64LtU => make_i64_comp(SsaInstr::LtU, builder, validator, alloc),
+			Operator::I64LeS => make_i64_comp(SsaInstr::LeS, builder, validator, alloc),
+			Operator::I64LeU => make_i64_comp(SsaInstr::LeU, builder, validator, alloc),
+			Operator::I64Eq => make_i64_comp(SsaInstr::Eq, builder, validator, alloc),
+			Operator::I64Ne => make_i64_comp(SsaInstr::Ne, builder, validator, alloc),
+
 			Operator::I32Extend8S => make_i32_extend(SsaInstr::Extend8S, builder, validator, alloc),
 			Operator::I32Extend16S => make_i32_extend(SsaInstr::Extend16S, builder, validator, alloc),
 
 			Operator::I64Extend8S => make_i64_extend(SsaInstr::Extend8S, builder, validator, alloc),
 			Operator::I64Extend16S => make_i64_extend(SsaInstr::Extend16S, builder, validator, alloc),
 			Operator::I64Extend32S => make_i64_extend(SsaInstr::Extend32S, builder, validator, alloc),
+
+			Operator::I32WrapI64 => {
+				let src = validator.pop_value_ty(Type::I64.into());
+				let dst = alloc.new_i32();
+				if let UncertainVar::Known(src) = src {
+					builder.current_block_mut().body.push(SsaInstr::Wrap(dst, src));
+				}
+				validator.push_value(dst);
+			},
 
 			&Operator::I32Load { memarg } => make_i32_load(SsaInstr::Load, memarg, builder, validator, alloc),
 			&Operator::I32Load16S { memarg } => make_i32_load(SsaInstr::Load16S, memarg, builder, validator, alloc),
@@ -612,6 +717,21 @@ impl ValidationState<'_> {
 			&Operator::I64Store16 { memarg } => make_i64_store(SsaInstr::Store16, memarg, builder, validator, alloc),
 			&Operator::I64Store8 { memarg } => make_i64_store(SsaInstr::Store8, memarg, builder, validator, alloc),
 
+			&Operator::GlobalSet { global_index } => {
+				let ty = wasm_file.global(global_index).ty;
+				assert!(ty.mutable);
+				let ty = ty.content_type;
+				let src = validator.pop_value_ty(ty.into());
+				if let UncertainVar::Known(src) = src {
+					builder.current_block_mut().body.push(SsaInstr::GlobalSet(global_index, src));
+				}
+			}
+			&Operator::GlobalGet { global_index } => {
+				let ty = wasm_file.global(global_index).ty.content_type;
+				let dst = alloc.new_typed(ty);
+				builder.current_block_mut().body.push(SsaInstr::GlobalGet(dst, global_index));
+			}
+
 			&Operator::LocalSet { local_index } => {
 				let ty = locals[local_index as usize];
 				let src = validator.pop_value_ty(ty.into()).unwrap();
@@ -625,22 +745,46 @@ impl ValidationState<'_> {
 			}
 			&Operator::LocalTee { local_index } => {
 				let ty = locals[local_index as usize];
-				let src = validator.pop_value_ty(ty.into()).unwrap();
+
+				let src = validator.pop_value_ty(ty.into());
 				validator.push_value(src);
 
-				builder.current_block_mut().body.push(SsaInstr::LocalSet(local_index, src));
+				if let UncertainVar::Known(src) = src {
+					builder.current_block_mut().body.push(SsaInstr::LocalSet(local_index, src));
+				}
+
 				validator.pop_push_values(&[ty], &[src]);
 			}
+			&Operator::TypedSelect { ty } => {
+				let cond = validator.pop_value_ty(Type::I32.into());
+				let false_var = validator.pop_value_ty(ty.into());
+				let true_var = validator.pop_value_ty(ty.into());
+
+				let dst = alloc.new_typed(ty).into();
+
+				if let Some((dst, true_var, false_var, cond)) = zip_vars!(dst, true_var, false_var, cond) {
+					builder.current_block_mut().body.push(SsaInstr::Select { dst, true_var, false_var, cond });
+				}
+
+				validator.push_value(dst);
+			}
 			Operator::Select => {
-				let cond = validator.pop_value_ty(Type::I32.into()).unwrap();
-				let false_var = validator.pop_value().unwrap();
-				let true_var = validator.pop_value().unwrap();
+				let cond = validator.pop_value_ty(Type::I32.into());
+				let false_var = validator.pop_value();
+				let true_var = validator.pop_value();
 
-				assert_eq!(true_var.ty(), false_var.ty());
-				
-				let dst = alloc.new_typed(true_var.ty());
+				assert!(true_var.ty().matches(false_var.ty()));
 
-				builder.current_block_mut().body.push(SsaInstr::Select { dst, true_var, false_var, cond });
+				let dst = if let UncertainType::Known(true_ty) = true_var.ty() {
+					alloc.new_typed(true_ty).into()
+				} else {
+					UnknownVar
+				};
+
+				if let Some((dst, true_var, false_var, cond)) = zip_vars!(dst, true_var, false_var, cond) {
+					builder.current_block_mut().body.push(SsaInstr::Select { dst, true_var, false_var, cond });
+				}
+
 				validator.push_value(dst);
 			}
 			Operator::Drop => {
@@ -650,16 +794,38 @@ impl ValidationState<'_> {
 				let called_ty = wasm_file.func_type(function_index as usize);
 
 				let params = validator.pop_values(&called_ty.params);
-				let params = params.into_iter().map(|p| p.unwrap()).collect::<Vec<_>>();
+				let params = params.into_iter().map(Option::from).collect::<Option<Vec<_>>>();
 				let returns = called_ty.returns.iter().map(|ty| alloc.new_typed(*ty)).collect::<Vec<_>>();
 
 				validator.push_values(&returns);
 
-				builder.current_block_mut().body.push(SsaInstr::Call {
-					function_index,
-					params,
-					returns,
-				});
+				if let Some(params) = params {
+					builder.current_block_mut().body.push(SsaInstr::Call {
+						function_index,
+						params,
+						returns,
+					});
+				}
+			}
+			&Operator::CallIndirect { index, table_index } => {
+				let called_ty = wasm_file.types.func_type(index);
+
+				let table_entry: Option<_> = validator.pop_value_ty(Type::I32.into()).into();
+
+				let params = validator.pop_values(&called_ty.params);
+				let params = params.into_iter().map(Option::from).collect::<Option<Vec<_>>>();
+				let returns = called_ty.returns.iter().map(|ty| alloc.new_typed(*ty)).collect::<Vec<_>>();
+
+				validator.push_values(&returns);
+
+				if let Some((params, table_entry)) = params.zip(table_entry) {
+					builder.current_block_mut().body.push(SsaInstr::CallIndirect {
+						table_index,
+						table_entry,
+						params,
+						returns,
+					});
+				}
 			}
 			Operator::Block { ty } => {
 				let block = builder.alloc_block();
@@ -668,9 +834,9 @@ impl ValidationState<'_> {
 				let end_types = wasm_file.types.end_types(*ty);
 				let control_op = ControlOp::Block(block);
 
-				let start_vals = validator.pop_values(&start_types).into_iter().map(|t| t.unwrap()).collect::<Vec<_>>();
+				let start_vals = validator.pop_values(&start_types);
 
-				validator.push_ctrl(control_op, &start_vals, end_types);
+				validator.push_ctrl(control_op, &start_vals, start_types, end_types);
 			}
 			Operator::Loop { ty } => {
 				let block = builder.alloc_block();
@@ -679,12 +845,18 @@ impl ValidationState<'_> {
 				let end_types = wasm_file.types.end_types(*ty);
 				let control_op = ControlOp::Loop(block);
 
-				let start_vals = validator.pop_values(&start_types).into_iter().map(|t| t.unwrap()).collect::<Vec<_>>();
+				let start_vals = validator.pop_values(&start_types);
+				let start_vals_known = start_vals.iter().copied().map(Option::from).collect::<Option<Vec<_>>>();
 
-				let target = JumpTarget { label: block, params: start_vals.clone() };
+				validator.push_ctrl(control_op, &start_vals, start_types.clone(), end_types);
 
-				validator.push_ctrl(control_op, &start_vals, end_types);
-				builder.finish_block(SsaTerminator::Jump(target));
+				if let Some(start_vals_known) = start_vals_known {
+					let target = JumpTarget { label: block, params: start_vals_known };
+					builder.finish_block(SsaTerminator::Jump(target));
+				} else {
+					builder.finish_block(SsaTerminator::Unreachable);
+				}
+
 				builder.set_block(block);
 
 				make_params(builder, validator, &start_types, alloc);
@@ -694,19 +866,71 @@ impl ValidationState<'_> {
 				self.visit_operator(&Operator::Else);
 			}
 			Operator::If { ty } => {
-				todo!()
+				let start_types = wasm_file.types.start_types(*ty);
+				let end_types = wasm_file.types.end_types(*ty);
+
+				let false_label = builder.alloc_block();
+				let next_label = builder.alloc_block();
+
+				let cond: Option<_> = validator.pop_value_ty(Type::I32.into()).into();
+
+				let start_vars = validator.pop_values(&start_types);
+				let start_vars_known = start_vars.iter().copied().map(Option::from).collect::<Option<Vec<_>>>();
+
+				let control_op = ControlOp::If { start_vars: start_vars.clone(), false_label, next_label };
+
+				validator.push_ctrl(control_op, &start_vars, start_types, end_types);
+
+				if let (Some(cond), Some(start_vars_known)) = (cond, start_vars_known) {
+					let true_label = builder.alloc_block();
+
+					let true_target = JumpTarget {
+						label: true_label,
+						params: start_vars_known.clone(),
+					};
+
+					let false_target = JumpTarget {
+						label: false_label,
+						params: start_vars_known
+					};
+
+					builder.finish_block(SsaTerminator::BranchIf { cond, true_target, false_target });
+					builder.set_block(true_label);
+				} else {
+					let true_label = builder.alloc_block();
+
+					builder.finish_block(SsaTerminator::Unreachable);
+
+					builder.set_block(true_label);
+				}
 			}
 			Operator::Else => {
 				let (end_vals, frame) = validator.pop_ctrl();
 
-				let (false_label, next_label) = if let ControlOp::If { false_label, next_label } = frame.operator {
-					(false_label, next_label)
+				let (start_vars, false_label, next_label) = if let ControlOp::If { start_vars, false_label, next_label } = frame.operator {
+					(start_vars, false_label, next_label)
 				} else {
 					panic!();
 				};
-				assert!(matches!(frame.operator, ControlOp::If { .. }));
 
-				todo!()
+				let end_vals_known = end_vals.iter().copied().map(Option::from).collect::<Option<Vec<_>>>();
+
+				if let Some(end_vals_known) = end_vals_known {
+					let target = JumpTarget {
+						label: next_label,
+						params: end_vals_known,
+					};
+
+					builder.finish_block(SsaTerminator::Jump(target));
+				} else {
+					builder.finish_block(SsaTerminator::Unreachable);
+				}
+
+				let control_op = ControlOp::Else { next_label };
+
+				validator.push_ctrl(control_op, &start_vars, frame.start_types, frame.end_types);
+
+				builder.set_block(false_label);
 			}
 			Operator::End => {
 				let (end_vals, frame) = validator.pop_ctrl();
@@ -716,10 +940,12 @@ impl ValidationState<'_> {
 						validator.push_values(&end_vals);
 					},
 					ControlOp::Block(label) => {
-						if validator.reachable() {
-							let end_vals = end_vals.iter().map(|v| v.unwrap()).collect::<Vec<_>>();
-							let target = JumpTarget { label, params: end_vals };
+						let end_vals_known = end_vals.iter().map(|v| Option::from(*v)).collect::<Option<Vec<TypedSsaVar>>>();
+
+						if let Some(end_vals_known) = end_vals_known {
+							let target = JumpTarget { label, params: end_vals_known };
 							builder.finish_block(SsaTerminator::Jump(target));
+
 						} else {
 							builder.finish_block(SsaTerminator::Unreachable);
 						}
@@ -730,10 +956,10 @@ impl ValidationState<'_> {
 
 						make_params(builder, validator, &frame.end_types, alloc);
 					}
-					ControlOp::If { false_label: _, next_label: _ } => unreachable!(),
+					ControlOp::If { .. } => unreachable!(),
 					ControlOp::Else { next_label } => {
-						if validator.reachable() {
-							let end_vals = end_vals.iter().map(|v| v.unwrap()).collect::<Vec<_>>();
+						let end_vals_known = end_vals.iter().copied().map(Option::from).collect::<Option<Vec<_>>>();
+						if let Some(end_vals) = end_vals_known {
 							let target = JumpTarget { label: next_label, params: end_vals };
 							builder.finish_block(SsaTerminator::Jump(target));
 						} else {
@@ -748,48 +974,62 @@ impl ValidationState<'_> {
 					}
 				}
 			}
+			&Operator::Return => {
+				let depth = validator.control_stack.0.len() - 1;
+				self.visit_operator(&Operator::Br { relative_depth: depth as u32 });
+			}
 			&Operator::Br { relative_depth } => {
 				let target_frame = &validator.control_stack[TopIndex(relative_depth as usize)];
 				let label_types = target_frame.label_types().to_owned();
 				let target_label = target_frame.operator.target_label();
 
-				let label_vals = validator.pop_values(&label_types).into_iter().map(|v| v.unwrap()).collect::<Vec<_>>();
+				let label_vals = validator.pop_values(&label_types).into_iter().map(Option::from).collect::<Option<Vec<_>>>();
+
 				validator.mark_unreachable();
 
-				let target = JumpTarget { label: target_label, params: label_vals };
-
-				builder.finish_block(SsaTerminator::Jump(target));
+				if let Some(label_vals) = label_vals {
+					let target = JumpTarget { label: target_label, params: label_vals };
+					builder.finish_block(SsaTerminator::Jump(target));
+				} else {
+					builder.finish_block(SsaTerminator::Unreachable);
+				}
 
 				let new_block = builder.alloc_block();
 				builder.set_block(new_block);
 			}
 			Operator::BrTable { table } => {
-				let cond = validator.pop_value_ty(Type::I32.into()).unwrap();
+				let cond: Option<_> = validator.pop_value_ty(Type::I32.into()).into();
 
 				let default_frame = &validator.control_stack[TopIndex(table.default() as usize)];
 				let default_label = default_frame.operator.target_label();
 				let default_label_types = default_frame.label_types().to_owned();
 
-				let label_vals = validator.pop_values(&default_label_types).into_iter().map(|v| v.unwrap()).collect::<Vec<_>>();
+				let label_vals = validator.pop_values(&default_label_types).into_iter().map(Option::from).collect::<Option<Vec<_>>>();
 
-				let default = JumpTarget {
-					label: default_label, 
-					params: label_vals.clone()
-				};
+				if let (Some(cond), Some(label_vals)) = (cond, label_vals) {
+					let default = JumpTarget {
+						label: default_label, 
+						params: label_vals.clone()
+					};
 
-				let arms = table.targets().map(|arm| {
-					let arm = arm.unwrap();
-					let arm_frame = &validator.control_stack[TopIndex(arm as usize)];
-					let arm_label_types = arm_frame.label_types();
-					assert_eq!(arm_label_types, default_label_types);
-					let label = arm_frame.operator.target_label();
-					JumpTarget {
-						label,
-						params: label_vals.clone(),
-					}
-				}).collect::<Vec<_>>();
+					let arms = table.targets().map(|arm| {
+						let arm = arm.unwrap();
+						let arm_frame = &validator.control_stack[TopIndex(arm as usize)];
+						let arm_label_types = arm_frame.label_types();
+						assert_eq!(arm_label_types, default_label_types);
+						let label = arm_frame.operator.target_label();
+						JumpTarget {
+							label,
+							params: label_vals.clone(),
+						}
+					}).collect::<Vec<_>>();
 
-				builder.finish_block(SsaTerminator::BranchTable { cond, default, arms });
+					builder.finish_block(SsaTerminator::BranchTable { cond, default, arms });
+				} else {
+					// TODO: Still should do checks here, too
+
+					builder.finish_block(SsaTerminator::Unreachable);
+				}
 
 				validator.mark_unreachable();
 
@@ -801,25 +1041,41 @@ impl ValidationState<'_> {
 				let label_types = target_frame.label_types().to_owned();
 				let true_label = target_frame.operator.target_label();
 
-				let cond = validator.pop_value_ty(Type::I32.into()).unwrap();
+				let cond: Option<_> = validator.pop_value_ty(Type::I32.into()).into();
 
-				let label_vals = validator.pop_values(&label_types).into_iter().map(|v| v.unwrap()).collect::<Vec<_>>();
-				validator.push_values(&label_vals);
+				let label_vals = validator.pop_values(&label_types).into_iter().map(Option::from).collect::<Option<Vec<_>>>();
 
 				let next_block = builder.alloc_block();
 
-				let true_target = JumpTarget {
-					label: true_label,
-					params: label_vals.clone(),
-				};
+				if let (Some(cond), Some(label_vals)) = (cond, label_vals) {
+					validator.push_values(&label_vals);
 
-				let false_target = JumpTarget {
-					label: next_block,
-					params: label_vals,
-				};
+					let true_target = JumpTarget {
+						label: true_label,
+						params: label_vals.clone(),
+					};
 
-				builder.finish_block(SsaTerminator::BranchIf { cond, true_target, false_target });
+					let false_target = JumpTarget {
+						label: next_block,
+						params: label_vals,
+					};
+
+					builder.finish_block(SsaTerminator::BranchIf { cond, true_target, false_target });
+				} else {
+					builder.finish_block(SsaTerminator::Unreachable);
+				}
+
 				builder.set_block(next_block);
+			}
+
+			&Operator::MemoryGrow { mem, mem_byte } => {
+				if mem != 0 || mem_byte != 0 {
+					todo!()
+				}
+
+				// TODO:
+				let _n = validator.pop_value_ty(Type::I32.into());
+				self.visit_operator(&Operator::I32Const { value: -1 });
 			}
 
 			Operator::Nop => {},
@@ -844,7 +1100,7 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> Vec<(BlockId, SsaBasicBloc
 
 	let mut validator = Validator::default();
 
-	validator.push_ctrl(ControlOp::Block(end_block), &[], func_ty.returns.clone());
+	validator.push_ctrl(ControlOp::Block(end_block), &[], Box::new([]), func_ty.returns.clone());
 
 	let mut state = ValidationState {
 		wasm_file,

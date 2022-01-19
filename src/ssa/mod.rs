@@ -137,6 +137,9 @@ pub enum SsaInstr {
 
 	// variable instructions
 
+	GlobalSet(u32, TypedSsaVar),
+	GlobalGet(TypedSsaVar, u32),
+
 	LocalSet(u32, TypedSsaVar),
 	LocalGet(TypedSsaVar, u32),
 
@@ -148,6 +151,8 @@ pub enum SsaInstr {
 	//Extend16U(TypedSsaVar, TypedSsaVar),
 	Extend32S(TypedSsaVar, TypedSsaVar),
 	//Extend32U(TypedSsaVar, TypedSsaVar),
+
+	Wrap(TypedSsaVar, TypedSsaVar),
 
 	// misc instructions
 
@@ -163,6 +168,12 @@ pub enum SsaInstr {
 		params: Vec<TypedSsaVar>,
 		returns: Vec<TypedSsaVar>,
 	},
+	CallIndirect {
+		table_index: u32,
+		table_entry: TypedSsaVar,
+		params: Vec<TypedSsaVar>,
+		returns: Vec<TypedSsaVar>,
+	}
 }
 
 impl SsaInstr {
@@ -216,15 +227,22 @@ impl SsaInstr {
 			SsaInstr::Store16(_, src, addr) |
 			SsaInstr::Store8(_, src, addr) => vec![*src, *addr],
 
+			SsaInstr::GlobalSet(_, src) => vec![*src],
+			SsaInstr::GlobalGet(_, _) => vec![],
+
 			SsaInstr::LocalSet(_, src) => vec![*src],
 			SsaInstr::LocalGet(_, _) => vec![], 
 
 			SsaInstr::Extend8S(_, src) |
 			SsaInstr::Extend16S(_, src) |
-			SsaInstr::Extend32S(_, src) => vec![*src],
+			SsaInstr::Extend32S(_, src) |
+			SsaInstr::Wrap(_, src) => vec![*src],
 
 			SsaInstr::Select { dst: _, true_var, false_var, cond } => vec![*true_var, *false_var, *cond],
 			SsaInstr::Call { function_index: _, params, returns: _ } => params.clone(),
+			SsaInstr::CallIndirect { table_index: _, table_entry, params, returns: _ } => {
+				params.iter().copied().chain(Some(*table_entry)).collect()
+			}
 		}
 	}
 
@@ -278,15 +296,20 @@ impl SsaInstr {
 			SsaInstr::Store16(_, _, _) |
 			SsaInstr::Store8(_, _, _) => vec![],
 
+			SsaInstr::GlobalSet(_, _) => vec![],
+			SsaInstr::GlobalGet(dst, _) => vec![*dst],
+
 			SsaInstr::LocalSet(_, _) => vec![],
 			SsaInstr::LocalGet(dst, _) => vec![*dst], 
 
 			SsaInstr::Extend8S(dst, _) |
 			SsaInstr::Extend16S(dst, _) |
-			SsaInstr::Extend32S(dst, _) => vec![*dst],
+			SsaInstr::Extend32S(dst, _) |
+			SsaInstr::Wrap(dst, _) => vec![*dst],
 
 			SsaInstr::Select { dst, true_var: _, false_var: _, cond: _ } => vec![*dst],
 			SsaInstr::Call { function_index: _, params: _, returns } => returns.clone(),
+			SsaInstr::CallIndirect { returns, .. } => returns.clone(),
 		}
 	}
 }

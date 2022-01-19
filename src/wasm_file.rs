@@ -1,4 +1,4 @@
-use wasmparser::{Data, Element, Export, FuncType, Global, Import, ImportSectionEntryType, MemoryType, Operator, Parser, Payload, TableType, Type, TypeDef, TypeOrFuncType, ExternalKind};
+use wasmparser::{Data, Element, Export, FuncType, Global, Import, ImportSectionEntryType, MemoryType, Operator, Parser, Payload, TableType, Type, TypeDef, TypeOrFuncType, ExternalKind, GlobalType};
 
 #[derive(Debug)]
 pub struct DataList<'a> {
@@ -68,20 +68,32 @@ struct FuncImport<'a> {
     pub ty: u32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct GlobalImport<'a> {
+    pub module: &'a str,
+    pub field: Option<&'a str>,
+    pub content_type: Type,
+    pub mutable: bool,
+}
+
 #[derive(Debug)]
 pub struct ImportList<'a> {
     func_imports: Vec<FuncImport<'a>>,
+    global_imports: Vec<GlobalImport<'a>>,
 }
 
 impl<'a> ImportList<'a> {
     pub fn new() -> Self {
-        ImportList { func_imports: Vec::new() }
+        ImportList { func_imports: Vec::new(), global_imports: Vec::new(), }
     }
 
     pub fn add_import(&mut self, i: Import<'a>) {
         match i.ty {
             ImportSectionEntryType::Function(ty) => {
                 self.func_imports.push(FuncImport { module: i.module, field: i.field, ty })
+            }
+            ImportSectionEntryType::Global(GlobalType { content_type, mutable }) => {
+                self.global_imports.push(GlobalImport { module: i.module, field: i.field, content_type, mutable })
             }
             _ => todo!("{:?}", i),
         }
@@ -263,6 +275,22 @@ impl<'a> WasmFile<'a> {
 
     pub fn find_func(&self, name: &str) -> Option<usize> {
         self.exports.find_func(name)
+    }
+
+    pub fn global(&self, index: u32) -> Global {
+        if !self.imports.global_imports.is_empty() {
+            todo!()
+        }
+
+        self.globals.globals[index as usize]
+    }
+
+    pub fn globals(&self) -> &[Global] {
+        if !self.imports.global_imports.is_empty() {
+            todo!()
+        }
+
+        &self.globals.globals
     }
 }
 
