@@ -358,15 +358,6 @@ impl Validator {
 fn make_params(builder: &mut SsaFuncBuilder, validator: &mut Validator, t: &[Type], alloc: &mut SsaVarAlloc) {
 	assert!(builder.current_block_mut().params.is_empty());
 
-	if validator.value_stack.0.len() < t.len() {
-		panic!("value stack: {:?} params: {:?}", validator.value_stack.0, t);
-	}
-
-	let suffix_idx = validator.value_stack.0.len() - t.len();
-	let suffix = &mut validator.value_stack.0[suffix_idx..];
-
-	assert!(suffix.iter().zip(t).all(|(s, t)| s.ty() == UnknownType || s.ty() == (*t).into()));
-
 	validator.pop_values(t);
 	for &ty in t {
 		let val = alloc.new_typed(ty);
