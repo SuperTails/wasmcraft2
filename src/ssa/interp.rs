@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use wasmparser::{Type, MemoryType};
+use wasmparser::{Type, MemoryType, MemoryImmediate};
 
 use crate::ssa::TypedSsaVar;
 
@@ -82,6 +82,22 @@ impl TypedValue {
 			Self::I64(_) => Type::I64,
 		}
 	}
+
+	pub fn into_i32(self) -> Option<i32> {
+		if let TypedValue::I32(v) = self {
+			Some(v)
+		} else {
+			None
+		}
+	}
+
+	pub fn into_i64(self) -> Option<i64> {
+		if let TypedValue::I64(v) = self {
+			Some(v)
+		} else {
+			None
+		}
+	}
 }
 
 impl From<i32> for TypedValue {
@@ -136,18 +152,34 @@ impl Memory {
 			maximum,
 		}
 	}
+
+	pub fn store(&mut self, addr: usize, bytes: &[u8]) {
+		let dest = &mut self.data[addr..][..bytes.len()];
+		dest.copy_from_slice(bytes);
+	}
+
+	pub fn load(&self, addr: usize, len: usize) -> &[u8] {
+		&self.data[addr..][..len]
+	}
+}
+
+#[derive(Debug)]
+pub struct Table {
+	pub max: Option<usize>,
+	pub elements: Vec<Option<usize>>,
 }
 
 pub struct SsaInterpreter {
 	local_types: HashMap<usize, Vec<Type>>,
 	globals: Vec<TypedValue>,
 	memory: Vec<Memory>,
+	tables: Vec<Table>,
 	program: HashMap<BlockId, SsaBasicBlock>,
 	call_stack: CallStack,
 }
 
 impl SsaInterpreter {
-	pub fn new(local_types: HashMap<usize, Vec<Type>>, globals: Vec<TypedValue>, memory: &[MemoryType], program: HashMap<BlockId, SsaBasicBlock>) -> Self {
+	pub fn new(local_types: HashMap<usize, Vec<Type>>, globals: Vec<TypedValue>, memory: &[MemoryType], tables: Vec<Table>, program: HashMap<BlockId, SsaBasicBlock>) -> Self {
 		let memory = memory.iter().map(|mem_ty| {
 			assert!(!mem_ty.memory64);
 			assert!(!mem_ty.shared);
@@ -159,6 +191,7 @@ impl SsaInterpreter {
 			local_types,
 			globals,
 			memory,
+			tables,
 			program,
 			call_stack: CallStack(Vec::new()),
 		}
@@ -172,7 +205,11 @@ impl SsaInterpreter {
 		let block = BlockId { func, block: 0 };
 
 		let mut frame = CallFrame::new(block, locals, None);
-		frame.locals = params;
+		assert!(frame.locals.len() >= params.len());
+		for (local, param) in frame.locals.iter_mut().zip(params) {
+			assert_eq!(local.ty(), param.ty());
+			*local = param;
+		}
 		self.call_stack = CallStack(vec![frame]);
 	}
 
@@ -210,13 +247,8 @@ impl SsaInterpreter {
 					None
 				}
 				super::SsaTerminator::BranchIf { cond, true_target, false_target } => {
-					assert_eq!(cond.ty(), Type::I32);
-					let cond = frame.var_context.get(cond.into_untyped()).unwrap();
-					let cond = if let TypedValue::I32(cond) = cond {
-						cond
-					} else {
-						panic!()
-					};
+					let cond = frame.var_context.get_typed(*cond).unwrap();
+					let cond = cond.into_i32().unwrap();
 
 					let target = if cond != 0 { true_target } else { false_target };
 
@@ -233,7 +265,29 @@ impl SsaInterpreter {
 
 					None
 				}
-				super::SsaTerminator::BranchTable { cond, default, arms } => todo!(),
+				super::SsaTerminator::BranchTable { cond, default, arms } => {
+					let cond = frame.var_context.get_typed(*cond).unwrap();
+					let cond = cond.into_i32().unwrap() as usize;
+
+					let target = if arms.len() <= cond {
+						default
+					} else {
+						&arms[cond]
+					};
+
+					let target_block = self.program.get(&target.label).unwrap();
+					assert_eq!(target_block.params.len(), target.params.len());
+					for (&dst, &src) in target_block.params.iter().zip(target.params.iter()) {
+						assert_eq!(dst.ty(), src.ty());
+
+						let val = frame.var_context.get_typed(src).unwrap();
+						frame.var_context.insert(dst.into_untyped(), val);
+					}
+
+					frame.pc = Pc { block: target.label, instr: 0 };
+
+					None
+				}
 				super::SsaTerminator::Return(values) => {
 					let return_vals = values.iter().map(|v| frame.var_context.get_typed(*v).unwrap()).collect::<Vec<_>>();
 
@@ -326,6 +380,41 @@ impl SsaInterpreter {
 				var_context.insert(dst.into_untyped(), result);
 			}
 
+			fn do_store_op(memarg: MemoryImmediate, src: TypedSsaVar, addr: TypedSsaVar, size: usize, var_context: &mut VarContext, memory: &mut [Memory]) {
+				let offset = var_context.get_typed(addr).unwrap();
+				let offset = offset.into_i32().unwrap();
+				let addr = memarg.offset as usize + offset as usize;
+
+				let src = var_context.get_typed(src).unwrap();
+
+				let memory = &mut memory[memarg.memory as usize];
+
+				match src {
+					TypedValue::I32(s) => memory.store(addr, &s.to_le_bytes()[..size]),
+					TypedValue::I64(s) => memory.store(addr, &s.to_le_bytes()[..size]),
+				}
+			}
+
+			fn do_load_op(memarg: MemoryImmediate, dst: TypedSsaVar, addr: TypedSsaVar, f: impl FnOnce(i64) -> i32, g: impl FnOnce(i64) -> i64, size: usize, var_context: &mut VarContext, memory: &mut [Memory]) {
+				let offset = var_context.get_typed(addr).unwrap();
+				let offset = offset.into_i32().unwrap();
+				let addr = memarg.offset as usize + offset as usize;
+
+				let memory = &memory[memarg.memory as usize];
+
+				let mut buf = [0; 8];
+				buf[..size].copy_from_slice(memory.load(addr, size));
+				let buf = i64::from_le_bytes(buf);
+
+				let result = match dst.ty() {
+					Type::I32 => TypedValue::I32(f(buf)),
+					Type::I64 => TypedValue::I64(g(buf)),
+					_ => panic!(),
+				};
+
+				var_context.insert(dst.into_untyped(), result);
+			}
+
 			match &block.body[frame.pc.instr] {
 				&super::SsaInstr::I32Set(dst, val) => {
 					assert_eq!(dst.ty(), Type::I32);
@@ -381,17 +470,19 @@ impl SsaInterpreter {
 						}
 					}
 				}
-				super::SsaInstr::Load(_, _, _) => todo!(),
-				super::SsaInstr::Load32S(_, _, _) => todo!(),
-				super::SsaInstr::Load32U(_, _, _) => todo!(),
-				super::SsaInstr::Load16S(_, _, _) => todo!(),
-				super::SsaInstr::Load16U(_, _, _) => todo!(),
-				super::SsaInstr::Load8S(_, _, _) => todo!(),
-				super::SsaInstr::Load8U(_, _, _) => todo!(),
-				super::SsaInstr::Store(_, _, _) => todo!(),
-				super::SsaInstr::Store32(_, _, _) => todo!(),
-				super::SsaInstr::Store16(_, _, _) => todo!(),
-				super::SsaInstr::Store8(_, _, _) => todo!(),
+
+				&super::SsaInstr::Load64(memarg, dst, addr) => do_load_op(memarg, dst, addr, |_| panic!(), |a| a, 8, &mut frame.var_context, &mut self.memory),
+				&super::SsaInstr::Load32S(memarg, dst, addr) => do_load_op(memarg, dst, addr, |a| a as i32, |a| a as i32 as i64, 4, &mut frame.var_context, &mut self.memory),
+				&super::SsaInstr::Load32U(memarg, dst, addr) => do_load_op(memarg, dst, addr, |a| a as u32 as i32, |a| a as u32 as i64, 4, &mut frame.var_context, &mut self.memory),
+				&super::SsaInstr::Load16S(memarg, dst, addr) => do_load_op(memarg, dst, addr, |a| a as i16 as i32, |a| a as i16 as i64, 2, &mut frame.var_context, &mut self.memory),
+				&super::SsaInstr::Load16U(memarg, dst, addr) => do_load_op(memarg, dst, addr, |a| a as u16 as i32, |a| a as u16 as i64, 2, &mut frame.var_context, &mut self.memory),
+				&super::SsaInstr::Load8S(memarg, dst, addr) => do_load_op(memarg, dst, addr, |a| a as i8 as i32, |a| a as i8 as i64, 1, &mut frame.var_context, &mut self.memory),
+				&super::SsaInstr::Load8U(memarg, dst, addr) => do_load_op(memarg, dst, addr, |a| a as u8 as i32, |a| a as u8 as i64, 1, &mut frame.var_context, &mut self.memory),
+
+				&super::SsaInstr::Store64(memarg, src, addr) => do_store_op(memarg, src, addr, 8, &mut frame.var_context, &mut self.memory),
+				&super::SsaInstr::Store32(memarg, src, addr) => do_store_op(memarg, src, addr, 4, &mut frame.var_context, &mut self.memory),
+				&super::SsaInstr::Store16(memarg, src, addr) => do_store_op(memarg, src, addr, 2, &mut frame.var_context, &mut self.memory),
+				&super::SsaInstr::Store8(memarg, src, addr) => do_store_op(memarg, src, addr, 1, &mut frame.var_context, &mut self.memory),
 
 				&super::SsaInstr::GlobalSet(dst, src) => {
 					let src = frame.var_context.get_typed(src).unwrap();
@@ -431,7 +522,23 @@ impl SsaInterpreter {
 					};
 				}
 
-				super::SsaInstr::Select { dst, true_var, false_var, cond } => todo!(),
+				&super::SsaInstr::Select { dst, true_var, false_var, cond } => {
+					let true_val = frame.var_context.get_typed(true_var).unwrap();
+					let false_val = frame.var_context.get_typed(false_var).unwrap();
+					assert_eq!(true_val.ty(), false_val.ty());
+
+					let cond = frame.var_context.get_typed(cond).unwrap();
+					let cond = cond.into_i32().unwrap();
+
+					let val = if cond != 0 {
+						true_val
+					} else {
+						false_val
+					};
+
+					assert_eq!(dst.ty(), val.ty());
+					frame.var_context.insert(dst.into_untyped(), val);
+				}
 				super::SsaInstr::Call { function_index, params, returns } => {
 					incr_pc = false;
 
@@ -454,8 +561,34 @@ impl SsaInterpreter {
 
 					self.call_stack.0.push(new_frame);
 				}
+				super::SsaInstr::CallIndirect { table_index, table_entry, params, returns } => {
+					incr_pc = false;
 
-				super::SsaInstr::CallIndirect { .. } => todo!(),
+					let table_entry = frame.var_context.get_typed(*table_entry).unwrap();
+					let table_entry = table_entry.into_i32().unwrap() as usize;
+
+					let function_index = self.tables[*table_index as usize].elements[table_entry].unwrap();
+
+					let local_tys = self.local_types.get(&(function_index)).unwrap();
+
+					let block = BlockId { func: function_index, block: 0 };
+
+					let mut new_frame = CallFrame::new(block, local_tys, Some(returns.clone()));
+
+					assert!(new_frame.locals.len() >= params.len());
+
+					for (local, param) in new_frame.locals.iter_mut().zip(params.iter()) {
+						assert_eq!(local.ty(), param.ty());
+						let param = frame.var_context.get(param.into_untyped()).unwrap();
+						assert_eq!(local.ty(), param.ty());
+						*local = param;
+					}
+
+					self.call_stack.incr(&self.program);
+
+					self.call_stack.0.push(new_frame);
+
+				}
 			}
 
 			if incr_pc {

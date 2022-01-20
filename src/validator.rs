@@ -125,7 +125,7 @@ impl ControlOp {
 		match self {
 			ControlOp::Loop(l) => *l,
 			ControlOp::Block(l) => *l,
-			ControlOp::If { start_vars, false_label: _, next_label } => *next_label,
+			ControlOp::If { start_vars: _, false_label: _, next_label } => *next_label,
 			ControlOp::Else { next_label } => *next_label,
 		}
 	}
@@ -694,13 +694,13 @@ impl ValidationState<'_> {
 				validator.push_value(dst);
 			},
 
-			&Operator::I32Load { memarg } => make_i32_load(SsaInstr::Load, memarg, builder, validator, alloc),
+			&Operator::I32Load { memarg } => make_i32_load(SsaInstr::Load32S, memarg, builder, validator, alloc),
 			&Operator::I32Load16S { memarg } => make_i32_load(SsaInstr::Load16S, memarg, builder, validator, alloc),
 			&Operator::I32Load16U { memarg } => make_i32_load(SsaInstr::Load16U, memarg, builder, validator, alloc),
 			&Operator::I32Load8U { memarg } => make_i32_load(SsaInstr::Load8U, memarg, builder, validator, alloc),
 			&Operator::I32Load8S { memarg } => make_i32_load(SsaInstr::Load8S, memarg, builder, validator, alloc),
 			
-			&Operator::I64Load { memarg } => make_i64_load(SsaInstr::Load, memarg, builder, validator, alloc),
+			&Operator::I64Load { memarg } => make_i64_load(SsaInstr::Load64, memarg, builder, validator, alloc),
 			&Operator::I64Load32S { memarg } => make_i64_load(SsaInstr::Load32S, memarg, builder, validator, alloc),
 			&Operator::I64Load32U { memarg } => make_i64_load(SsaInstr::Load32U, memarg, builder, validator, alloc),
 			&Operator::I64Load16S { memarg } => make_i64_load(SsaInstr::Load16S, memarg, builder, validator, alloc),
@@ -708,11 +708,11 @@ impl ValidationState<'_> {
 			&Operator::I64Load8S { memarg } => make_i64_load(SsaInstr::Load8S, memarg, builder, validator, alloc),
 			&Operator::I64Load8U { memarg } => make_i64_load(SsaInstr::Load8U, memarg, builder, validator, alloc),
 
-			&Operator::I32Store { memarg } => make_i32_store(SsaInstr::Store, memarg, builder, validator, alloc),
+			&Operator::I32Store { memarg } => make_i32_store(SsaInstr::Store32, memarg, builder, validator, alloc),
 			&Operator::I32Store16 { memarg } => make_i32_store(SsaInstr::Store16, memarg, builder, validator, alloc),
 			&Operator::I32Store8 { memarg } => make_i32_store(SsaInstr::Store8, memarg, builder, validator, alloc),
 
-			&Operator::I64Store { memarg } => make_i64_store(SsaInstr::Store, memarg, builder, validator, alloc),
+			&Operator::I64Store { memarg } => make_i64_store(SsaInstr::Store64, memarg, builder, validator, alloc),
 			&Operator::I64Store32 { memarg } => make_i64_store(SsaInstr::Store32, memarg, builder, validator, alloc),
 			&Operator::I64Store16 { memarg } => make_i64_store(SsaInstr::Store16, memarg, builder, validator, alloc),
 			&Operator::I64Store8 { memarg } => make_i64_store(SsaInstr::Store8, memarg, builder, validator, alloc),
@@ -730,6 +730,7 @@ impl ValidationState<'_> {
 				let ty = wasm_file.global(global_index).ty.content_type;
 				let dst = alloc.new_typed(ty);
 				builder.current_block_mut().body.push(SsaInstr::GlobalGet(dst, global_index));
+				validator.push_value(dst);
 			}
 
 			&Operator::LocalSet { local_index } => {
@@ -861,10 +862,6 @@ impl ValidationState<'_> {
 
 				make_params(builder, validator, &start_types, alloc);
 			}
-			Operator::End if matches!(validator.control_stack.top().unwrap().operator, ControlOp::If { .. }) => {
-				// TODO: Optimize for ifs without an else
-				self.visit_operator(&Operator::Else);
-			}
 			Operator::If { ty } => {
 				let start_types = wasm_file.types.start_types(*ty);
 				let end_types = wasm_file.types.end_types(*ty);
@@ -933,6 +930,15 @@ impl ValidationState<'_> {
 				builder.set_block(false_label);
 			}
 			Operator::End => {
+				if matches!(validator.control_stack.top().unwrap().operator, ControlOp::If { .. }) {
+					// TODO: Optimize for ifs without an else
+					self.visit_operator(&Operator::Else);
+				}
+
+				let validator = &mut self.validator;
+				let builder = &mut self.builder;
+				let alloc = &mut self.alloc;
+
 				let (end_vals, frame) = validator.pop_ctrl();
 
 				match frame.operator {
@@ -1079,6 +1085,9 @@ impl ValidationState<'_> {
 			}
 
 			Operator::Nop => {},
+			Operator::Unreachable => {
+				validator.mark_unreachable();
+			}
 			_ => todo!("{:?}", op),
 		}
 

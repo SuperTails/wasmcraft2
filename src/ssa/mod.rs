@@ -122,7 +122,7 @@ pub enum SsaInstr {
 	// loads: dst, addr
 	// stores: src, addr
 
-	Load(MemoryImmediate, TypedSsaVar, TypedSsaVar),
+	Load64(MemoryImmediate, TypedSsaVar, TypedSsaVar),
 	Load32S(MemoryImmediate, TypedSsaVar, TypedSsaVar),
 	Load32U(MemoryImmediate, TypedSsaVar, TypedSsaVar),
 	Load16S(MemoryImmediate, TypedSsaVar, TypedSsaVar),
@@ -130,7 +130,7 @@ pub enum SsaInstr {
 	Load8S(MemoryImmediate, TypedSsaVar, TypedSsaVar),
 	Load8U(MemoryImmediate, TypedSsaVar, TypedSsaVar),
 
-	Store(MemoryImmediate, TypedSsaVar, TypedSsaVar),
+	Store64(MemoryImmediate, TypedSsaVar, TypedSsaVar),
 	Store32(MemoryImmediate, TypedSsaVar, TypedSsaVar),
 	Store16(MemoryImmediate, TypedSsaVar, TypedSsaVar),
 	Store8(MemoryImmediate, TypedSsaVar, TypedSsaVar),
@@ -214,7 +214,7 @@ impl SsaInstr {
 
 			SsaInstr::Eqz(_, src) => vec![*src],
 
-			SsaInstr::Load(_, _, addr) | 
+			SsaInstr::Load64(_, _, addr) | 
 			SsaInstr::Load32S(_, _, addr) |
 			SsaInstr::Load32U(_, _, addr) |
 			SsaInstr::Load16S(_, _, addr) |
@@ -222,7 +222,7 @@ impl SsaInstr {
 			SsaInstr::Load8S(_, _, addr) |
 			SsaInstr::Load8U(_, _, addr) => vec![*addr],
 
-			SsaInstr::Store(_, src, addr) |
+			SsaInstr::Store64(_, src, addr) |
 			SsaInstr::Store32(_, src, addr) | 
 			SsaInstr::Store16(_, src, addr) |
 			SsaInstr::Store8(_, src, addr) => vec![*src, *addr],
@@ -283,7 +283,7 @@ impl SsaInstr {
 
 			SsaInstr::Eqz(dst, _) => vec![*dst],
 
-			SsaInstr::Load(_, dst, _) |
+			SsaInstr::Load64(_, dst, _) |
 			SsaInstr::Load32S(_, dst, _) |
 			SsaInstr::Load32U(_, dst, _) |
 			SsaInstr::Load16S(_, dst, _) |
@@ -291,7 +291,7 @@ impl SsaInstr {
 			SsaInstr::Load8S(_, dst, _) |
 			SsaInstr::Load8U(_, dst, _) => vec![*dst],
 
-			SsaInstr::Store(_, _, _) |
+			SsaInstr::Store64(_, _, _) |
 			SsaInstr::Store32(_, _, _) |
 			SsaInstr::Store16(_, _, _) |
 			SsaInstr::Store8(_, _, _) => vec![],
