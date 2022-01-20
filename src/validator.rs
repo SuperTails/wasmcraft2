@@ -450,8 +450,8 @@ impl ValidationState<'_> {
 			let dst = alloc.new_i32();
 			validator.push_value(dst);
 
-			if validator.reachable() {
-				builder.current_block_mut().body.push(f(dst, lhs.unwrap(), rhs.unwrap()));
+			if let Some((lhs, rhs)) = zip_vars!(lhs, rhs) {
+				builder.current_block_mut().body.push(f(dst, lhs, rhs));
 			}
 		}
 
@@ -465,8 +465,8 @@ impl ValidationState<'_> {
 			let dst = alloc.new_i64();
 			validator.push_value(dst);
 
-			if validator.reachable() {
-				builder.current_block_mut().body.push(f(dst, lhs.unwrap(), rhs.unwrap()));
+			if let Some((lhs, rhs)) = zip_vars!(lhs, rhs) {
+				builder.current_block_mut().body.push(f(dst, lhs, rhs));
 			}
 		}
 
@@ -493,8 +493,8 @@ impl ValidationState<'_> {
 			let dst = alloc.new_i32();
 			validator.push_value(dst);
 
-			if validator.reachable() {
-				builder.current_block_mut().body.push(f(dst, src.unwrap()));
+			if let Some(src) = src.into() {
+				builder.current_block_mut().body.push(f(dst, src));
 			}
 		}
 
@@ -1072,6 +1072,10 @@ impl ValidationState<'_> {
 				}
 
 				builder.set_block(next_block);
+
+				// TODO: There's only one way to reach this block, so this seems unnecessary,
+				// but the block *has* to have parameters, right...?
+				make_params(builder, validator, &label_types, alloc);
 			}
 
 			&Operator::MemoryGrow { mem, mem_byte } => {
