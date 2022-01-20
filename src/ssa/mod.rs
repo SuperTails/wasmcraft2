@@ -150,7 +150,7 @@ pub enum SsaInstr {
 	Extend16S(TypedSsaVar, TypedSsaVar),
 	//Extend16U(TypedSsaVar, TypedSsaVar),
 	Extend32S(TypedSsaVar, TypedSsaVar),
-	//Extend32U(TypedSsaVar, TypedSsaVar),
+	Extend32U(TypedSsaVar, TypedSsaVar),
 
 	Wrap(TypedSsaVar, TypedSsaVar),
 
@@ -236,6 +236,7 @@ impl SsaInstr {
 			SsaInstr::Extend8S(_, src) |
 			SsaInstr::Extend16S(_, src) |
 			SsaInstr::Extend32S(_, src) |
+			SsaInstr::Extend32U(_, src) |
 			SsaInstr::Wrap(_, src) => vec![*src],
 
 			SsaInstr::Select { dst: _, true_var, false_var, cond } => vec![*true_var, *false_var, *cond],
@@ -305,6 +306,7 @@ impl SsaInstr {
 			SsaInstr::Extend8S(dst, _) |
 			SsaInstr::Extend16S(dst, _) |
 			SsaInstr::Extend32S(dst, _) |
+			SsaInstr::Extend32U(dst, _) |
 			SsaInstr::Wrap(dst, _) => vec![*dst],
 
 			SsaInstr::Select { dst, true_var: _, false_var: _, cond: _ } => vec![*dst],

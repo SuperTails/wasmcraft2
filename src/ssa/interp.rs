@@ -368,6 +368,23 @@ impl SsaInterpreter {
 				var_context.insert(dst.into_untyped(), result);
 			}
 
+			fn do_extend_op(dst: TypedSsaVar, src: TypedSsaVar, var_context: &mut VarContext, f: impl FnOnce(i64) -> i32, g: impl FnOnce(i64) -> i64) {
+				let s = var_context.get_typed(src).expect("src was uninit");
+
+				let s = match s {
+					TypedValue::I32(s) => s as i64,
+					TypedValue::I64(s) => s,
+				};
+
+				let result = match dst.ty() {
+					Type::I32 => TypedValue::I32(f(s)),
+					Type::I64 => TypedValue::I64(g(s)),
+					_ => panic!(),
+				};
+
+				var_context.insert(dst.into_untyped(), result);
+			}
+
 			fn do_i32_cvtop(dst: TypedSsaVar, src: TypedSsaVar, var_context: &mut VarContext, f: impl FnOnce(i32) -> i32, g: impl FnOnce(i32) -> i64) {
 				let s = var_context.get_typed(src).expect("src was uninit");
 
@@ -508,9 +525,10 @@ impl SsaInterpreter {
 					frame.var_context.insert(dst.into_untyped(), *src);
 				}
 
-				&super::SsaInstr::Extend8S(dst, src) => do_unaryop(dst, src, &mut frame.var_context, |a| a as i8 as i32, |a| a as i8 as i64),
-				&super::SsaInstr::Extend16S(dst, src) => do_unaryop(dst, src, &mut frame.var_context, |a| a as i16 as i32, |a| a as i16 as i64),
-				&super::SsaInstr::Extend32S(dst, src) => do_unaryop(dst, src, &mut frame.var_context, |_| panic!(), |a| a as i32 as i64),
+				&super::SsaInstr::Extend8S(dst, src) => do_extend_op(dst, src, &mut frame.var_context, |a| a as i8 as i32, |a| a as i8 as i64),
+				&super::SsaInstr::Extend16S(dst, src) => do_extend_op(dst, src, &mut frame.var_context, |a| a as i16 as i32, |a| a as i16 as i64),
+				&super::SsaInstr::Extend32S(dst, src) => do_extend_op(dst, src, &mut frame.var_context, |_| panic!(), |a| a as i32 as i64),
+				&super::SsaInstr::Extend32U(dst, src) => do_extend_op(dst, src, &mut frame.var_context, |_| panic!(), |a| a as u32 as i64),
 
 				&super::SsaInstr::Wrap(dst, src) => {
 					let src = frame.var_context.get_typed(src).unwrap();

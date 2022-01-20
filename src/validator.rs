@@ -574,11 +574,11 @@ impl ValidationState<'_> {
 			}
 		}
 
-		fn make_i64_extend<F>(f: F, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
+		fn make_i64_extend<F>(f: F, source: Type, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
 			where
 				F: FnOnce(TypedSsaVar, TypedSsaVar) -> SsaInstr,
 		{
-			let src = validator.pop_value_ty(Type::I64.into());
+			let src = validator.pop_value_ty(source.into());
 			let dst = alloc.new_i64();
 			validator.push_value(dst);
 
@@ -681,9 +681,13 @@ impl ValidationState<'_> {
 			Operator::I32Extend8S => make_i32_extend(SsaInstr::Extend8S, builder, validator, alloc),
 			Operator::I32Extend16S => make_i32_extend(SsaInstr::Extend16S, builder, validator, alloc),
 
-			Operator::I64Extend8S => make_i64_extend(SsaInstr::Extend8S, builder, validator, alloc),
-			Operator::I64Extend16S => make_i64_extend(SsaInstr::Extend16S, builder, validator, alloc),
-			Operator::I64Extend32S => make_i64_extend(SsaInstr::Extend32S, builder, validator, alloc),
+			Operator::I64Extend8S => make_i64_extend(SsaInstr::Extend8S, Type::I64, builder, validator, alloc),
+			Operator::I64Extend16S => make_i64_extend(SsaInstr::Extend16S, Type::I64, builder, validator, alloc),
+			Operator::I64Extend32S => make_i64_extend(SsaInstr::Extend32S, Type::I64, builder, validator, alloc),
+
+			Operator::I64ExtendI32S => make_i64_extend(SsaInstr::Extend32S, Type::I32, builder, validator, alloc),
+			Operator::I64ExtendI32U => make_i64_extend(SsaInstr::Extend32U, Type::I32, builder, validator, alloc),
+			
 
 			Operator::I32WrapI64 => {
 				let src = validator.pop_value_ty(Type::I64.into());
