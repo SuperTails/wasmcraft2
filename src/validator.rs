@@ -730,8 +730,10 @@ impl ValidationState<'_> {
 
 			&Operator::LocalSet { local_index } => {
 				let ty = locals[local_index as usize];
-				let src = validator.pop_value_ty(ty.into()).unwrap();
-				builder.current_block_mut().body.push(SsaInstr::LocalSet(local_index, src));
+				let src = validator.pop_value_ty(ty.into());
+				if let UncertainVar::Known(src) = src {
+					builder.current_block_mut().body.push(SsaInstr::LocalSet(local_index, src));
+				}
 			}
 			&Operator::LocalGet { local_index } => {
 				let ty = locals[local_index as usize];
@@ -867,23 +869,22 @@ impl ValidationState<'_> {
 				let cond: Option<_> = validator.pop_value_ty(Type::I32.into()).into();
 
 				let start_vars = validator.pop_values(&start_types);
-				let start_vars_known = start_vars.iter().copied().map(Option::from).collect::<Option<Vec<_>>>();
 
 				let control_op = ControlOp::If { start_vars: start_vars.clone(), false_label, next_label };
 
 				validator.push_ctrl(control_op, &start_vars, start_types, end_types);
 
-				if let (Some(cond), Some(start_vars_known)) = (cond, start_vars_known) {
+				if let Some(cond) = cond {
 					let true_label = builder.alloc_block();
 
 					let true_target = JumpTarget {
 						label: true_label,
-						params: start_vars_known.clone(),
+						params: Vec::new(),
 					};
 
 					let false_target = JumpTarget {
 						label: false_label,
-						params: start_vars_known
+						params: Vec::new(), 
 					};
 
 					builder.finish_block(SsaTerminator::BranchIf { cond, true_target, false_target });
@@ -1140,6 +1141,10 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> Vec<(BlockId, SsaBasicBloc
 		}
 		println!("{:?}\n", block.term);
 	}
+
+	/*if state.func == 39 {
+		panic!();
+	}*/
 
 	blocks
 }
