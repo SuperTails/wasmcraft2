@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use wasmparser::{Type, MemoryType, MemoryImmediate};
+use wasmparser::{Type, MemoryImmediate};
 
 use crate::ssa::TypedSsaVar;
 
-use super::{BlockId, SsaBasicBlock, SsaVar};
+use super::{BlockId, SsaBasicBlock, SsaVar, SsaProgram, Memory, Table};
 
 #[derive(Debug)]
 pub struct Pc {
@@ -140,35 +140,6 @@ impl VarContext {
 	}	
 }
 
-struct Memory {
-	data: Vec<u8>,
-	maximum: Option<usize>,
-}
-
-impl Memory {
-	pub fn new(initial: usize, maximum: Option<usize>) -> Memory {
-		Memory {
-			data: vec![0; 65536 * initial],
-			maximum,
-		}
-	}
-
-	pub fn store(&mut self, addr: usize, bytes: &[u8]) {
-		let dest = &mut self.data[addr..][..bytes.len()];
-		dest.copy_from_slice(bytes);
-	}
-
-	pub fn load(&self, addr: usize, len: usize) -> &[u8] {
-		&self.data[addr..][..len]
-	}
-}
-
-#[derive(Debug)]
-pub struct Table {
-	pub max: Option<usize>,
-	pub elements: Vec<Option<usize>>,
-}
-
 pub struct SsaInterpreter {
 	local_types: HashMap<usize, Vec<Type>>,
 	globals: Vec<TypedValue>,
@@ -179,20 +150,15 @@ pub struct SsaInterpreter {
 }
 
 impl SsaInterpreter {
-	pub fn new(local_types: HashMap<usize, Vec<Type>>, globals: Vec<TypedValue>, memory: &[MemoryType], tables: Vec<Table>, program: HashMap<BlockId, SsaBasicBlock>) -> Self {
-		let memory = memory.iter().map(|mem_ty| {
-			assert!(!mem_ty.memory64);
-			assert!(!mem_ty.shared);
-
-			Memory::new(mem_ty.initial as usize, mem_ty.maximum.map(|m| m as usize))
-		}).collect();
+	pub fn new(program: SsaProgram) -> Self {
+		let code = program.code.into_iter().flat_map(|f| f.0.into_iter()).collect();
 
 		Self {
-			local_types,
-			globals,
-			memory,
-			tables,
-			program,
+			local_types: program.local_types,
+			globals: program.globals,
+			memory: program.memory,
+			tables: program.tables,
+			program: code,
 			call_stack: CallStack(Vec::new()),
 		}
 	}

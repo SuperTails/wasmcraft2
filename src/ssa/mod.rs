@@ -1,6 +1,11 @@
 pub mod interp;
+pub mod lir_emitter;
+
+use std::collections::HashMap;
 
 use wasmparser::{Type, MemoryImmediate};
+
+use self::interp::TypedValue;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct BlockId {
@@ -331,3 +336,41 @@ pub enum SsaTerminator {
 	Return(Vec<TypedSsaVar>),
 }
 
+pub struct SsaFunction(pub Vec<(BlockId, SsaBasicBlock)>);
+
+pub struct SsaProgram {
+	pub local_types: HashMap<usize, Vec<Type>>,
+	pub globals: Vec<TypedValue>,
+	pub memory: Vec<Memory>,
+	pub tables: Vec<Table>,
+	pub code: Vec<SsaFunction>,
+}
+
+pub struct Memory {
+	pub data: Vec<u8>,
+	pub maximum: Option<usize>,
+}
+
+impl Memory {
+	pub fn new(initial: usize, maximum: Option<usize>) -> Memory {
+		Memory {
+			data: vec![0; 65536 * initial],
+			maximum,
+		}
+	}
+
+	pub fn store(&mut self, addr: usize, bytes: &[u8]) {
+		let dest = &mut self.data[addr..][..bytes.len()];
+		dest.copy_from_slice(bytes);
+	}
+
+	pub fn load(&self, addr: usize, len: usize) -> &[u8] {
+		&self.data[addr..][..len]
+	}
+}
+
+#[derive(Debug)]
+pub struct Table {
+	pub max: Option<usize>,
+	pub elements: Vec<Option<usize>>,
+}

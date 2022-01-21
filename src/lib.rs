@@ -1,6 +1,7 @@
 pub mod wasm_file;
 pub mod validator;
 pub mod ssa;
+pub mod lir;
 
 pub fn run(path: &str) {
 	let bytes = std::fs::read(path).unwrap();

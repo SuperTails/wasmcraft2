@@ -1,8 +1,8 @@
-use std::ops::{Index, IndexMut};
+use std::{ops::{Index, IndexMut}, collections::HashMap};
 
-use wasmparser::{Type, Operator, MemoryImmediate};
+use wasmparser::{Type, Operator, MemoryImmediate, DataKind, ElementKind, ElementItem};
 
-use crate::{wasm_file::WasmFile, ssa::{SsaBasicBlock, BlockId, SsaTerminator, TypedSsaVar, SsaInstr, SsaVarAlloc, JumpTarget}};
+use crate::{wasm_file::{WasmFile, eval_init_expr_single}, ssa::{SsaBasicBlock, BlockId, SsaTerminator, TypedSsaVar, SsaInstr, SsaVarAlloc, JumpTarget, SsaProgram, SsaFunction, Memory, Table}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UncertainVar {
@@ -1094,7 +1094,7 @@ impl ValidationState<'_> {
 	}
 }
 
-pub fn validate(wasm_file: &WasmFile, func: usize) -> Vec<(BlockId, SsaBasicBlock)> {
+pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 	let func_ty = wasm_file.func_type(func);
 	let func_body = wasm_file.func_body(func);
 
@@ -1142,9 +1142,95 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> Vec<(BlockId, SsaBasicBloc
 		println!("{:?}\n", block.term);
 	}
 
-	/*if state.func == 39 {
-		panic!();
-	}*/
+	SsaFunction(blocks)
+}
 
-	blocks
+pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {
+	let mut code = Vec::new();
+
+	let mut local_types = HashMap::new();
+
+	for func in 0..wasm_file.functions.functions.len() {
+		if wasm_file.func_is_defined(func) {
+			code.push(validate(wasm_file, func));
+			local_types.insert(func, wasm_file.func_locals(func));
+		}
+	}
+
+	let globals = wasm_file.globals().iter().map(|global| {
+		let val = eval_init_expr_single(&global.init_expr);
+		assert_eq!(val.ty(), global.ty.content_type);
+		val
+	}).collect();
+
+	let mut tables = wasm_file.tables.tables.iter().map(|table_ty| {
+		if table_ty.element_type != Type::FuncRef {
+			todo!()
+		}
+
+		Table {
+			max: table_ty.maximum.map(|m| m as usize),
+			elements: vec![None; table_ty.initial as usize],
+		}
+	}).collect::<Vec<_>>();
+
+	for elem in wasm_file.elements.elements.iter() {
+		if elem.ty != Type::FuncRef {
+			todo!()
+		}
+
+		match elem.kind {
+			ElementKind::Active { table_index, init_expr } => {
+				let table = &mut tables[table_index as usize];
+
+				let offset = eval_init_expr_single(&init_expr);
+				let offset = offset.into_i32().unwrap();
+
+				for (idx, item) in elem.items.get_items_reader().unwrap().into_iter().enumerate() {
+					let item = item.unwrap();
+
+					if let ElementItem::Func(item) = item {
+						let index = idx + offset as usize;
+						assert!(table.elements[index].is_none());
+						table.elements[index] = Some(item as usize);
+					} else {
+						todo!()
+					}
+				}
+			}
+			ElementKind::Passive => todo!(),
+			ElementKind::Declared => todo!(),
+		}
+	}
+
+	let mut memory = wasm_file.memory.memory.iter().map(|mem_ty| {
+		assert!(!mem_ty.memory64);
+		assert!(!mem_ty.shared);
+
+		Memory::new(mem_ty.initial as usize, mem_ty.maximum.map(|m| m as usize))
+	}).collect::<Vec<_>>();
+
+	for data in wasm_file.data.data.iter() {
+		match data.kind {
+			DataKind::Active { memory_index, init_expr } => {
+				let offset = eval_init_expr_single(&init_expr);
+				let offset = offset.into_i32().unwrap();
+
+				let memory = &mut memory[memory_index as usize];
+
+				let slice = &mut memory.data[offset as usize..][..data.data.len()];
+				slice.copy_from_slice(data.data);
+			}
+			DataKind::Passive => todo!(),
+		}
+	}
+
+
+	SsaProgram {
+		local_types,
+		globals,
+		memory,
+		tables,
+		code,
+	}
 }

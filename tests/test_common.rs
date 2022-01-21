@@ -2,10 +2,7 @@
 mod sexpr;
 
 pub mod wasm_suite_prelude {
-	use std::collections::HashMap;
-
-	use wasm_runner::{wasm_file::WasmFile, ssa::{interp::{SsaInterpreter, TypedValue, Table}, BlockId, SsaBasicBlock}, validator};
-use wasmparser::{InitExpr, Operator, ElementKind, Type, ElementItem};
+	use wasm_runner::{wasm_file::WasmFile, ssa::interp::{SsaInterpreter, TypedValue}, validator::wasm_to_ssa};
 
 	use super::sexpr::SExpr;
 
@@ -13,23 +10,6 @@ use wasmparser::{InitExpr, Operator, ElementKind, Type, ElementItem};
 		wasm_file: WasmFile<'a>,
 	
 		interp: SsaInterpreter
-	}
-
-	pub fn eval_init_expr(init_expr: &InitExpr) -> Vec<TypedValue> {
-		let ops = init_expr.get_operators_reader().into_iter().map(|o| o.unwrap()).collect::<Vec<_>>();
-
-		match &ops[..] {
-			&[Operator::I32Const { value }, Operator::End] => {
-				vec![TypedValue::I32(value)]
-			}
-			ops => todo!("{:?}", ops)
-		}
-	}
-
-	pub fn eval_init_expr_single(init_expr: &InitExpr) -> TypedValue {
-		let result = eval_init_expr(init_expr);
-		assert_eq!(result.len(), 1);
-		result.into_iter().next().unwrap()
 	}
 
 	pub fn eval(expr: &SExpr, test_state: Option<&mut TestState>) -> Vec<TypedValue> {
@@ -119,64 +99,9 @@ use wasmparser::{InitExpr, Operator, ElementKind, Type, ElementItem};
 	pub fn load_state(wasm_data: &[u8]) -> TestState {
 		let wasm_file = WasmFile::from(wasm_data);
 
-		let mut blocks = HashMap::new();
+		let program = wasm_to_ssa(&wasm_file);
 
-		let mut local_types = HashMap::new();
-
-		for func in 0..wasm_file.functions.functions.len() {
-			if wasm_file.func_is_defined(func) {
-				blocks.extend(validator::validate(&wasm_file, func));
-				local_types.insert(func, wasm_file.func_locals(func));
-			}
-		}
-
-		let globals = wasm_file.globals().iter().map(|global| {
-			let val = eval_init_expr_single(&global.init_expr);
-			assert_eq!(val.ty(), global.ty.content_type);
-			val
-		}).collect();
-
-		let mut tables = wasm_file.tables.tables.iter().map(|table_ty| {
-			if table_ty.element_type != Type::FuncRef {
-				todo!()
-			}
-
-			Table {
-				max: table_ty.maximum.map(|m| m as usize),
-				elements: vec![None; table_ty.initial as usize],
-			}
-		}).collect::<Vec<_>>();
-
-		for elem in wasm_file.elements.elements.iter() {
-			if elem.ty != Type::FuncRef {
-				todo!()
-			}
-
-			match elem.kind {
-				ElementKind::Active { table_index, init_expr } => {
-					let table = &mut tables[table_index as usize];
-
-					let offset = eval_init_expr_single(&init_expr);
-					let offset = offset.into_i32().unwrap();
-
-					for (idx, item) in elem.items.get_items_reader().unwrap().into_iter().enumerate() {
-						let item = item.unwrap();
-
-						if let ElementItem::Func(item) = item {
-							let index = idx + offset as usize;
-							assert!(table.elements[index].is_none());
-							table.elements[index] = Some(item as usize);
-						} else {
-							todo!()
-						}
-					}
-				}
-				ElementKind::Passive => todo!(),
-				ElementKind::Declared => todo!(),
-			}
-		}
-
-		let interp = SsaInterpreter::new(local_types, globals, &wasm_file.memory.memory, tables, blocks);
+		let interp = SsaInterpreter::new(program);
 
 		TestState { wasm_file, interp }
 	}

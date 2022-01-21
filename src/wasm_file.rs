@@ -1,4 +1,6 @@
-use wasmparser::{Data, Element, Export, FuncType, Global, Import, ImportSectionEntryType, MemoryType, Operator, Parser, Payload, TableType, Type, TypeDef, TypeOrFuncType, ExternalKind, GlobalType};
+use wasmparser::{Data, Element, Export, FuncType, Global, Import, ImportSectionEntryType, MemoryType, Operator, Parser, Payload, TableType, Type, TypeDef, TypeOrFuncType, ExternalKind, GlobalType, InitExpr};
+
+use crate::ssa::interp::TypedValue;
 
 #[derive(Debug)]
 pub struct DataList<'a> {
@@ -248,6 +250,11 @@ impl<'a> WasmFile<'a> {
         func_idx >= import_count
     }
 
+    pub fn defined_funcs(&self) -> impl Iterator<Item=usize> {
+        let import_count = self.imports.func_imports.len();
+        import_count..import_count + self.bodies.len()
+    }
+
     pub fn func_type_idx(&self, func_idx: usize) -> u32 {
         self.functions.functions[func_idx]
     }
@@ -404,3 +411,21 @@ impl<'a> From<&'a [u8]> for WasmFile<'a> {
         WasmFile { functions, memory, globals, exports, imports, types, tables, data, elements, bodies: codes }
     }
 }
+
+pub fn eval_init_expr(init_expr: &InitExpr) -> Vec<TypedValue> {
+    let ops = init_expr.get_operators_reader().into_iter().map(|o| o.unwrap()).collect::<Vec<_>>();
+
+    match &ops[..] {
+        &[Operator::I32Const { value }, Operator::End] => {
+            vec![TypedValue::I32(value)]
+        }
+        ops => todo!("{:?}", ops)
+    }
+}
+
+pub fn eval_init_expr_single(init_expr: &InitExpr) -> TypedValue {
+    let result = eval_init_expr(init_expr);
+    assert_eq!(result.len(), 1);
+    result.into_iter().next().unwrap()
+}
+
