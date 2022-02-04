@@ -75,6 +75,16 @@ impl TypedSsaVar {
 	pub fn into_untyped(self) -> SsaVar {
 		SsaVar(self.0)
 	}
+
+	pub fn unwrap_i32(self) -> SsaVar {
+		assert_eq!(self.1, Type::I32);
+		SsaVar(self.0)
+	}
+
+	pub fn unwrap_i64(self) -> SsaVar {
+		assert_eq!(self.1, Type::I64);
+		SsaVar(self.0)
+	}
 }
 
 #[derive(Debug)]
@@ -337,6 +347,16 @@ pub enum SsaTerminator {
 }
 
 pub struct SsaFunction(pub Vec<(BlockId, SsaBasicBlock)>);
+
+impl SsaFunction {
+	pub fn iter<'a>(&'a self) -> impl Iterator<Item=(BlockId, &'a SsaBasicBlock)> + 'a {
+		self.0.iter().map(|(i, b)| (*i, b))
+	}
+
+	pub fn get(&self, block_id: BlockId) -> &SsaBasicBlock {
+		&self.0.iter().find(|(id, _)| *id == block_id).unwrap().1
+	}
+}
 
 pub struct SsaProgram {
 	pub local_types: HashMap<usize, Vec<Type>>,

@@ -2,7 +2,7 @@
 mod sexpr;
 
 pub mod wasm_suite_prelude {
-	use wasm_runner::{wasm_file::WasmFile, ssa::interp::{SsaInterpreter, TypedValue}, validator::wasm_to_ssa};
+	use wasm_runner::{wasm_file::WasmFile, ssa::{interp::{SsaInterpreter, TypedValue}}, validator::wasm_to_ssa};
 
 	use super::sexpr::SExpr;
 
@@ -102,6 +102,8 @@ pub mod wasm_suite_prelude {
 		let program = wasm_to_ssa(&wasm_file);
 
 		let interp = SsaInterpreter::new(program);
+
+		//let program = lir_emitter::convert(program);
 
 		TestState { wasm_file, interp }
 	}
