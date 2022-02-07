@@ -189,7 +189,7 @@ impl SsaInterpreter {
 	}
 
 	pub fn step(&mut self) -> Option<Vec<TypedValue>> {
-		println!("{:?}", self.call_stack);
+		//println!("{:?}", self.call_stack);
 
 		let frame = self.call_stack.last_mut().expect("stepped while halted");
 

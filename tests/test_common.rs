@@ -91,6 +91,9 @@ pub mod wasm_suite_prelude {
 				SExpr::Node { name, .. } if name == "assert_malformed" => {
 					println!("Ignoring AssertMalformed");
 				}
+				SExpr::Node { name, .. } if name == "assert_exhaustion" => {
+					println!("Ignoring AssertExhaustion");
+				}
 				_ => todo!("{:?}", arg),
 			}
 		}

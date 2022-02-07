@@ -1,5 +1,7 @@
 pub mod interp;
 pub mod lir_emitter;
+pub mod liveness;
+pub mod call_graph;
 
 use std::collections::HashMap;
 
@@ -344,6 +346,32 @@ pub enum SsaTerminator {
 	BranchIf { cond: TypedSsaVar, true_target: JumpTarget, false_target: JumpTarget },
 	BranchTable { cond: TypedSsaVar, default: JumpTarget, arms: Vec<JumpTarget> },
 	Return(Vec<TypedSsaVar>),
+}
+
+impl SsaTerminator {
+	pub fn uses(&self) -> Vec<TypedSsaVar> {
+		match self {
+			SsaTerminator::Unreachable => vec![],
+			SsaTerminator::Jump(target) => {
+				target.params.clone()
+			}
+			SsaTerminator::BranchIf { cond, true_target, false_target } => {
+				let mut result = vec![*cond];
+				result.extend(true_target.params.iter());
+				result.extend(false_target.params.iter());
+				result
+			}
+			SsaTerminator::BranchTable { cond, default, arms } => {
+				let mut result = vec![*cond];
+				result.extend(default.params.iter());
+				for arm in arms.iter() {
+					result.extend(arm.params.iter());
+				}
+				result
+			}
+			SsaTerminator::Return(vars) => vars.clone(),
+		}
+	}
 }
 
 pub struct SsaFunction(pub Vec<(BlockId, SsaBasicBlock)>);

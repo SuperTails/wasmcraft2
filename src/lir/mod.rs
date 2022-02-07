@@ -4,13 +4,13 @@ use std::ops::RangeInclusive;
 
 use crate::ssa::BlockId;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Half {
 	Hi,
 	Lo,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DoubleRegister {
 	Work(u32),
 	Return(u32),
@@ -42,7 +42,7 @@ impl DoubleRegister {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Register {
 	double: DoubleRegister,
 	half: Half,
@@ -208,6 +208,9 @@ pub enum LirInstr {
 
 	Call { func: u32 },
 	CallIndirect { table_index: u32, table_entry: Register },
+
+	Push(Register),
+	Pop(Register),
 
 	IfCond { cond: Condition, instr: Box<LirInstr> }
 }

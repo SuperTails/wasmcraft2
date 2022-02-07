@@ -4,7 +4,7 @@ use wasmparser::{Type, MemoryImmediate};
 
 use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half}, ssa::TypedSsaVar, jump_mode, JumpMode};
 
-use super::{SsaProgram, SsaFunction, SsaVar, SsaBasicBlock, BlockId};
+use super::{SsaProgram, SsaFunction, SsaVar, SsaBasicBlock, BlockId, liveness::NoopLivenessInfo, call_graph::NoopCallGraph};
 
 trait RegAlloc {
 	fn analyze(ssa_func: &SsaFunction) -> Self;
@@ -84,7 +84,7 @@ impl LirFuncBuilder {
 	}
 }
 
-fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasicBlock, ra: &mut NoopRegAlloc, builder: &mut LirFuncBuilder) {
+fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasicBlock, ra: &mut NoopRegAlloc, li: &NoopLivenessInfo, call_graph: &NoopCallGraph, builder: &mut LirFuncBuilder) {
 	fn do_binop<'a, F, G>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: TypedSsaVar, block: &'a mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F, g: G)
 		where
 			F: FnOnce(Register, Register, Register, &'a mut Vec<LirInstr>),
@@ -250,7 +250,7 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 
 	let mut block = Vec::new();
 
-	for instr in ssa_block.body.iter() {
+	for (instr_idx, instr) in ssa_block.body.iter().enumerate() {
 		match instr {
 			&super::SsaInstr::I32Set(var, val) => {
 				let reg = ra.get(var.unwrap_i32());
@@ -602,10 +602,26 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 			super::SsaInstr::Call { function_index, params, returns } => {
 				emit_copy_to_params(&mut block, params, ra);
 
+				let mut to_save = li.live_out_body(block_id, instr_idx);
+				for return_var in returns.iter() {
+					to_save.remove(return_var);
+				}
+				let to_save = to_save.into_iter().collect::<Vec<_>>();
+
+				let needs_save = call_graph.may_recurse_in(block_id.func as u32, *function_index);
+
+				if needs_save {
+					emit_save(&mut block, &to_save, ra);
+				}
+
 				match jump_mode() {
 					JumpMode::Direct => {
 						block.push(LirInstr::Call { func: *function_index });
 					}
+				}
+
+				if !needs_save {
+					emit_restore(&mut block, &to_save, ra);
 				}
 
 				emit_copy_from_returns(&mut block, returns, ra);
@@ -758,6 +774,40 @@ fn emit_copy_from_returns(block: &mut Vec<LirInstr>, vars: &[TypedSsaVar], ra: &
 	}
 }
 
+fn emit_save(block: &mut Vec<LirInstr>, to_save: &[TypedSsaVar], ra: &mut NoopRegAlloc) {
+	for var in to_save.iter() {
+		match var.ty() {
+			Type::I32 => {
+				let reg = ra.get(var.into_untyped());
+				block.push(LirInstr::Push(reg));
+			}
+			Type::I64 => {
+				let reg = ra.get_double(var.into_untyped());
+				block.push(LirInstr::Push(reg.lo()));
+				block.push(LirInstr::Push(reg.hi()));
+			}
+			_ => todo!(),
+		}
+	}
+}
+
+fn emit_restore(block: &mut Vec<LirInstr>, to_restore: &[TypedSsaVar], ra: &mut NoopRegAlloc) {
+	for var in to_restore.iter().rev() {
+		match var.ty() {
+			Type::I32 => {
+				let reg = ra.get(var.into_untyped());
+				block.push(LirInstr::Pop(reg));
+			}
+			Type::I64 => {
+				let reg = ra.get_double(var.into_untyped());
+				block.push(LirInstr::Pop(reg.hi()));
+				block.push(LirInstr::Pop(reg.lo()));
+			}
+			_ => todo!(),
+		}
+	}
+}
+
 fn emit_copy(block: &mut Vec<LirInstr>, in_params: &[TypedSsaVar], out_params: &[TypedSsaVar], ra: &mut NoopRegAlloc, conds: &[Condition]) {
 	assert_eq!(in_params.len(), out_params.len());
 
@@ -808,13 +858,15 @@ fn emit_copy(block: &mut Vec<LirInstr>, in_params: &[TypedSsaVar], out_params: &
 	}
 }
 
-fn lower(ssa_func: SsaFunction) -> LirFunction {
+fn lower(ssa_func: SsaFunction, call_graph: &NoopCallGraph) -> LirFunction {
 	let mut reg_alloc = NoopRegAlloc::analyze(&ssa_func);
 
 	let mut builder = LirFuncBuilder::new(&ssa_func);
 
+	let liveness_info = NoopLivenessInfo::new(&ssa_func);
+
 	for (block_id, block) in ssa_func.iter() {
-		lower_block(&ssa_func, block_id, block, &mut reg_alloc, &mut builder);
+		lower_block(&ssa_func, block_id, block, &mut reg_alloc, &liveness_info, call_graph, &mut builder);
 	}
 
 	let blocks = builder.body;
@@ -823,7 +875,9 @@ fn lower(ssa_func: SsaFunction) -> LirFunction {
 }
 
 pub fn convert(ssa_program: SsaProgram) -> LirProgram {
-	let code = ssa_program.code.into_iter().map(lower).collect();
+	let call_graph = NoopCallGraph::new(&ssa_program);
+
+	let code = ssa_program.code.into_iter().map(|block| lower(block, &call_graph)).collect();
 
 	LirProgram { code }
 }
