@@ -18,19 +18,20 @@ trait RegAlloc {
 
 struct NoopRegAlloc {
 	const_pool: HashSet<i32>,
+	func: u32,
 }
 
 impl RegAlloc for NoopRegAlloc {
-	fn analyze(_: &SsaFunction) -> Self {
-		NoopRegAlloc { const_pool: HashSet::new() }
+	fn analyze(func: &SsaFunction) -> Self {
+		NoopRegAlloc { const_pool: HashSet::new(), func: func.iter().next().unwrap().0.func as u32 }
 	}
 
 	fn get(&self, val: SsaVar) -> Register {
-		Register::work_lo(val.0)
+		Register::work_lo(self.func, val.0)
 	}
 
 	fn get_double(&self, val: SsaVar) -> DoubleRegister {
-		DoubleRegister::Work(val.0)
+		DoubleRegister::Work(self.func, val.0)
 	}
 
 	fn get_const(&mut self, val: i32) -> Register {
@@ -197,8 +198,11 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 	{
 		assert_eq!(mem.memory, 0);
 
-		assert_eq!(dst.ty(), Type::I32);
-		let dst = ra.get(dst.into_untyped());
+		let dst_lo = match dst.ty() {
+			Type::I32 => ra.get(dst.into_untyped()), 
+			Type::I64 => ra.get_double(dst.into_untyped()).lo(),
+			_ => todo!(),
+		};
 
 		assert_eq!(addr.ty(), Type::I32);
 		let addr = ra.get(addr.into_untyped());
@@ -208,10 +212,28 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 
 		block.push(LirInstr::Assign(temp, addr));
 		block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
-		block.push(LirInstr::Load(dst, temp));
-		block.push(LirInstr::Trunc(dst, bits));
-		if signed {
-			block.push(LirInstr::SignExtend(dst, bits));
+		match bits {
+			32 => {
+				block.push(LirInstr::Load32(dst_lo, temp));
+			}
+			16 => {
+				block.push(LirInstr::Load16(dst_lo, temp));
+				if signed {
+					block.push(LirInstr::SignExtend16(dst_lo));
+				}
+			}
+			8 => {
+				block.push(LirInstr::Load8(dst_lo, temp));
+				if signed {
+					block.push(LirInstr::SignExtend8(dst_lo));
+				}
+			}
+			_ => panic!()
+		}
+
+		if dst.ty() == Type::I64 {
+			let dst = ra.get_double(dst.into_untyped());
+			block.push(LirInstr::SignExtend32(dst));
 		}
 	}
 
@@ -316,8 +338,8 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 					block.push(LirInstr::DivS(dst, rhs));
 				};
 
-				let i64_divs = |_dst, _lhs, _rhs, _block: &mut Vec<LirInstr>| {
-					todo!()
+				let i64_divs = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
+					block.push(LirInstr::DivS64(dst, lhs, rhs));
 				};
 
 				do_binop(dst, lhs, rhs, &mut block, ra, i32_divs, i64_divs);
@@ -331,8 +353,8 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 					block.push(LirInstr::DivU(dst, rhs));
 				};
 
-				let i64_divu = |_dst, _lhs, _rhs, _block: &mut Vec<LirInstr>| {
-					todo!()
+				let i64_divu = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
+					block.push(LirInstr::DivU64(dst, lhs, rhs));
 				};
 
 				do_binop(dst, lhs, rhs, &mut block, ra, i32_divu, i64_divu);
@@ -347,8 +369,8 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 					block.push(LirInstr::RemS(dst, rhs));
 				};
 
-				let i64_rems = |_dst, _lhs, _rhs, _block: &mut Vec<LirInstr>| {
-					todo!()
+				let i64_rems = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
+					block.push(LirInstr::RemS64(dst, lhs, rhs));
 				};
 
 				do_binop(dst, lhs, rhs, &mut block, ra, i32_rems, i64_rems);
@@ -363,8 +385,8 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 					block.push(LirInstr::RemU(dst, rhs));
 				};
 
-				let i64_remu = |_dst, _lhs, _rhs, _block: &mut Vec<LirInstr>| {
-					todo!()
+				let i64_remu = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
+					block.push(LirInstr::RemU64(dst, lhs, rhs));
 				};
 
 				do_binop(dst, lhs, rhs, &mut block, ra, i32_remu, i64_remu);
@@ -445,14 +467,14 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 
 				block.push(LirInstr::Assign(temp, addr));
 				block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
-				block.push(LirInstr::Load(dst.lo(), temp));
+				block.push(LirInstr::Load32(dst.lo(), temp));
 
 				// TODO: Coalescing?
 				let temp = Register::temp_lo(0);
 
 				block.push(LirInstr::Assign(temp, addr));
 				block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32 + 4)));
-				block.push(LirInstr::Load(dst.hi(), temp));
+				block.push(LirInstr::Load32(dst.hi(), temp));
 			}
 			super::SsaInstr::Load32S(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 32, true, &mut block, ra),
 			super::SsaInstr::Load32U(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 32, false, &mut block, ra),
@@ -571,7 +593,14 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 				block.push(LirInstr::Assign(dst.lo(), src_lo));
 				block.push(LirInstr::Set(dst.hi(), 0));
 			}
-			super::SsaInstr::Wrap(_, _) => todo!(),
+			super::SsaInstr::Wrap(dst, src) => {
+				assert_eq!(dst.ty(), Type::I32);
+				assert_eq!(src.ty(), Type::I64);
+
+				let dst = ra.get(dst.into_untyped());
+				let src = ra.get_double(src.into_untyped());
+				block.push(LirInstr::Assign(dst, src.lo()));
+			}
 			super::SsaInstr::Select { dst, true_var, false_var, cond } => {
 				assert_eq!(cond.ty(), Type::I32);
 				let cond = ra.get(cond.into_untyped());
@@ -620,7 +649,7 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 					}
 				}
 
-				if !needs_save {
+				if needs_save {
 					emit_restore(&mut block, &to_save, ra);
 				}
 
@@ -669,10 +698,12 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 				assert_ne!(cond, ra.get(param.into_untyped()));
 			}
 
+			// FIXME: Make sure cond is not overwritten!
+
 			block.push(LirInstr::Set(Register::cond_taken(), 0));
 			emit_copy(&mut block, &true_target.params, true_out_params, ra, true_conds);
 			emit_copy(&mut block, &false_target.params, false_out_params, ra, false_conds);
-			builder.push(block_id, block, LirTerminator::JumpIf { true_label: true_target.label, false_label: false_target.label });
+			builder.push(block_id, block, LirTerminator::JumpIf { true_label: true_target.label, false_label: false_target.label, cond });
 		}
 		crate::ssa::SsaTerminator::BranchTable { cond, default, arms } => {
 			if jump_mode() != JumpMode::Direct {
@@ -710,7 +741,7 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 
 				let arm_labels = arms.iter().map(|arm| arm.label).collect();
 
-				builder.push(block_id, block, LirTerminator::JumpTable { default: default.label, arms: arm_labels });
+				builder.push(block_id, block, LirTerminator::JumpTable { default: default.label, arms: arm_labels, cond });
 			}
 		}
 		crate::ssa::SsaTerminator::Return(return_vars) => {
@@ -858,26 +889,85 @@ fn emit_copy(block: &mut Vec<LirInstr>, in_params: &[TypedSsaVar], out_params: &
 	}
 }
 
-fn lower(ssa_func: SsaFunction, call_graph: &NoopCallGraph) -> LirFunction {
+fn gen_prologue(ssa_func: &SsaFunction, ssa_program: &SsaProgram, ra: &mut NoopRegAlloc) -> Vec<LirInstr> {
+	let mut result = Vec::new();
+
+	let locals = ssa_program.local_types.get(&(ssa_func.func_id() as usize)).unwrap();
+
+	result.push(LirInstr::PushLocalFrame(locals.clone()));
+
+	assert!(locals.len() >= ssa_func.params.len());
+
+	for (idx, (local, param)) in locals.iter().zip(ssa_func.params.iter()).enumerate() {
+		assert_eq!(*local, *param);
+		match param {
+			Type::I32 => {
+				result.push(LirInstr::LocalSet(idx as u32, Half::Lo, Register::param_lo(idx as u32)));
+			}
+			Type::I64 => {
+				result.push(LirInstr::LocalSet(idx as u32, Half::Lo, Register::param_lo(idx as u32)));
+				result.push(LirInstr::LocalSet(idx as u32, Half::Hi, Register::param_hi(idx as u32)));
+			}
+			_ => todo!(),
+		}
+	}
+
+	for (idx, local) in locals.iter().enumerate().skip(ssa_func.params.len()) {
+		match *local {
+			Type::I32 => {
+				result.push(LirInstr::LocalSet(idx as u32, Half::Lo, ra.get_const(0)));
+			}
+			Type::I64 => {
+				result.push(LirInstr::LocalSet(idx as u32, Half::Lo, ra.get_const(0)));
+				result.push(LirInstr::LocalSet(idx as u32, Half::Hi, ra.get_const(0)));
+			}
+			_ => todo!(),
+		}
+	}
+
+	result
+}
+
+fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &NoopCallGraph) -> LirFunction {
 	let mut reg_alloc = NoopRegAlloc::analyze(&ssa_func);
 
-	let mut builder = LirFuncBuilder::new(&ssa_func);
+	let mut builder = LirFuncBuilder::new(ssa_func);
 
-	let liveness_info = NoopLivenessInfo::new(&ssa_func);
+	let liveness_info = NoopLivenessInfo::new(ssa_func);
 
 	for (block_id, block) in ssa_func.iter() {
-		lower_block(&ssa_func, block_id, block, &mut reg_alloc, &liveness_info, call_graph, &mut builder);
+		lower_block(ssa_func, block_id, block, &mut reg_alloc, &liveness_info, call_graph, &mut builder);
 	}
+
+	let locals = ssa_program.local_types.get(&(ssa_func.func_id() as usize)).unwrap();
+
+	let start_block = &mut builder.body.iter_mut().find(|(block_id, _block)| block_id.block == 0).unwrap().1;
+	let prologue = gen_prologue(ssa_func, ssa_program, &mut reg_alloc);
+	start_block.body.splice(0..0, prologue);
+
+	let end_block = &mut builder.body.iter_mut().find(|(block_id, _block)| block_id.block == 1).unwrap().1;
+	end_block.body.push(LirInstr::PopLocalFrame(locals.clone()));
 
 	let blocks = builder.body;
 
-	LirFunction(blocks)
+	LirFunction { code: blocks, returns: ssa_func.returns.clone() }
 }
 
 pub fn convert(ssa_program: SsaProgram) -> LirProgram {
 	let call_graph = NoopCallGraph::new(&ssa_program);
 
-	let code = ssa_program.code.into_iter().map(|block| lower(block, &call_graph)).collect();
+	let code = ssa_program.code.iter().map(|block| lower(block, &ssa_program, &call_graph)).collect::<Vec<_>>();
 
-	LirProgram { code }
+	for (func_id, func) in code.iter().enumerate().take(5) {
+		println!("==== func {:?} ==== ", func_id);
+		for (block_id, block) in func.code.iter() {
+			println!("-- block {:?} --", block_id);
+			for instr in block.body.iter() {
+				println!("{:?}", instr);
+			}
+			println!("{:?}", block.term);
+		}
+	}
+
+	LirProgram { code, memory: ssa_program.memory, tables: ssa_program.tables, globals: ssa_program.globals }
 }

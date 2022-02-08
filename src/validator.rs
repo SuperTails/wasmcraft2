@@ -426,11 +426,6 @@ impl ValidationState<'_> {
 		let alloc = &mut self.alloc;
 		let validator = &mut self.validator;
 
-		println!("{:?}", validator.value_stack);
-		println!("{:?}", validator.control_stack);
-		println!("{:?}", op);
-		println!();
-
 		fn make_i32_binop<F>(f: F, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
 			where
 				F: FnOnce(TypedSsaVar, TypedSsaVar, TypedSsaVar) -> SsaInstr
@@ -1151,7 +1146,7 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 		}
 	}
 
-	SsaFunction(blocks)
+	SsaFunction { code: blocks, params: func_ty.params.clone(), returns: func_ty.returns.clone() }
 }
 
 pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {

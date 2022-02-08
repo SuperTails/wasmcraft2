@@ -374,15 +374,23 @@ impl SsaTerminator {
 	}
 }
 
-pub struct SsaFunction(pub Vec<(BlockId, SsaBasicBlock)>);
+pub struct SsaFunction {
+	pub code: Vec<(BlockId, SsaBasicBlock)>,
+	pub params: Box<[Type]>,
+	pub returns: Box<[Type]>,
+}
 
 impl SsaFunction {
 	pub fn iter<'a>(&'a self) -> impl Iterator<Item=(BlockId, &'a SsaBasicBlock)> + 'a {
-		self.0.iter().map(|(i, b)| (*i, b))
+		self.code.iter().map(|(i, b)| (*i, b))
 	}
 
 	pub fn get(&self, block_id: BlockId) -> &SsaBasicBlock {
-		&self.0.iter().find(|(id, _)| *id == block_id).unwrap().1
+		&self.code.iter().find(|(id, _)| *id == block_id).unwrap().1
+	}
+
+	pub fn func_id(&self) -> u32 {
+		self.code[0].0.func as u32
 	}
 }
 

@@ -2,7 +2,9 @@ pub mod interp;
 
 use std::ops::RangeInclusive;
 
-use crate::ssa::BlockId;
+use wasmparser::Type;
+
+use crate::ssa::{BlockId, Memory, interp::TypedValue, Table};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Half {
@@ -12,12 +14,13 @@ pub enum Half {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DoubleRegister {
-	Work(u32),
+	/// function id, register id
+	Work(u32, u32),
+	Temp(u32),
 	Return(u32),
 	Param(u32),
-	Temp(u32),
-	CondTaken,
 	Const(i32),
+	CondTaken,
 }
 
 impl DoubleRegister {
@@ -49,12 +52,12 @@ pub struct Register {
 }
 
 impl Register {
-	pub fn work_lo(id: u32) -> Register {
-		DoubleRegister::Work(id).lo()
+	pub fn work_lo(func: u32, id: u32) -> Register {
+		DoubleRegister::Work(func, id).lo()
 	}
 
-	pub fn work_hi(id: u32) -> Register {
-		DoubleRegister::Work(id).hi()
+	pub fn work_hi(func: u32, id: u32) -> Register {
+		DoubleRegister::Work(func, id).hi()
 	}
 
 	pub fn return_lo(id: u32) -> Register {
@@ -114,7 +117,7 @@ impl Condition {
 	}
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum LirInstr {
 	Assign(Register, Register),
 	Set(Register, i32),
@@ -130,6 +133,10 @@ pub enum LirInstr {
 	Add64(DoubleRegister, DoubleRegister, DoubleRegister),
 	Sub64(DoubleRegister, DoubleRegister, DoubleRegister),
 	Mul64(DoubleRegister, DoubleRegister, DoubleRegister),
+	DivS64(DoubleRegister, DoubleRegister, DoubleRegister),
+	DivU64(DoubleRegister, DoubleRegister, DoubleRegister),
+	RemS64(DoubleRegister, DoubleRegister, DoubleRegister),
+	RemU64(DoubleRegister, DoubleRegister, DoubleRegister),
 
 	Shl(Register, Register, Register),
 	ShrS(Register, Register, Register),
@@ -199,7 +206,9 @@ pub enum LirInstr {
 	Store8(Register, Register),
 
 	// dst, addr
-	Load(Register, Register),
+	Load32(Register, Register),
+	Load16(Register, Register),
+	Load8(Register, Register),
 
 	/// arg, old width (assumes high bits are zero)
 	SignExtend(Register, u32),
@@ -212,7 +221,10 @@ pub enum LirInstr {
 	Push(Register),
 	Pop(Register),
 
-	IfCond { cond: Condition, instr: Box<LirInstr> }
+	IfCond { cond: Condition, instr: Box<LirInstr> },
+
+	PushLocalFrame(Vec<Type>),
+	PopLocalFrame(Vec<Type>),
 }
 
 impl LirInstr {
@@ -228,8 +240,8 @@ impl LirInstr {
 #[derive(Debug)]
 pub enum LirTerminator {
 	Jump(BlockId),
-	JumpIf { true_label: BlockId, false_label: BlockId },
-	JumpTable { arms: Vec<BlockId>, default: BlockId },
+	JumpIf { true_label: BlockId, false_label: BlockId, cond: Register },
+	JumpTable { arms: Vec<BlockId>, default: BlockId, cond: Register },
 	Return,
 }
 
@@ -238,8 +250,20 @@ pub struct LirBasicBlock {
 	pub term: LirTerminator,
 }
 
-pub struct LirFunction(pub Vec<(BlockId, LirBasicBlock)>);
+pub struct LirFunction {
+	pub code: Vec<(BlockId, LirBasicBlock)>,
+	pub returns: Box<[Type]>,
+}
+
+impl LirFunction {
+	pub fn func_id(&self) -> usize {
+		self.code[0].0.func
+	}
+}
 
 pub struct LirProgram {
+	pub globals: Vec<TypedValue>,
+	pub memory: Vec<Memory>,
+	pub tables: Vec<Table>,
 	pub code: Vec<LirFunction>,
 }

@@ -1,4 +1,4 @@
-use crate::{validator::wasm_to_ssa, ssa::lir_emitter};
+use crate::{validator::wasm_to_ssa, ssa::lir_emitter, lir::interp::LirInterpreter};
 
 pub mod wasm_file;
 pub mod validator;
@@ -28,7 +28,7 @@ pub fn run(path: &str) {
 	
 	for (idx, lir_func) in lir_program.code.iter().enumerate() {
 		println!("\n\n============ Function {} ============", idx);
-		for (block_id, block) in lir_func.0.iter() {
+		for (block_id, block) in lir_func.code.iter() {
 			println!("\n----------- Block {:?} ---------", block_id);
 			for instr in block.body.iter() {
 				println!("    {:?}", instr);
