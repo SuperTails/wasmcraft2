@@ -4,6 +4,7 @@ pub mod wasm_file;
 pub mod validator;
 pub mod ssa;
 pub mod lir;
+pub mod pack_emitter;
 
 pub fn run(path: &str) {
 	let bytes = std::fs::read(path).unwrap();
@@ -25,8 +26,10 @@ pub fn run(path: &str) {
 	let ssa_program = wasm_to_ssa(&file);
 
 	let lir_program = lir_emitter::convert(ssa_program);
+
+	let datapack = pack_emitter::emit_program(&lir_program);
 	
-	for (idx, lir_func) in lir_program.code.iter().enumerate() {
+	/*for (idx, lir_func) in lir_program.code.iter().enumerate() {
 		println!("\n\n============ Function {} ============", idx);
 		for (block_id, block) in lir_func.code.iter() {
 			println!("\n----------- Block {:?} ---------", block_id);
@@ -35,6 +38,14 @@ pub fn run(path: &str) {
 			}
 			println!("    {:?}", block.term);
 		}
+	}*/
+
+	for func in datapack.iter() {
+		println!("-------- func {} --------", func.id);
+		for cmd in func.cmds.iter() {
+			println!("\t{}", cmd);
+		}
+		println!();
 	}
 }
 

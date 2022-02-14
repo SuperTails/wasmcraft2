@@ -18,4 +18,9 @@ impl NoopCallGraph {
 		// TODO:
 		true
 	}
+
+	pub fn may_recurse_in_table(&self, caller: u32, callee_table: u32) -> bool {
+		// TODO:
+		true
+	}
 }

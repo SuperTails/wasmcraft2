@@ -78,7 +78,6 @@ impl LocalStack {
 			(Half::Hi, TypedValue::I64(i)) => {
 				*i = ((val as u32 as i64) << 32) | (*i as u32 as i64);
 			}
-			_ => todo!()
 		}
 	}
 
@@ -90,7 +89,6 @@ impl LocalStack {
 			(Half::Lo, TypedValue::I64(i)) => i as i32,
 			(Half::Hi, TypedValue::I32(_)) => panic!(),
 			(Half::Hi, TypedValue::I64(i)) => (i >> 32) as i32,
-			_ => todo!(),
 		}
 	}
 }
@@ -113,9 +111,9 @@ impl RegContext {
 	pub fn get(&mut self, reg: Register) -> i32 {
 		if let DoubleRegister::Const(c) = reg.double {
 			return c;
-		} else if !self.0.contains_key(&reg) {
+		} else {
 			// TODO: Remove this
-			self.0.insert(reg, 0);
+			self.0.entry(reg).or_insert(0);
 		}
 
 		*self.0.get(&reg).unwrap_or_else(|| panic!("uninit reg {:?}", reg))
@@ -142,7 +140,6 @@ impl GlobalList {
 			(Half::Lo, TypedValue::I64(i)) => i as i32,
 			(Half::Hi, TypedValue::I32(_)) => panic!(),
 			(Half::Hi, TypedValue::I64(i)) => (i >> 32) as i32,
-			_ => todo!(),
 		}
 	}
 
@@ -160,7 +157,6 @@ impl GlobalList {
 			(Half::Hi, TypedValue::I64(i)) => {
 				*i = ((val as u32 as i64) << 32) | (*i as u32 as i64);
 			}
-			_ => todo!()
 		}
 	}
 }
@@ -179,7 +175,7 @@ pub struct LirInterpreter {
 
 impl LirInterpreter {
 	pub fn new(program: LirProgram) -> Self {
-		let LirProgram { globals, memory, tables, code } = program;
+		let LirProgram { globals, memory, tables, code, constants: _ /* TODO: */ } = program;
 
 		let globals = GlobalList::new(globals);
 
@@ -326,10 +322,10 @@ impl LirInterpreter {
 			&LirInstr::Add(lhs, rhs) => do_assignop(lhs, rhs, &mut self.registers, |a, b| a.wrapping_add(b)),
 			&LirInstr::Sub(lhs, rhs) => do_assignop(lhs, rhs, &mut self.registers, |a, b| a.wrapping_sub(b)),
 			&LirInstr::Mul(lhs, rhs) => do_assignop(lhs, rhs, &mut self.registers, |a, b| a.wrapping_mul(b)),
-			&LirInstr::DivS(lhs, rhs) => do_assignop(lhs, rhs, &mut self.registers, |a, b| a.wrapping_div(b)),
-			&LirInstr::DivU(lhs, rhs) => do_assignop(lhs, rhs, &mut self.registers, |a, b| (a as u32).wrapping_div(b as u32) as i32),
-			&LirInstr::RemS(lhs, rhs) => do_assignop(lhs, rhs, &mut self.registers, |a, b| a.wrapping_rem(b)),
-			&LirInstr::RemU(lhs, rhs) => do_assignop(lhs, rhs, &mut self.registers, |a, b| (a as u32).wrapping_rem(b as u32) as i32),
+			&LirInstr::DivS(dst, lhs, rhs) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| a.wrapping_div(b)),
+			&LirInstr::DivU(dst, lhs, rhs) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| (a as u32).wrapping_div(b as u32) as i32),
+			&LirInstr::RemS(dst, lhs, rhs) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| a.wrapping_rem(b)),
+			&LirInstr::RemU(dst, lhs, rhs) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| (a as u32).wrapping_rem(b as u32) as i32),
 			&LirInstr::Add64 (dst, lhs, rhs) => do_binaryop64(dst, lhs, rhs, &mut self.registers, |a, b| a.wrapping_add(b)),
 			&LirInstr::Sub64 (dst, lhs, rhs) => do_binaryop64(dst, lhs, rhs, &mut self.registers, |a, b| a.wrapping_sub(b)),
 			&LirInstr::Mul64 (dst, lhs, rhs) => do_binaryop64(dst, lhs, rhs, &mut self.registers, |a, b| a.wrapping_mul(b)),

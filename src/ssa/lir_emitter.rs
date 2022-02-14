@@ -331,11 +331,7 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 			}
 			&super::SsaInstr::DivS(dst, lhs, rhs) => {
 				let i32_divs = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
-					if dst != lhs {
-						block.push(LirInstr::Assign(dst, lhs));
-					}
-
-					block.push(LirInstr::DivS(dst, rhs));
+					block.push(LirInstr::DivS(dst, lhs, rhs));
 				};
 
 				let i64_divs = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
@@ -346,11 +342,7 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 			}
 			&super::SsaInstr::DivU(dst, lhs, rhs) => {
 				let i32_divu = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
-					if dst != lhs {
-						block.push(LirInstr::Assign(dst, lhs));
-					}
-
-					block.push(LirInstr::DivU(dst, rhs));
+					block.push(LirInstr::DivU(dst, lhs, rhs));
 				};
 
 				let i64_divu = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
@@ -362,11 +354,7 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 			}
 			&super::SsaInstr::RemS(dst, lhs, rhs) => {
 				let i32_rems = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
-					if dst != lhs {
-						block.push(LirInstr::Assign(dst, lhs));
-					}
-
-					block.push(LirInstr::RemS(dst, rhs));
+					block.push(LirInstr::RemS(dst, lhs, rhs));
 				};
 
 				let i64_rems = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
@@ -378,11 +366,7 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 			}
 			&super::SsaInstr::RemU(dst, lhs, rhs) => {
 				let i32_remu = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
-					if dst != lhs {
-						block.push(LirInstr::Assign(dst, lhs));
-					}
-
-					block.push(LirInstr::RemU(dst, rhs));
+					block.push(LirInstr::RemU(dst, lhs, rhs));
 				};
 
 				let i64_remu = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
@@ -658,6 +642,18 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 			super::SsaInstr::CallIndirect { table_index, table_entry, params, returns } => {
 				emit_copy_to_params(&mut block, params, ra);
 
+				let mut to_save = li.live_out_body(block_id, instr_idx);
+				for return_var in returns.iter() {
+					to_save.remove(return_var);
+				}
+				let to_save = to_save.into_iter().collect::<Vec<_>>();
+
+				let needs_save = call_graph.may_recurse_in_table(block_id.func as u32, *table_index);
+
+				if needs_save {
+					emit_save(&mut block, &to_save, ra);
+				}
+
 				assert_eq!(table_entry.ty(), Type::I32);
 				let table_entry = ra.get(table_entry.into_untyped());
 
@@ -665,6 +661,10 @@ fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasic
 					JumpMode::Direct => {
 						block.push(LirInstr::CallIndirect { table_index: *table_index, table_entry })
 					}
+				}
+
+				if needs_save {
+					emit_restore(&mut block, &to_save, ra);
 				}
 
 				emit_copy_from_returns(&mut block, returns, ra);
@@ -928,7 +928,7 @@ fn gen_prologue(ssa_func: &SsaFunction, ssa_program: &SsaProgram, ra: &mut NoopR
 	result
 }
 
-fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &NoopCallGraph) -> LirFunction {
+fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &NoopCallGraph, constant_pool: &mut HashSet<i32>) -> LirFunction {
 	let mut reg_alloc = NoopRegAlloc::analyze(&ssa_func);
 
 	let mut builder = LirFuncBuilder::new(ssa_func);
@@ -950,13 +950,17 @@ fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &NoopCall
 
 	let blocks = builder.body;
 
+	constant_pool.extend(reg_alloc.const_pool);
+
 	LirFunction { code: blocks, returns: ssa_func.returns.clone() }
 }
 
 pub fn convert(ssa_program: SsaProgram) -> LirProgram {
 	let call_graph = NoopCallGraph::new(&ssa_program);
 
-	let code = ssa_program.code.iter().map(|block| lower(block, &ssa_program, &call_graph)).collect::<Vec<_>>();
+	let mut constants = HashSet::new();
+
+	let code = ssa_program.code.iter().map(|block| lower(block, &ssa_program, &call_graph, &mut constants)).collect::<Vec<_>>();
 
 	for (func_id, func) in code.iter().enumerate().take(5) {
 		println!("==== func {:?} ==== ", func_id);
@@ -969,5 +973,5 @@ pub fn convert(ssa_program: SsaProgram) -> LirProgram {
 		}
 	}
 
-	LirProgram { code, memory: ssa_program.memory, tables: ssa_program.tables, globals: ssa_program.globals }
+	LirProgram { code, memory: ssa_program.memory, tables: ssa_program.tables, globals: ssa_program.globals, constants }
 }

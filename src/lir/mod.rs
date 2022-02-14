@@ -1,6 +1,6 @@
 pub mod interp;
 
-use std::ops::RangeInclusive;
+use std::{ops::RangeInclusive, fmt, collections::HashSet};
 
 use wasmparser::Type;
 
@@ -12,6 +12,15 @@ pub enum Half {
 	Lo,
 }
 
+impl fmt::Display for Half {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Half::Lo => write!(f, "lo"),
+			Half::Hi => write!(f, "hi"),
+		}
+	}
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DoubleRegister {
 	/// function id, register id
@@ -20,6 +29,7 @@ pub enum DoubleRegister {
 	Return(u32),
 	Param(u32),
 	Const(i32),
+	Global(u32),
 	CondTaken,
 }
 
@@ -42,6 +52,10 @@ impl DoubleRegister {
 
 	pub fn param(id: u32) -> DoubleRegister {
 		DoubleRegister::Param(id)
+	}
+	
+	pub fn global(id: u32) -> DoubleRegister {
+		DoubleRegister::Global(id)
 	}
 }
 
@@ -84,12 +98,39 @@ impl Register {
 		DoubleRegister::param(id).hi()
 	}
 
+	pub fn global_lo(id: u32) -> Register {
+		DoubleRegister::param(id).lo()
+	}
+
+	pub fn global_hi(id: u32) -> Register {
+		DoubleRegister::param(id).hi()
+	}
+
 	pub fn cond_taken() -> Register {
 		DoubleRegister::CondTaken.lo()
 	}
 
 	pub fn const_val(v: i32) -> Register {
 		DoubleRegister::Const(v).lo()
+	}
+}
+
+const OBJECTIVE_NAME: &str = "reg";
+
+impl fmt::Display for Register {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let half = self.half;
+		match self.double {
+			DoubleRegister::Work(func, reg) => write!(f, "%work%{func}%{reg}%{half}")?,
+			DoubleRegister::Temp(reg) => write!(f, "%temp%{reg}%{half}")?,
+			DoubleRegister::Return(reg) => write!(f, "%return%{reg}%{half}")?,
+			DoubleRegister::Param(reg) => write!(f, "%param%{reg}%{half}")?,
+			DoubleRegister::Global(reg) => write!(f, "%global%{reg}%{half}")?,
+			DoubleRegister::Const(val) => write!(f, "%const%{val}")?,
+			DoubleRegister::CondTaken => write!(f, "%condtaken")?,
+		}
+
+		write!(f, " {OBJECTIVE_NAME}")
 	}
 }
 
@@ -125,10 +166,10 @@ pub enum LirInstr {
 	Add(Register, Register),
 	Sub(Register, Register),
 	Mul(Register, Register),
-	DivS(Register, Register),
-	DivU(Register, Register),
-	RemS(Register, Register),
-	RemU(Register, Register),
+	DivS(Register, Register, Register),
+	DivU(Register, Register, Register),
+	RemS(Register, Register, Register),
+	RemU(Register, Register, Register),
 
 	Add64(DoubleRegister, DoubleRegister, DoubleRegister),
 	Sub64(DoubleRegister, DoubleRegister, DoubleRegister),
@@ -266,4 +307,5 @@ pub struct LirProgram {
 	pub memory: Vec<Memory>,
 	pub tables: Vec<Table>,
 	pub code: Vec<LirFunction>,
+	pub constants: HashSet<i32>,
 }
