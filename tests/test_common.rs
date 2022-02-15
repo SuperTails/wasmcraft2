@@ -230,7 +230,6 @@ pub mod wasm_suite_prelude {
 }
 */
 
-
 pub mod wasm_suite_prelude {
 	use command_parser::CommandParse;
 use datapack_common::functions::command_components::{FunctionIdent, ScoreHolder, Objective};

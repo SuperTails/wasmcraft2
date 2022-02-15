@@ -96,7 +96,11 @@ impl LivenessInfo for SimpleLivenessInfo {
 	}
 
 	fn live_out_body(&self, block: BlockId, instr: usize) -> HashSet<TypedSsaVar> {
-		let block_info = self.0.get(&block).unwrap();
+		let block_info = if let Some(bi) = self.0.get(&block) {
+			bi
+		} else {
+			return HashSet::new();
+		};
 
 		assert!(instr < block_info.vars.len());
 		if instr == block_info.vars.len() - 1 {

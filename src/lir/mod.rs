@@ -42,6 +42,10 @@ impl DoubleRegister {
 		Register { double: self, half: Half::Hi }
 	}
 
+	pub fn split_lo_hi(self) -> (Register, Register) {
+		(self.lo(), self.hi())
+	}
+
 	pub fn return_reg(id: u32) -> DoubleRegister {
 		DoubleRegister::Return(id)
 	}

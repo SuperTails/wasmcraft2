@@ -373,6 +373,114 @@ fn add_i64(dst: DoubleRegister, lhs: DoubleRegister, rhs: DoubleRegister, code: 
 	code.push(format!("scoreboard players operation {dst_hi} += {carry}"));
 }
 
+fn unsigned_less_than_64(dst: Register, lhs: DoubleRegister, rhs: DoubleRegister, code: &mut Vec<String>) {
+
+	let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+	let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
+
+	assert_ne!(dst, lhs_lo);
+	assert_ne!(dst, rhs_lo);
+	assert_ne!(dst, lhs_hi);
+	assert_ne!(dst, rhs_hi);
+
+	/*
+		if lhs_hi ltu rhs_hi:
+		return true
+		if lhs_hi gtu rhs_hi:
+		return false
+		if lhs_hi == rhs_hi:
+		return x_lo ltu y_lo
+	*/
+
+	// TODO: Find a better way to allocate these registers
+	let hi_is_lesser = Register::temp_lo(3);
+	let hi_is_greater = Register::temp_lo(4);
+	let hi_is_equal = Register::temp_lo(5);
+	let lo_is_lesser = Register::temp_lo(6);
+
+	// TODO: Check this
+	//assert!(!matches!(lhs, Register::Temp(3 | 4 | 5 | 6)));
+	//assert!(!matches!(rhs, Register::Temp(3 | 4 | 5 | 6)));
+	//assert!(!matches!(dst, Register::Temp(3 | 4 | 5 | 6)));
+
+	unsigned_less_than(hi_is_lesser, lhs_hi, rhs_hi, code);
+	unsigned_less_than(hi_is_greater, rhs_hi, lhs_hi, code);
+	code.push(format!("execute store success score {hi_is_equal} if score {lhs_hi} = {rhs_hi}"));
+
+	unsigned_less_than(lo_is_lesser, lhs_lo, rhs_lo, code);
+
+	code.push(format!("execute if score {hi_is_lesser} matches 1.. run scoreboard players set {dst} 1"));
+	code.push(format!("execute if score {hi_is_greater} matches 1.. run scoreboard players set {dst} 0"));
+	code.push(format!("execute if score {hi_is_equal} matches 1.. run scoreboard players operation {dst} = {lo_is_lesser}"));
+}
+
+fn unsigned_less_than_eq_64(dst: Register, lhs: DoubleRegister, rhs: DoubleRegister, code: &mut Vec<String>) {
+	let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+	let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
+
+	unsigned_less_than_64(dst, lhs, rhs, code);
+	code.push(format!("execute if score {lhs_lo} = {rhs_lo} run execute if score {lhs_hi} = {rhs_hi} run scoreboard players set {dst} 1"));
+}
+
+fn unsigned_greater_than_64(dst: Register, lhs: DoubleRegister, rhs: DoubleRegister, code: &mut Vec<String>) {
+	unsigned_less_than_64(dst, rhs, lhs, code)
+}
+
+fn unsigned_greater_than_eq_64(dst: Register, lhs: DoubleRegister, rhs: DoubleRegister, code: &mut Vec<String>) {
+	unsigned_less_than_eq_64(dst, rhs, lhs, code)
+}
+
+fn signed_less_than_64(dst: Register, lhs: DoubleRegister, rhs: DoubleRegister, code: &mut Vec<String>) {
+	/*
+		if lhs_hi ltu rhs_hi:
+			return true
+		if lhs_hi gtu rhs_hi:
+			return false
+		if lhs_hi == rhs_hi:
+			return x_lo ltu y_lo
+
+		As written out normally:
+
+		if lhs_hi < rhs_hi {
+			true
+		} else if lhs_hi > rhs_hi {
+			false
+		} else {
+			(lhs_lo as u32) < (rhs_lo as u32)
+		}
+	*/
+
+	let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+	let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
+
+	assert_ne!(dst, lhs_lo);
+	assert_ne!(dst, lhs_hi);
+	assert_ne!(dst, rhs_lo);
+	assert_ne!(dst, rhs_hi);
+
+	// dst = (lhs_lo as u32) < (rhs_lo as u32);
+	unsigned_less_than(dst, lhs_lo, rhs_lo, code);
+	// if lhs_hi < rhs_hi { dst = true }
+	code.push(format!("execute if score {lhs_hi} < {rhs_hi} run scoreboard players set {dst} 1"));
+	// if lhs_hi > rhs_hi { dst = false }
+	code.push(format!("execute if score {lhs_hi} > {rhs_hi} run scoreboard players set {dst} 0"));
+}
+
+fn signed_less_than_eq_64(dst: Register, lhs: DoubleRegister, rhs: DoubleRegister, code: &mut Vec<String>) {
+	let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+	let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
+
+	signed_less_than_64(dst, lhs, rhs, code);
+	code.push(format!("execute if score {lhs_lo} = {rhs_lo} run execute if score {lhs_hi} = {rhs_hi} run scoreboard players set {dst} 1"));
+}
+
+fn signed_greater_than_64(dst: Register, lhs: DoubleRegister, rhs: DoubleRegister, code: &mut Vec<String>) {
+	signed_less_than_64(dst, rhs, lhs, code)
+}
+
+fn signed_greater_than_eq_64(dst: Register, lhs: DoubleRegister, rhs: DoubleRegister, code: &mut Vec<String>) {
+	signed_less_than_eq_64(dst, rhs, lhs, code)
+}
 
 
 fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
@@ -476,8 +584,30 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 			code.push("function intrinsic:clz".to_string());
 			code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
 		}
-		crate::lir::LirInstr::Ctz64(_, _) => todo!(),
-		crate::lir::LirInstr::Clz64(_, _) => todo!(),
+		&LirInstr::Ctz64(dst, src) => {
+			let (dst_lo, dst_hi) = dst.split_lo_hi();
+			let (src_lo, src_hi) = src.split_lo_hi();
+			assert_ne!(dst_lo, src_lo);
+			assert_ne!(dst_hi, src_hi);
+			code.push(format!("scoreboard players operation %param0%0 reg = {src_lo}"));
+			code.push(format!("execute if score {src_lo} matches 0 run scoreboard players operation %param0%0 reg = {src_hi}"));
+			code.push("function intrinsic:ctz".to_string());
+			code.push(format!("execute if score {src_lo} matches 0 run scoreboard players add %return%0 reg 32"));
+			code.push(format!("scoreboard players operation {dst_lo} = %return%0 reg"));
+			code.push(format!("scoreboard players set {dst_hi} 0"));
+		},
+		&LirInstr::Clz64(dst, src) => {
+			let (dst_lo, dst_hi) = dst.split_lo_hi();
+			let (src_lo, src_hi) = src.split_lo_hi();
+			assert_ne!(dst_lo, src_lo);
+			assert_ne!(dst_hi, src_hi);
+			code.push(format!("scoreboard players operation %param0%0 reg = {src_hi}"));
+			code.push(format!("execute if score {src_hi} matches 0 run scoreboard players operation %param0%0 reg = {src_lo}"));
+			code.push("function intrinsic:clz".to_string());
+			code.push(format!("execute if score {src_hi} matches 0 run scoreboard players add %return%0 reg 32"));
+			code.push(format!("scoreboard players operation {dst_lo} = %return%0 reg"));
+			code.push(format!("scoreboard players set {dst_hi} 0"));
+		} 
 		&LirInstr::Eqz(dst, src) => {
 			code.push(format!("execute store success score {dst} if score {src} matches 0"));
 		}
@@ -505,16 +635,37 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 			code.push(format!("execute if score {dst} matches 0 run execute store success score {dst} if score {lhs} = {rhs}"));
 		}
 
-		crate::lir::LirInstr::GtS64(_, _, _) => todo!(),
-		crate::lir::LirInstr::GtU64(_, _, _) => todo!(),
-		crate::lir::LirInstr::GeS64(_, _, _) => todo!(),
-		crate::lir::LirInstr::GeU64(_, _, _) => todo!(),
-		crate::lir::LirInstr::LtS64(_, _, _) => todo!(),
-		crate::lir::LirInstr::LtU64(_, _, _) => todo!(),
-		crate::lir::LirInstr::LeS64(_, _, _) => todo!(),
-		crate::lir::LirInstr::LeU64(_, _, _) => todo!(),
-		crate::lir::LirInstr::Eq64(_, _, _) => todo!(),
-		crate::lir::LirInstr::Ne64(_, _, _) => todo!(),
+		&LirInstr::GtU64(dst, lhs, rhs) => unsigned_greater_than_64(dst, lhs, rhs, code),
+		&LirInstr::GeU64(dst, lhs, rhs) => unsigned_greater_than_eq_64(dst, lhs, rhs, code),
+		&LirInstr::LtU64(dst, lhs, rhs) => unsigned_less_than_64(dst, lhs, rhs, code),
+		&LirInstr::LeU64(dst, lhs, rhs) => unsigned_less_than_eq_64(dst, lhs, rhs, code),
+
+		&LirInstr::GtS64(dst, lhs, rhs) => signed_greater_than_64(dst, lhs, rhs, code),
+		&LirInstr::GeS64(dst, lhs, rhs) => signed_greater_than_eq_64(dst, lhs, rhs, code),
+		&LirInstr::LtS64(dst, lhs, rhs) => signed_less_than_64(dst, lhs, rhs, code),
+		&LirInstr::LeS64(dst, lhs, rhs) => signed_less_than_eq_64(dst, lhs, rhs, code),
+
+		&LirInstr::Eq64(dst, lhs, rhs) => {
+			let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+			let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
+			assert_ne!(dst, lhs_lo);
+			assert_ne!(dst, lhs_hi);
+			assert_ne!(dst, rhs_lo);
+			assert_ne!(dst, rhs_hi);
+			code.push(format!("scoreboard players set {dst} 0"));
+			code.push(format!("execute if score {lhs_lo} = {rhs_lo} run execute if score {lhs_hi} = {rhs_hi} run scoreboard players set {dst} 1"));
+		},
+		&LirInstr::Ne64(dst, lhs, rhs) => {
+			let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+			let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
+			assert_ne!(dst, lhs_lo);
+			assert_ne!(dst, lhs_hi);
+			assert_ne!(dst, rhs_lo);
+			assert_ne!(dst, rhs_hi);
+			code.push(format!("execute store success {dst} unless score {lhs_lo} = {rhs_lo}"));
+			code.push(format!("execute unless score {dst} matches 1 run execute store success {dst} unless score {lhs_hi} = {rhs_hi}"));
+		},
+
 		crate::lir::LirInstr::Trunc(_, _) => todo!(),
 
 		&LirInstr::SignExtend8(reg) => {
