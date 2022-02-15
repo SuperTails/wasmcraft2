@@ -4,7 +4,7 @@ use wasmparser::{Type, MemoryImmediate};
 
 use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half}, ssa::TypedSsaVar, jump_mode, JumpMode};
 
-use super::{SsaProgram, SsaFunction, SsaVar, SsaBasicBlock, BlockId, liveness::NoopLivenessInfo, call_graph::NoopCallGraph};
+use super::{SsaProgram, SsaFunction, SsaVar, SsaBasicBlock, BlockId, liveness::{NoopLivenessInfo, LivenessInfo, SimpleLivenessInfo}, call_graph::NoopCallGraph};
 
 trait RegAlloc {
 	fn analyze(ssa_func: &SsaFunction) -> Self;
@@ -85,7 +85,9 @@ impl LirFuncBuilder {
 	}
 }
 
-fn lower_block(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasicBlock, ra: &mut NoopRegAlloc, li: &NoopLivenessInfo, call_graph: &NoopCallGraph, builder: &mut LirFuncBuilder) {
+fn lower_block<L>(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasicBlock, ra: &mut NoopRegAlloc, li: &L, call_graph: &NoopCallGraph, builder: &mut LirFuncBuilder)
+	where L: LivenessInfo
+{
 	fn do_binop<'a, F, G>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: TypedSsaVar, block: &'a mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F, g: G)
 		where
 			F: FnOnce(Register, Register, Register, &'a mut Vec<LirInstr>),
@@ -933,7 +935,7 @@ fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &NoopCall
 
 	let mut builder = LirFuncBuilder::new(ssa_func);
 
-	let liveness_info = NoopLivenessInfo::new(ssa_func);
+	let liveness_info = SimpleLivenessInfo::analyze(ssa_func);
 
 	for (block_id, block) in ssa_func.iter() {
 		lower_block(ssa_func, block_id, block, &mut reg_alloc, &liveness_info, call_graph, &mut builder);

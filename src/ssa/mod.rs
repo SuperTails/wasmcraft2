@@ -333,7 +333,7 @@ impl SsaInstr {
 	}
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct JumpTarget {
 	pub label: BlockId,
 	pub params: Vec<TypedSsaVar>,
@@ -372,6 +372,22 @@ impl SsaTerminator {
 			SsaTerminator::Return(vars) => vars.clone(),
 		}
 	}
+
+	pub fn successors(&self) -> Vec<BlockId> {
+		match self {
+			SsaTerminator::Unreachable => Vec::new(),
+			SsaTerminator::Jump(t) => vec![t.label],
+			SsaTerminator::BranchIf { cond, true_target, false_target } => {
+				vec![true_target.label, false_target.label]
+			}
+			SsaTerminator::BranchTable { cond, default, arms } => {
+				let mut result = vec![default.label];
+				result.extend(arms.iter().map(|t| t.label));
+				result
+			}
+			SsaTerminator::Return(_) => Vec::new(),
+		}
+	}
 }
 
 pub struct SsaFunction {
@@ -386,11 +402,16 @@ impl SsaFunction {
 	}
 
 	pub fn get(&self, block_id: BlockId) -> &SsaBasicBlock {
-		&self.code.iter().find(|(id, _)| *id == block_id).unwrap().1
+		&self.code.iter().find(|(id, _)| *id == block_id).unwrap_or_else(|| panic!("{:?}", block_id)).1
 	}
 
 	pub fn func_id(&self) -> u32 {
 		self.code[0].0.func as u32
+	}
+
+	pub fn entry_point_id(&self) -> BlockId {
+		let func = self.func_id() as usize;
+		BlockId { func, block: 0 }
 	}
 }
 
