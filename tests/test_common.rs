@@ -227,7 +227,9 @@ pub mod wasm_suite_prelude {
 
 		TestState { wasm_file, interp }
 	}
-}*/
+}
+*/
+
 
 pub mod wasm_suite_prelude {
 	use command_parser::CommandParse;

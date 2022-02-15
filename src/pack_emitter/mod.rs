@@ -4,13 +4,15 @@ use command_parser::{CommandParse, parse_command};
 use datapack_common::functions::{Function, Command, command_components::FunctionIdent};
 use wasmparser::Type;
 
-use crate::{lir::{LirProgram, LirFunction, LirBasicBlock, LirInstr, Register, LirTerminator, Condition, Half, DoubleRegister}, ssa::BlockId, jump_mode, JumpMode};
+use crate::{lir::{LirProgram, LirFunction, LirBasicBlock, LirInstr, Register, LirTerminator, Condition, Half, DoubleRegister}, ssa::{BlockId, Memory}, jump_mode, JumpMode};
 
 fn create_scoreboard_init(code: &mut Vec<String>) {
 	code.push("# Set up scoreboard".to_string());
 	code.push("scoreboard objectives remove reg".to_string());
 	code.push("scoreboard objectives add reg dummy".to_string());
+}
 
+fn create_stack_init(code: &mut Vec<String>) {
 	code.push("data modify storage wasm:datastack stack set value {}".to_string());
 	code.push("data modify storage wasm:localstack stack set value {}".to_string());
 	code.push("data modify storage wasm:scratch stack set value {}".to_string());
@@ -29,8 +31,6 @@ fn create_pointers_init(code: &mut Vec<String>) {
 }
 
 fn create_constants_init(constants: &HashSet<i32>, code: &mut Vec<String>) {
-	// TODO:
-
 	let old_style = [-1];
 
 	for v in old_style {
@@ -47,6 +47,40 @@ fn create_constants_init(constants: &HashSet<i32>, code: &mut Vec<String>) {
 	}
 }
 
+fn create_memory_init(memory: &[Memory], code: &mut Vec<String>) {
+	assert!(memory.len() <= 1);
+
+	for (memory_idx, memory) in memory.iter().enumerate() {
+		assert_eq!(memory_idx, 0);
+		assert_eq!(memory.data.len() % 65536, 0);
+		let num_pages = memory.data.len() / 65536;
+		for x_offset in 0..num_pages {
+			// Web assembly page size is 64KiB
+			// Thus an 8x256x8 area where each block is an i32
+			// makes up exactly one page
+
+			// Also note that a single fill command can only fill 32768 blocks,
+			// so we'll just do it one at a time for safety
+			code.push(format!("fill {} 0 0 {} 255 7 minecraft:air replace", x_offset, x_offset + 8));
+			code.push(format!("fill {} 0 0 {} 255 7 minecraft:jukebox{{RecordItem:{{id:\"minecraft:stone\",Count:1b,tag:{{Memory:0}}}}}} replace", x_offset, x_offset + 8));
+		}
+
+		for (word_idx, d) in memory.data.chunks_exact(4).enumerate() {
+			let mut data = [0; 4];
+			data.copy_from_slice(d);
+			let data = i32::from_le_bytes(data);
+
+			if data != 0 {
+				let z = word_idx % 8;
+				let y = (word_idx / 8) % 256;
+				let x = word_idx / (8 * 256);
+				code.push(format!("setblock {x} {y} {z} minecraft:air replace"));
+				code.push(format!("setblock {x} {y} {z} minecraft:jukebox{{RecordItem:{{id:\"minecraft:stone\",Count:1b,tag:{{Memory:{data}}}}}}} replace"))
+			}
+		}
+	}
+}
+
 // init code:
 // create objectives
 // set up globals
@@ -58,10 +92,10 @@ fn create_init_func(program: &LirProgram) -> Function {
 	let mut code = Vec::new();
 
 	create_scoreboard_init(&mut code);
-
+	create_stack_init(&mut code);
 	create_pointers_init(&mut code);
-
 	create_constants_init(&program.constants, &mut code);
+	create_memory_init(&program.memory, &mut code);
 
 	let cmds = code.into_iter().map(|c| c.parse().unwrap()).collect::<Vec<Command>>();
 
