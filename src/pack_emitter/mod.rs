@@ -494,9 +494,40 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 		&LirInstr::DivU(dst, lhs, rhs) => unsigned_div(dst, lhs, rhs, code),
 		&LirInstr::RemS(dst, lhs, rhs) => signed_rem(dst, lhs, rhs, code),
 		&LirInstr::RemU(dst, lhs, rhs) => unsigned_rem(dst, lhs, rhs, code),
+
+		&LirInstr::MulTo64(dst, lhs, rhs) => {
+			let (dst_lo, dst_hi) = dst.split_lo_hi();
+			code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
+			code.push(format!("scoreboard players operation %param1%0 reg = {rhs}"));
+			code.push("function intrinsic:mul_32_to_64".to_string());
+			code.push(format!("scoreboard players operation {dst_lo} = %return%0 reg"));
+			code.push(format!("scoreboard players operation {dst_hi} = %return%1 reg"));
+		}
+
 		&LirInstr::Add64(dst, lhs, rhs) => add_i64(dst, lhs, rhs, code),
-		crate::lir::LirInstr::Sub64(_, _, _) => todo!(),
-		crate::lir::LirInstr::Mul64(_, _, _) => todo!(),
+		&LirInstr::Sub64(dst, lhs, rhs) => {
+			// -rhs == ((-rhs_lo - 1), (-rhs_hi - 1)) + 1
+
+			// TODO: Better way to allocate this register?
+			let tmp = DoubleRegister::temp(11);
+			let (tmp_lo, tmp_hi) = tmp.split_lo_hi();
+
+			let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
+
+			code.push(format!("scoreboard players operation {tmp_lo} = {rhs_lo}"));
+			code.push(format!("scoreboard players operation {tmp_hi} = {rhs_hi}"));
+
+			code.push(format!("scoreboard players operation {tmp_lo} *= %%-1 reg"));
+			code.push(format!("scoreboard players remove {tmp_lo} 1"));
+			code.push(format!("scoreboard players operation {tmp_hi} *= %%-1 reg"));
+			code.push(format!("scoreboard players remove {tmp_lo} 1"));
+
+			let all_ones = 0xFFFF_FFFF_u32 as i32;
+			code.push(format!("execute if score {tmp_lo} matches {all_ones} run scoreboard players add {tmp_hi} 1"));
+			code.push(format!("execute if score {tmp_lo} matches {all_ones} run scoreboard players set {tmp_lo} 0"));
+
+			add_i64(dst, lhs, tmp, code);
+		},
 		crate::lir::LirInstr::DivS64(_, _, _) => todo!(),
 		crate::lir::LirInstr::DivU64(_, _, _) => todo!(),
 		crate::lir::LirInstr::RemS64(_, _, _) => todo!(),
@@ -544,9 +575,46 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 			code.push("function intrinsic:rotr".to_string());
 			code.push(format!("scoreboard players operation {dst} = %param0%0 reg"));
 		}
-		crate::lir::LirInstr::Shl64(_, _, _) => todo!(),
-		crate::lir::LirInstr::ShrS64(_, _, _) => todo!(),
-		crate::lir::LirInstr::ShrU64(_, _, _) => todo!(),
+
+		&LirInstr::Shl64(dst, lhs, rhs) => {
+			let (dst_lo, dst_hi) = dst.split_lo_hi();
+			let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+			let rhs_lo = rhs.lo();
+			code.push(format!("scoreboard players operation %param0%0 reg = {lhs_lo}"));
+			code.push(format!("scoreboard players operation %param0%1 reg = {lhs_hi}"));
+			code.push(format!("scoreboard players operation %param1%0 reg = {rhs_lo}"));
+			code.push("scoreboard players operation %param1%0 reg %= %%32 reg".to_string());
+			code.push("function intrinsic:shl_64".to_string());
+			code.push(format!("scoreboard players operation {dst_lo} = %param0%0 reg"));
+			code.push(format!("scoreboard players operation {dst_hi} = %param0%1 reg"));
+		}
+
+		&LirInstr::ShrS64(dst, lhs, rhs) => {
+			let (dst_lo, dst_hi) = dst.split_lo_hi();
+			let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+			let rhs_lo = rhs.lo();
+
+			code.push(format!("scoreboard players operation %param0%0 reg = {lhs_lo}"));
+			code.push(format!("scoreboard players operation %param0%1 reg = {lhs_hi}"));
+			code.push(format!("scoreboard players operation %param1%0 reg = {rhs_lo}"));
+			code.push("scoreboard players operation %param1%0 reg %= %%64 reg".to_string());
+			code.push("function intrinsic:ashr_i64".to_string());
+			code.push(format!("scoreboard players operation {dst_lo} = %param0%0 reg"));
+			code.push(format!("scoreboard players operation {dst_hi} = %param0%1 reg"));
+		}
+		&LirInstr::ShrU64(dst, lhs, rhs) => {
+			let (dst_lo, dst_hi) = dst.split_lo_hi();
+			let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+			let rhs_lo = rhs.lo();
+
+			code.push(format!("scoreboard players operation %param0%0 reg = {lhs_lo}"));
+			code.push(format!("scoreboard players operation %param0%1 reg = {lhs_hi}"));
+			code.push(format!("scoreboard players operation %param1%0 reg = {rhs_lo}"));
+			code.push("scoreboard players operation %param1%0 reg %= %%64 reg".to_string());
+			code.push("function intrinsic:lshr_i64".to_string());
+			code.push(format!("scoreboard players operation {dst_lo} = %param0%0 reg"));
+			code.push(format!("scoreboard players operation {dst_hi} = %param0%1 reg"));
+		}
 		crate::lir::LirInstr::Rotl64(_, _, _) => todo!(),
 		crate::lir::LirInstr::Rotr64(_, _, _) => todo!(),
 
@@ -662,8 +730,8 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 			assert_ne!(dst, lhs_hi);
 			assert_ne!(dst, rhs_lo);
 			assert_ne!(dst, rhs_hi);
-			code.push(format!("execute store success {dst} unless score {lhs_lo} = {rhs_lo}"));
-			code.push(format!("execute unless score {dst} matches 1 run execute store success {dst} unless score {lhs_hi} = {rhs_hi}"));
+			code.push(format!("execute store success score {dst} unless score {lhs_lo} = {rhs_lo}"));
+			code.push(format!("execute unless score {dst} matches 1 run execute store success score {dst} unless score {lhs_hi} = {rhs_hi}"));
 		},
 
 		crate::lir::LirInstr::Trunc(_, _) => todo!(),

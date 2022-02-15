@@ -326,9 +326,16 @@ impl LirInterpreter {
 			&LirInstr::DivU(dst, lhs, rhs) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| (a as u32).wrapping_div(b as u32) as i32),
 			&LirInstr::RemS(dst, lhs, rhs) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| a.wrapping_rem(b)),
 			&LirInstr::RemU(dst, lhs, rhs) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| (a as u32).wrapping_rem(b as u32) as i32),
+
+			&LirInstr::MulTo64 (dst, lhs, rhs) => {
+				let l = self.registers.get(lhs);
+				let r = self.registers.get(rhs);
+
+				self.registers.set_64(dst, (l as u32 as i64) * (r as u32 as i64));
+			}
+
 			&LirInstr::Add64 (dst, lhs, rhs) => do_binaryop64(dst, lhs, rhs, &mut self.registers, |a, b| a.wrapping_add(b)),
 			&LirInstr::Sub64 (dst, lhs, rhs) => do_binaryop64(dst, lhs, rhs, &mut self.registers, |a, b| a.wrapping_sub(b)),
-			&LirInstr::Mul64 (dst, lhs, rhs) => do_binaryop64(dst, lhs, rhs, &mut self.registers, |a, b| a.wrapping_mul(b)),
 			&LirInstr::DivS64(dst, lhs, rhs) => do_binaryop64(dst, lhs, rhs, &mut self.registers, |a, b| a.wrapping_div(b)),
 			&LirInstr::DivU64(dst, lhs, rhs) => do_binaryop64(dst, lhs, rhs, &mut self.registers, |a, b| (a as u64).wrapping_div(b as u64) as i64),
 			&LirInstr::RemS64(dst, lhs, rhs) => do_binaryop64(dst, lhs, rhs, &mut self.registers, |a, b| a.wrapping_rem(b)),

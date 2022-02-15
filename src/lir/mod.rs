@@ -175,9 +175,10 @@ pub enum LirInstr {
 	RemS(Register, Register, Register),
 	RemU(Register, Register, Register),
 
+	MulTo64(DoubleRegister, Register, Register),
+
 	Add64(DoubleRegister, DoubleRegister, DoubleRegister),
 	Sub64(DoubleRegister, DoubleRegister, DoubleRegister),
-	Mul64(DoubleRegister, DoubleRegister, DoubleRegister),
 	DivS64(DoubleRegister, DoubleRegister, DoubleRegister),
 	DivU64(DoubleRegister, DoubleRegister, DoubleRegister),
 	RemS64(DoubleRegister, DoubleRegister, DoubleRegister),

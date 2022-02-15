@@ -14,16 +14,19 @@ trait RegAlloc {
 	fn get_double(&self, val: SsaVar) -> DoubleRegister;
 
 	fn get_const(&mut self, val: i32) -> Register;
+
+	fn get_temp(&mut self) -> Register;
 }
 
 struct NoopRegAlloc {
 	const_pool: HashSet<i32>,
 	func: u32,
+	temp: u32,
 }
 
 impl RegAlloc for NoopRegAlloc {
 	fn analyze(func: &SsaFunction) -> Self {
-		NoopRegAlloc { const_pool: HashSet::new(), func: func.iter().next().unwrap().0.func as u32 }
+		NoopRegAlloc { const_pool: HashSet::new(), func: func.iter().next().unwrap().0.func as u32, temp: 1000 }
 	}
 
 	fn get(&self, val: SsaVar) -> Register {
@@ -37,6 +40,12 @@ impl RegAlloc for NoopRegAlloc {
 	fn get_const(&mut self, val: i32) -> Register {
 		self.const_pool.insert(val);
 		Register::const_val(val)
+	}
+
+	fn get_temp(&mut self) -> Register {
+		let reg = Register::temp_lo(self.temp);
+		self.temp += 1;
+		reg
 	}
 }
 
@@ -325,8 +334,18 @@ fn lower_block<L>(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBa
 					block.push(LirInstr::Mul(dst, rhs));
 				};
 
-				let i64_mul = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
-					block.push(LirInstr::Mul64(dst, lhs, rhs));
+				let t = ra.get_temp();
+
+				let i64_mul = |dst, lhs: DoubleRegister, rhs: DoubleRegister, block: &mut Vec<LirInstr>| {
+					block.push(LirInstr::MulTo64(dst, lhs.lo(), rhs.lo()));
+
+					block.push(LirInstr::Assign(t, lhs.lo()));
+					block.push(LirInstr::Mul(t, rhs.hi()));
+					block.push(LirInstr::Add(dst.hi(), t));
+
+					block.push(LirInstr::Assign(t, lhs.hi()));
+					block.push(LirInstr::Mul(t, rhs.lo()));
+					block.push(LirInstr::Add(dst.hi(), t));
 				};
 
 				do_binop(dst, lhs, rhs, &mut block, ra, i32_mul, i64_mul);

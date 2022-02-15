@@ -245,6 +245,36 @@ use wasmparser::Type;
 		interp: Interpreter,
 	}
 
+	pub fn set_params(interp: &mut Interpreter, func_params: &[TypedValue]) {
+		for (param_idx, param) in func_params.iter().enumerate() {
+			match *param {
+				TypedValue::I32(v) => {
+					let param_pair = Register::param_lo(param_idx as u32).to_string();
+					let (holder, obj) = param_pair.split_once(' ').unwrap();
+					let holder = ScoreHolder::new(holder.to_owned()).unwrap();
+					let obj = Objective::new(obj.to_owned()).unwrap();
+					interp.scoreboard.set(&holder, &obj, v);
+				}
+				TypedValue::I64(v) => {
+					let v_lo = v as i32;
+					let v_hi = (v >> 32) as i32;
+
+					let param_pair_lo = Register::param_lo(param_idx as u32).to_string();
+					let (holder_lo, obj_lo) = param_pair_lo.split_once(' ').unwrap();
+					let holder_lo = ScoreHolder::new(holder_lo.to_owned()).unwrap();
+					let obj_lo = Objective::new(obj_lo.to_owned()).unwrap();
+					interp.scoreboard.set(&holder_lo, &obj_lo, v_lo);
+
+					let param_pair_hi = Register::param_hi(param_idx as u32).to_string();
+					let (holder_hi, obj_hi) = param_pair_hi.split_once(' ').unwrap();
+					let holder_hi = ScoreHolder::new(holder_hi.to_owned()).unwrap();
+					let obj_hi = Objective::new(obj_hi.to_owned()).unwrap();
+					interp.scoreboard.set(&holder_hi, &obj_hi, v_hi);
+				}
+			}
+		}
+	}
+
 	pub fn eval(expr: &SExpr, test_state: Option<&mut TestState>) -> Vec<TypedValue> {
 		match expr {
 			SExpr::Node { name, params } if name == "invoke" => {
@@ -261,33 +291,7 @@ use wasmparser::Type;
 
 				let func_params = func_params.iter().map(|p| eval_single(p, Some(test_state))).collect::<Vec<_>>();
 
-				for (param_idx, param) in func_params.into_iter().enumerate() {
-					match param {
-						TypedValue::I32(v) => {
-							let param_pair = Register::param_lo(param_idx as u32).to_string();
-							let (holder, obj) = param_pair.split_once(' ').unwrap();
-							let holder = ScoreHolder::new(holder.to_owned()).unwrap();
-							let obj = Objective::new(obj.to_owned()).unwrap();
-							test_state.interp.scoreboard.set(&holder, &obj, v);
-						}
-						TypedValue::I64(v) => {
-							let v_lo = v as i32;
-							let v_hi = (v >> 32) as i32;
-
-							let param_pair_lo = Register::param_lo(param_idx as u32).to_string();
-							let (holder_lo, obj_lo) = param_pair_lo.split_once(' ').unwrap();
-							let holder_lo = ScoreHolder::new(holder_lo.to_owned()).unwrap();
-							let obj_lo = Objective::new(obj_lo.to_owned()).unwrap();
-							test_state.interp.scoreboard.set(&holder_lo, &obj_lo, v_lo);
-
-							let param_pair_hi = Register::param_hi(param_idx as u32).to_string();
-							let (holder_hi, obj_hi) = param_pair_hi.split_once(' ').unwrap();
-							let holder_hi = ScoreHolder::new(holder_hi.to_owned()).unwrap();
-							let obj_hi = Objective::new(obj_hi.to_owned()).unwrap();
-							test_state.interp.scoreboard.set(&holder_hi, &obj_hi, v_hi);
-						}
-					}
-				}
+				set_params(&mut test_state.interp, &func_params);
 
 				let func_idx = test_state.wasm_file.find_func(func_name).unwrap();
 				let return_tys = &test_state.wasm_file.func_type(func_idx).returns;
