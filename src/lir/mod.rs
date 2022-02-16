@@ -271,6 +271,11 @@ pub enum LirInstr {
 
 	PushLocalFrame(Vec<Type>),
 	PopLocalFrame(Vec<Type>),
+
+	TurtleSetX(Register),
+	TurtleSetY(Register),
+	TurtleSetZ(Register),
+	TurtleSetBlock(Register),
 }
 
 impl LirInstr {

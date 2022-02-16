@@ -517,6 +517,32 @@ fn signed_greater_than_eq_64(dst: Register, lhs: DoubleRegister, rhs: DoubleRegi
 	signed_less_than_eq_64(dst, rhs, lhs, code)
 }
 
+static BLOCKS: [&str; 10] = [
+	"minecraft:air",
+	"minecraft:cobblestone",
+	"minecraft:granite",
+	"minecraft:andesite",
+	"minecraft:diorite",
+	"minecraft:lapis_block",
+	"minecraft:iron_block",
+	"minecraft:gold_block",
+	"minecraft:diamond_block",
+	"minecraft:redstone_block",
+];
+
+fn turtle_set_block(reg: Register, code: &mut Vec<String>) {
+	for (idx, block) in BLOCKS.iter().enumerate() {
+		code.push(format!("execute at @e[tag=turtle] if score {reg} matches {idx} run setblock ~ ~ ~ {block} destroy"));
+	}
+
+	let mut s = format!("execute unless score {reg} matches 0..{} run ", BLOCKS.len() - 1);
+	s.push_str(r#"tellraw @a [{"text":"Attempt to set invalid block"},{"score":{"name":""#);
+	s.push_str(&reg.to_string());
+	s.push_str(r#"","objective":"reg"}}]"#);
+	code.push(s);
+
+}
+
 
 fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 	match instr {
@@ -956,6 +982,17 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 		}
 		LirInstr::PushLocalFrame(ty) => push_local_frame(ty, code),
 		LirInstr::PopLocalFrame(ty) => pop_local_frame(ty, code),
+
+		LirInstr::TurtleSetX(x) => {
+			code.push(format!("execute as @e[tag=turtle] store result entity @s Pos[0] double 1 run scoreboard players get {x}"));
+		}
+		LirInstr::TurtleSetY(y) => {
+			code.push(format!("execute as @e[tag=turtle] store result entity @s Pos[1] double 1 run scoreboard players get {y}"));
+		}
+		LirInstr::TurtleSetZ(z) => {
+			code.push(format!("execute as @e[tag=turtle] store result entity @s Pos[2] double 1 run scoreboard players get {z}"));
+		}
+		LirInstr::TurtleSetBlock(z) => turtle_set_block(*z, code),
 	}
 }
 

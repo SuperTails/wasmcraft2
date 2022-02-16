@@ -64,7 +64,7 @@ impl<'a> GlobalList<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct FuncImport<'a> {
+pub struct FuncImport<'a> {
     pub module: &'a str,
     pub field: Option<&'a str>,
     pub ty: u32,
@@ -278,6 +278,10 @@ impl<'a> WasmFile<'a> {
         }
 
         result
+    }
+
+    pub fn func_import(&self, func_idx: usize) -> FuncImport {
+        self.imports.func_imports[func_idx]
     }
 
     pub fn find_func(&self, name: &str) -> Option<usize> {

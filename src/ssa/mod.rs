@@ -190,7 +190,14 @@ pub enum SsaInstr {
 		table_entry: TypedSsaVar,
 		params: Vec<TypedSsaVar>,
 		returns: Vec<TypedSsaVar>,
-	}
+	},
+
+	// Minecraft IO instructions
+
+	TurtleSetX(TypedSsaVar),
+	TurtleSetY(TypedSsaVar),
+	TurtleSetZ(TypedSsaVar),
+	TurtleSetBlock(TypedSsaVar),
 }
 
 impl SsaInstr {
@@ -260,7 +267,12 @@ impl SsaInstr {
 			SsaInstr::Call { function_index: _, params, returns: _ } => params.clone(),
 			SsaInstr::CallIndirect { table_index: _, table_entry, params, returns: _ } => {
 				params.iter().copied().chain(Some(*table_entry)).collect()
-			}
+			},
+
+			SsaInstr::TurtleSetX(x) => vec![*x],
+			SsaInstr::TurtleSetY(y) => vec![*y],
+			SsaInstr::TurtleSetZ(z) => vec![*z],
+			SsaInstr::TurtleSetBlock(b) => vec![*b],
 		}
 	}
 
@@ -329,6 +341,11 @@ impl SsaInstr {
 			SsaInstr::Select { dst, true_var: _, false_var: _, cond: _ } => vec![*dst],
 			SsaInstr::Call { function_index: _, params: _, returns } => returns.clone(),
 			SsaInstr::CallIndirect { returns, .. } => returns.clone(),
+
+			SsaInstr::TurtleSetX(_) => Vec::new(),
+			SsaInstr::TurtleSetY(_) => Vec::new(),
+			SsaInstr::TurtleSetZ(_) => Vec::new(),
+			SsaInstr::TurtleSetBlock(_) => Vec::new(),
 		}
 	}
 }

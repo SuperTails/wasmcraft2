@@ -793,11 +793,38 @@ impl ValidationState<'_> {
 				validator.push_values(&returns);
 
 				if let Some(params) = params {
-					builder.current_block_mut().body.push(SsaInstr::Call {
-						function_index,
-						params,
-						returns,
-					});
+					if !wasm_file.func_is_defined(function_index as usize) {
+						let import = wasm_file.func_import(function_index as usize);
+						match (import.module, import.field.unwrap()) {
+							("env", "turtle_x") => {
+								assert_eq!(params.len(), 1);
+								assert_eq!(returns.len(), 0);
+								builder.current_block_mut().body.push(SsaInstr::TurtleSetX(params[0]));
+							}
+							("env", "turtle_y") => {
+								assert_eq!(params.len(), 1);
+								assert_eq!(returns.len(), 0);
+								builder.current_block_mut().body.push(SsaInstr::TurtleSetY(params[0]));
+							}
+							("env", "turtle_z") => {
+								assert_eq!(params.len(), 1);
+								assert_eq!(returns.len(), 0);
+								builder.current_block_mut().body.push(SsaInstr::TurtleSetZ(params[0]));
+							}
+							("env", "turtle_set") => {
+								assert_eq!(params.len(), 1);
+								assert_eq!(returns.len(), 0);
+								builder.current_block_mut().body.push(SsaInstr::TurtleSetBlock(params[0]));
+							}
+							_ => todo!("{:?}", import),
+						}
+					} else {
+						builder.current_block_mut().body.push(SsaInstr::Call {
+							function_index,
+							params,
+							returns,
+						});
+					}
 				}
 			}
 			&Operator::CallIndirect { index, table_index } => {

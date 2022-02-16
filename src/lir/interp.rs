@@ -490,6 +490,11 @@ impl LirInterpreter {
 			LirInstr::PopLocalFrame(tys) => {
 				self.local_stack.pop(tys);
 			}
+
+			LirInstr::TurtleSetX(_) |
+			LirInstr::TurtleSetY(_) |
+			LirInstr::TurtleSetZ(_) |
+			LirInstr::TurtleSetBlock(_) => panic!("attempt to use minecraft IO from LIR interpreter"),
 		}
 
 		if incr_pc {

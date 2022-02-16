@@ -690,6 +690,23 @@ fn lower_block<L>(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBa
 
 				emit_copy_from_returns(&mut block, returns, ra);
 			}
+
+			&super::SsaInstr::TurtleSetX(v) => {
+				let reg = ra.get(v.unwrap_i32());
+				block.push(LirInstr::TurtleSetX(reg));
+			}
+			&super::SsaInstr::TurtleSetY(v) => {
+				let reg = ra.get(v.unwrap_i32());
+				block.push(LirInstr::TurtleSetY(reg));
+			}
+			&super::SsaInstr::TurtleSetZ(v) => {
+				let reg = ra.get(v.unwrap_i32());
+				block.push(LirInstr::TurtleSetZ(reg));
+			}
+			&super::SsaInstr::TurtleSetBlock(v) => {
+				let reg = ra.get(v.unwrap_i32());
+				block.push(LirInstr::TurtleSetBlock(reg));
+			}
 		}
 	}
 
