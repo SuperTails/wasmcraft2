@@ -1,10 +1,10 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path};
 
 use command_parser::{CommandParse, parse_command};
 use datapack_common::functions::{Function, Command, command_components::FunctionIdent};
 use wasmparser::Type;
 
-use crate::{lir::{LirProgram, LirFunction, LirBasicBlock, LirInstr, Register, LirTerminator, Condition, Half, DoubleRegister}, ssa::{BlockId, Memory}, jump_mode, JumpMode};
+use crate::{lir::{LirProgram, LirFunction, LirBasicBlock, LirInstr, Register, LirTerminator, Condition, Half, DoubleRegister}, ssa::{BlockId, Memory, interp::TypedValue}, jump_mode, JumpMode};
 
 fn create_scoreboard_init(code: &mut Vec<String>) {
 	code.push("# Set up scoreboard".to_string());
@@ -45,6 +45,10 @@ fn create_constants_init(constants: &HashSet<i32>, code: &mut Vec<String>) {
 	for v in constants.iter() {
 		code.push(format!("scoreboard players set %const%{v} reg {v}"));
 	}
+
+	for v in [0] {
+		code.push(format!("scoreboard players set %const%{v} reg {v}"));
+	}
 }
 
 fn create_memory_init(memory: &[Memory], code: &mut Vec<String>) {
@@ -81,6 +85,24 @@ fn create_memory_init(memory: &[Memory], code: &mut Vec<String>) {
 	}
 }
 
+fn create_globals_init(globals: &[TypedValue], code: &mut Vec<String>) {
+	for (idx, val) in globals.iter().enumerate() {
+		match val {
+			TypedValue::I32(v) => {
+				let reg = Register::global_lo(idx as u32);
+				code.push(format!("scoreboard players set {reg} {v}"));
+			}
+			TypedValue::I64(v) => {
+				let v_lo = *v as i32;
+				let v_hi = (*v >> 32) as i32;
+				let (r_lo, r_hi) = DoubleRegister::global(idx as u32).split_lo_hi();
+				code.push(format!("scoreboard players set {r_lo} {v_lo}"));
+				code.push(format!("scoreboard players set {r_hi} {v_hi}"));
+			}
+		}
+	}
+}
+
 // init code:
 // create objectives
 // set up globals
@@ -96,6 +118,7 @@ fn create_init_func(program: &LirProgram) -> Function {
 	create_pointers_init(&mut code);
 	create_constants_init(&program.constants, &mut code);
 	create_memory_init(&program.memory, &mut code);
+	create_globals_init(&program.globals, &mut code);
 
 	let cmds = code.into_iter().map(|c| c.parse().unwrap()).collect::<Vec<Command>>();
 
@@ -106,26 +129,38 @@ fn create_init_func(program: &LirProgram) -> Function {
 }
 
 
-fn push_data(reg: Register, code: &mut Vec<String>) {
-	code.push(format!("execute store result storage wasm:scratch stack.data int 1 run scoreboard players get {reg}"));
+fn push_data(regs: &[Register], code: &mut Vec<String>) {
+	let arr = create_zeroed_array(regs.len());
+	code.push(format!("data modify storage wasm:scratch stack.data set value {arr}"));
+	for (idx, reg) in regs.iter().enumerate() {
+		code.push(format!("execute store result storage wasm:scratch stack.data[{idx}] int 1 run scoreboard players get {reg}"));
+	}
 	code.push("data modify storage wasm:scratch stack.tail set from storage wasm:datastack stack".to_string());
 	code.push("data modify storage wasm:datastack stack set from storage wasm:scratch stack".to_string());
 }
 
-fn pop_data(reg: Register, code: &mut Vec<String>) {
-	code.push(format!("execute store result score {reg} run data get storage wasm:datastack stack.data 1"));
+fn pop_data(regs: &[Register], code: &mut Vec<String>) {
+	for (idx, reg) in regs.iter().enumerate() {
+		code.push(format!("execute store result score {reg} run data get storage wasm:datastack stack.data[{idx}] 1"));
+	}
 	code.push("data modify storage wasm:datastack stack set from storage wasm:datastack stack.tail".to_string());
 }
 
-fn push_local_frame(ty: &[Type], code: &mut Vec<String>) {
-	let mut arr = "[".to_string();
-	for i in 0..ty.len() {
-		arr.push_str("0, 0");
-		if i != ty.len() - 1 {
+fn create_zeroed_array(count: usize) -> String {
+	let mut arr = '['.to_string();
+	for i in 0..count {
+		arr.push_str("0");
+		if i != count - 1 {
 			arr.push_str(", ")
 		}
 	}
 	arr.push(']');
+
+	arr
+}
+
+fn push_local_frame(ty: &[Type], code: &mut Vec<String>) {
+	let arr = create_zeroed_array(ty.len() * 2);
 
 	code.push(format!("data modify storage wasm:scratch stack.data set value {arr}"));
 	code.push("data modify storage wasm:scratch stack.tail set from storage wasm:localstack stack".to_string());
@@ -520,18 +555,81 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 			code.push(format!("scoreboard players operation {tmp_lo} *= %%-1 reg"));
 			code.push(format!("scoreboard players remove {tmp_lo} 1"));
 			code.push(format!("scoreboard players operation {tmp_hi} *= %%-1 reg"));
-			code.push(format!("scoreboard players remove {tmp_lo} 1"));
+			code.push(format!("scoreboard players remove {tmp_hi} 1"));
 
 			let all_ones = 0xFFFF_FFFF_u32 as i32;
 			code.push(format!("execute if score {tmp_lo} matches {all_ones} run scoreboard players add {tmp_hi} 1"));
-			code.push(format!("execute if score {tmp_lo} matches {all_ones} run scoreboard players set {tmp_lo} 0"));
+			code.push(format!("scoreboard players add {tmp_lo} 1"));
 
 			add_i64(dst, lhs, tmp, code);
 		},
-		crate::lir::LirInstr::DivS64(_, _, _) => todo!(),
-		crate::lir::LirInstr::DivU64(_, _, _) => todo!(),
-		crate::lir::LirInstr::RemS64(_, _, _) => todo!(),
-		crate::lir::LirInstr::RemU64(_, _, _) => todo!(),
+
+		&LirInstr::DivS64(dst, lhs, rhs) => {
+			let (p0_lo, p0_hi) = DoubleRegister::param(0).split_lo_hi();
+			let (p1_lo, p1_hi) = DoubleRegister::param(1).split_lo_hi();
+			let (ret_lo, ret_hi) = DoubleRegister::return_reg(0).split_lo_hi();
+			let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+			let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
+			let (dst_lo, dst_hi) = dst.split_lo_hi();
+
+			code.push(format!("scoreboard players operation {p0_lo} = {lhs_lo}"));
+			code.push(format!("scoreboard players operation {p0_hi} = {lhs_hi}"));
+			code.push(format!("scoreboard players operation {p1_lo} = {rhs_lo}"));
+			code.push(format!("scoreboard players operation {p1_hi} = {rhs_hi}"));
+			code.push("function intrinsic:i64_sdiv".to_string());
+			code.push(format!("scoreboard players operation {dst_lo} = {ret_lo}"));
+			code.push(format!("scoreboard players operation {dst_hi} = {ret_hi}"));
+		}
+		&LirInstr::DivU64(dst, lhs, rhs) => {
+			let (p0_lo, p0_hi) = DoubleRegister::param(0).split_lo_hi();
+			let (p1_lo, p1_hi) = DoubleRegister::param(1).split_lo_hi();
+			let (ret_lo, ret_hi) = DoubleRegister::return_reg(0).split_lo_hi();
+			let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+			let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
+			let (dst_lo, dst_hi) = dst.split_lo_hi();
+
+			code.push(format!("scoreboard players operation {p0_lo} = {lhs_lo}"));
+			code.push(format!("scoreboard players operation {p0_hi} = {lhs_hi}"));
+			code.push(format!("scoreboard players operation {p1_lo} = {rhs_lo}"));
+			code.push(format!("scoreboard players operation {p1_hi} = {rhs_hi}"));
+			code.push("function intrinsic:i64_udiv".to_string());
+			code.push(format!("scoreboard players operation {dst_lo} = {ret_lo}"));
+			code.push(format!("scoreboard players operation {dst_hi} = {ret_hi}"));
+		}
+		&LirInstr::RemS64(dst, lhs, rhs) => {
+			let (p0_lo, p0_hi) = DoubleRegister::param(0).split_lo_hi();
+			let (p1_lo, p1_hi) = DoubleRegister::param(1).split_lo_hi();
+			let (ret_lo, ret_hi) = DoubleRegister::return_reg(0).split_lo_hi();
+			let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+			let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
+			let (dst_lo, dst_hi) = dst.split_lo_hi();
+
+			code.push(format!("scoreboard players operation {p0_lo} = {lhs_lo}"));
+			code.push(format!("scoreboard players operation {p0_hi} = {lhs_hi}"));
+			code.push(format!("scoreboard players operation {p1_lo} = {rhs_lo}"));
+			code.push(format!("scoreboard players operation {p1_hi} = {rhs_hi}"));
+			code.push("function intrinsic:i64_srem".to_string());
+			code.push(format!("scoreboard players operation {dst_lo} = {ret_lo}"));
+			code.push(format!("scoreboard players operation {dst_hi} = {ret_hi}"));
+		}
+		&LirInstr::RemU64(dst, lhs, rhs) => {
+			let (p0_lo, p0_hi) = DoubleRegister::param(0).split_lo_hi();
+			let (p1_lo, p1_hi) = DoubleRegister::param(1).split_lo_hi();
+			let (ret_lo, ret_hi) = DoubleRegister::return_reg(0).split_lo_hi();
+			let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+			let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
+			let (dst_lo, dst_hi) = dst.split_lo_hi();
+
+			code.push(format!("scoreboard players operation {p0_lo} = {lhs_lo}"));
+			code.push(format!("scoreboard players operation {p0_hi} = {lhs_hi}"));
+			code.push(format!("scoreboard players operation {p1_lo} = {rhs_lo}"));
+			code.push(format!("scoreboard players operation {p1_hi} = {rhs_hi}"));
+			code.push("function intrinsic:i64_urem".to_string());
+			code.push(format!("scoreboard players operation {dst_lo} = {ret_lo}"));
+			code.push(format!("scoreboard players operation {dst_hi} = {ret_hi}"));
+
+		}
+
 		&LirInstr::Shl(dst, lhs, rhs) => {
 			code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
 			code.push(format!("scoreboard players operation %param1%0 reg = {rhs}"));
@@ -583,7 +681,7 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 			code.push(format!("scoreboard players operation %param0%0 reg = {lhs_lo}"));
 			code.push(format!("scoreboard players operation %param0%1 reg = {lhs_hi}"));
 			code.push(format!("scoreboard players operation %param1%0 reg = {rhs_lo}"));
-			code.push("scoreboard players operation %param1%0 reg %= %%32 reg".to_string());
+			code.push("scoreboard players operation %param1%0 reg %= %%64 reg".to_string());
 			code.push("function intrinsic:shl_64".to_string());
 			code.push(format!("scoreboard players operation {dst_lo} = %param0%0 reg"));
 			code.push(format!("scoreboard players operation {dst_hi} = %param0%1 reg"));
@@ -615,8 +713,32 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 			code.push(format!("scoreboard players operation {dst_lo} = %param0%0 reg"));
 			code.push(format!("scoreboard players operation {dst_hi} = %param0%1 reg"));
 		}
-		crate::lir::LirInstr::Rotl64(_, _, _) => todo!(),
-		crate::lir::LirInstr::Rotr64(_, _, _) => todo!(),
+		&LirInstr::Rotl64(dst, lhs, rhs) => {
+			let (dst_lo, dst_hi) = dst.split_lo_hi();
+			let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+			let rhs_lo = rhs.lo();
+
+			code.push(format!("scoreboard players operation %param0%0 reg = {lhs_lo}"));
+			code.push(format!("scoreboard players operation %param0%1 reg = {lhs_hi}"));
+			code.push(format!("scoreboard players operation %param1%0 reg = {rhs_lo}"));
+			code.push("scoreboard players operation %param1%0 reg %= %%64 reg".to_string());
+			code.push("function intrinsic:rotl_64".to_string());
+			code.push(format!("scoreboard players operation {dst_lo} = %param0%0 reg"));
+			code.push(format!("scoreboard players operation {dst_hi} = %param0%1 reg"));
+		}
+		&LirInstr::Rotr64(dst, lhs, rhs) => {
+			let (dst_lo, dst_hi) = dst.split_lo_hi();
+			let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
+			let rhs_lo = rhs.lo();
+
+			code.push(format!("scoreboard players operation %param0%0 reg = {lhs_lo}"));
+			code.push(format!("scoreboard players operation %param0%1 reg = {lhs_hi}"));
+			code.push(format!("scoreboard players operation %param1%0 reg = {rhs_lo}"));
+			code.push("scoreboard players operation %param1%0 reg %= %%64 reg".to_string());
+			code.push("function intrinsic:rotr_64".to_string());
+			code.push(format!("scoreboard players operation {dst_lo} = %param0%0 reg"));
+			code.push(format!("scoreboard players operation {dst_hi} = %param0%1 reg"));
+		}
 
 		&LirInstr::Xor(dst, lhs, rhs) => {
 			code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
@@ -810,8 +932,8 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 				todo!()
 			}
 		}
-		&LirInstr::Push(reg) => push_data(reg, code),
-		&LirInstr::Pop(reg) => pop_data(reg, code),
+		LirInstr::Push(reg) => push_data(reg, code),
+		LirInstr::Pop(reg) => pop_data(reg, code),
 		LirInstr::IfCond { cond, instr } => {
 			let mut child = Vec::new();
 			emit_instr(instr, parent, &mut child);
@@ -972,4 +1094,157 @@ pub fn emit_program(lir_program: &LirProgram) -> Vec<Function> {
 	result.push(init_func);
 
 	result
+}
+
+pub struct Datapack {
+    pub description: String,
+}
+
+impl Datapack {
+    /*
+    pub fn run_index(&self) -> Option<usize> {
+        self.functions
+            .iter()
+            .enumerate()
+            .find(|(_, f)| f.id == FunctionId::new("run"))
+            .map(|(i, _)| i)
+    }
+    */
+
+    pub fn new() -> Self {
+        Self {
+            description: "Autogenerated by wasmcraft".to_string(),
+        }
+    }
+
+    /// Creates a datapack with the given root directory, erasing the previous contents of the folder.
+    pub fn save(&self, output_folder: &Path) -> Result<(), std::io::Error> {
+        if output_folder.exists() {
+            eprintln!("Removing previous contents of output directory");
+            std::fs::remove_dir_all(output_folder)?;
+        }
+
+        std::fs::create_dir(&output_folder)?;
+
+        let mcmeta_contents = r#"
+            { "pack": {
+                "pack_format": 5,
+                "description": "foo"
+            } }
+        "#;
+
+        std::fs::write(
+            output_folder.join("pack.mcmeta"),
+            mcmeta_contents.to_string(),
+        )?;
+
+        /*
+        std::fs::create_dir_all(output_folder.join(Path::new("data/setup/functions/")))?;
+        std::fs::write(
+            output_folder.join(Path::new("data/setup/functions/setup.mcfunction")),
+            SETUP_STR,
+        )?;
+
+        std::fs::create_dir_all(output_folder.join(Path::new("data/stdout/functions/")))?;
+        std::fs::write(
+            output_folder.join(Path::new("data/stdout/functions/putc.mcfunction")),
+            PUTC_STR,
+        )?;
+        std::fs::write(
+            output_folder.join(Path::new("data/stdout/functions/flush.mcfunction")),
+            FLUSH_STR,
+        )?;
+        */
+
+        /*
+        for func in self.functions.iter() {
+            let contents = func
+                .cmds
+                .iter()
+                .map(|cmd| cmd.to_string())
+                .collect::<Vec<_>>();
+
+            let contents = contents.join("\n");
+
+            let path = func.id.path();
+            let path_folders = &path[..path.len() - 1];
+            let file_name = &path[path.len() - 1];
+
+            let mut full_path = output_folder
+                .join(Path::new("data"))
+                .join(Path::new(func.id.namespace()))
+                .join(Path::new("functions"));
+
+            for folder in path_folders {
+                full_path = full_path.join(Path::new(folder));
+            }
+
+            std::fs::create_dir_all(&full_path)?;
+
+            full_path = full_path.join(format!("{}.mcfunction", file_name));
+
+            std::fs::write(full_path, contents.as_bytes())?
+        }
+        */
+
+        Ok(())
+    }
+
+    pub fn write_function(&self, output_folder: &Path, namespace: &str, mut name: &str, contents: &str) -> std::io::Result<()> {
+        let prefix = if let Some((a, b)) = name.split_once('/') {
+            name = b;
+            a
+        } else {
+            ""
+        };
+
+        let func_folder = output_folder.join(format!("data/{}/functions/{}", namespace, prefix));
+        std::fs::create_dir_all(&func_folder)?;
+
+        let func_name = format!("{}.mcfunction", name);
+
+        std::fs::write(func_folder.join(Path::new(&func_name)), contents)?;
+
+        Ok(())
+    }
+}
+
+pub fn persist_program(folder_path: &Path, funcs: &[Function]) {
+	let datapack = Datapack::new();
+
+	datapack.save(folder_path).unwrap();
+	for func in funcs.iter() {
+		if func.id.namespace == "intrinsic" {
+			continue;
+		}
+		let contents = func.cmds.iter().map(ToString::to_string).collect::<Vec<_>>();
+		let contents = contents.join("\n");
+		datapack.write_function(folder_path, "wasmrunner", &func.id.path, &contents).unwrap();
+	}
+
+	for i in std::fs::read_dir("./src/intrinsic").unwrap() {
+		let i = i.unwrap();
+		if i.file_type().unwrap().is_dir() {
+			for j in std::fs::read_dir(i.path()).unwrap() {
+				let j = j.unwrap();
+				if j.file_type().unwrap().is_dir() {
+					todo!()
+				} else {
+					let p = i.file_name();
+					let n = j.file_name();
+					let n = format!("{}/{}", p.to_string_lossy(), n.to_string_lossy());
+					let n = &n[..n.len() - ".mcfunction".len()];
+
+					let contents = std::fs::read_to_string(j.path()).unwrap();
+					datapack.write_function(folder_path, "intrinsic", n, &contents).unwrap();
+				}
+			}
+		} else {
+			let name = i.file_name();
+			let name = name.to_string_lossy();
+			let name = &name[..name.len() - ".mcfunction".len()];
+			let contents = std::fs::read_to_string(i.path()).unwrap();
+			datapack.write_function(folder_path, "intrinsic", name, &contents).unwrap();
+		}
+	}
 }

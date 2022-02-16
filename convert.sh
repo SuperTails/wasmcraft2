@@ -1,0 +1,2 @@
+for f in ./src/intrinsic/i64divrem/*.mcfunction ; do sed -i -E 's/function wasmrunner:(.*)/function intrinsic:i64divrem\/\1/' $f ; done
+for f in ./src/intrinsic/i64divrem/*.mcfunction ; do sed -i -E 's/(%work%[0123]%([0-9]*)%(lo|hi))/\1%temp/g' $f ; done

@@ -103,11 +103,11 @@ impl Register {
 	}
 
 	pub fn global_lo(id: u32) -> Register {
-		DoubleRegister::param(id).lo()
+		DoubleRegister::global(id).lo()
 	}
 
 	pub fn global_hi(id: u32) -> Register {
-		DoubleRegister::param(id).hi()
+		DoubleRegister::global(id).hi()
 	}
 
 	pub fn cond_taken() -> Register {
@@ -264,8 +264,8 @@ pub enum LirInstr {
 	Call { func: u32 },
 	CallIndirect { table_index: u32, table_entry: Register },
 
-	Push(Register),
-	Pop(Register),
+	Push(Vec<Register>),
+	Pop(Vec<Register>),
 
 	IfCond { cond: Condition, instr: Box<LirInstr> },
 

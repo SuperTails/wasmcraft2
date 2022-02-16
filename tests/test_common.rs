@@ -275,6 +275,39 @@ use wasmparser::Type;
 		}
 	}
 
+	pub fn get_returns(interp: &Interpreter, return_tys: &[Type]) -> Vec<TypedValue> {
+		return_tys.iter().enumerate().map(|(idx, ty)| {
+			match ty {
+				Type::I32 => {
+					let param_pair = Register::return_lo(idx as u32).to_string();
+					let (holder, obj) = param_pair.split_once(' ').unwrap();
+					let holder = ScoreHolder::new(holder.to_owned()).unwrap();
+					let obj = Objective::new(obj.to_owned()).unwrap();
+					let v = interp.scoreboard.get(&holder, &obj).unwrap();
+
+					TypedValue::I32(v)
+				}
+				Type::I64 => {
+					let param_pair_lo = Register::return_lo(idx as u32).to_string();
+					let (holder_lo, obj_lo) = param_pair_lo.split_once(' ').unwrap();
+					let holder_lo = ScoreHolder::new(holder_lo.to_owned()).unwrap();
+					let obj_lo = Objective::new(obj_lo.to_owned()).unwrap();
+					let v_lo = interp.scoreboard.get(&holder_lo, &obj_lo).unwrap();
+
+					let param_pair_hi = Register::return_hi(idx as u32).to_string();
+					let (holder_hi, obj_hi) = param_pair_hi.split_once(' ').unwrap();
+					let holder_hi = ScoreHolder::new(holder_hi.to_owned()).unwrap();
+					let obj_hi = Objective::new(obj_hi.to_owned()).unwrap();
+					let v_hi = interp.scoreboard.get(&holder_hi, &obj_hi).unwrap();
+
+					let v = (v_lo as u32 as i64) | ((v_hi as i64) << 32);
+					TypedValue::I64(v)
+				}
+				_ => todo!(),
+			}
+		}).collect()
+	}
+
 	pub fn eval(expr: &SExpr, test_state: Option<&mut TestState>) -> Vec<TypedValue> {
 		match expr {
 			SExpr::Node { name, params } if name == "invoke" => {
@@ -298,41 +331,14 @@ use wasmparser::Type;
 				let func_name = get_mc_id(BlockId { func: func_idx, block: 0 });
 				let (_, func_name) = FunctionIdent::parse_from_command(&func_name).unwrap();
 
+				println!("Calling func {func_name} with params {:?}", func_params);
+
 				let interp_idx = test_state.interp.get_func_idx(&func_name);
 				test_state.interp.set_pos(interp_idx);
 
 				test_state.interp.run_to_end().unwrap();
 
-				return_tys.iter().enumerate().map(|(idx, ty)| {
-					match ty {
-						Type::I32 => {
-							let param_pair = Register::return_lo(idx as u32).to_string();
-							let (holder, obj) = param_pair.split_once(' ').unwrap();
-							let holder = ScoreHolder::new(holder.to_owned()).unwrap();
-							let obj = Objective::new(obj.to_owned()).unwrap();
-							let v = test_state.interp.scoreboard.get(&holder, &obj).unwrap();
-
-							TypedValue::I32(v)
-						}
-						Type::I64 => {
-							let param_pair_lo = Register::return_lo(idx as u32).to_string();
-							let (holder_lo, obj_lo) = param_pair_lo.split_once(' ').unwrap();
-							let holder_lo = ScoreHolder::new(holder_lo.to_owned()).unwrap();
-							let obj_lo = Objective::new(obj_lo.to_owned()).unwrap();
-							let v_lo = test_state.interp.scoreboard.get(&holder_lo, &obj_lo).unwrap();
-
-							let param_pair_hi = Register::return_hi(idx as u32).to_string();
-							let (holder_hi, obj_hi) = param_pair_hi.split_once(' ').unwrap();
-							let holder_hi = ScoreHolder::new(holder_hi.to_owned()).unwrap();
-							let obj_hi = Objective::new(obj_hi.to_owned()).unwrap();
-							let v_hi = test_state.interp.scoreboard.get(&holder_hi, &obj_hi).unwrap();
-
-							let v = (v_lo as u32 as i64) | ((v_hi as i64) << 32);
-							TypedValue::I64(v)
-						}
-						_ => todo!(),
-					}
-				}).collect()
+				get_returns(&test_state.interp, return_tys)
 			}
 			SExpr::Node { name, params } if name == "i32.const" => {
 				if let [SExpr::Int(i)] = &params[..] {

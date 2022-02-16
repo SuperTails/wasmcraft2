@@ -1,1 +1,1 @@
-function intrinsic:i64divrem/__wasm2_0
+function intrinsic:i64divrem/wasm_2_0

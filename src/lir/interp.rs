@@ -471,8 +471,8 @@ impl LirInterpreter {
 				self.call_stack.0.push(Pc { block, instr: 0 });
 			}
 
-			&LirInstr::Push(src) => self.data_stack.push(self.registers.get(src)),
-			&LirInstr::Pop(dst) => self.registers.set(dst, self.data_stack.pop().unwrap()),
+			LirInstr::Push(src) => for &src in src.iter() { self.data_stack.push(self.registers.get(src)) },
+			LirInstr::Pop(dst) => for &dst in dst.iter().rev() { self.registers.set(dst, self.data_stack.pop().unwrap()) },
 
 			super::LirInstr::IfCond { cond, instr } => {
 				let cond = self.check_cond(cond);

@@ -826,38 +826,29 @@ fn emit_copy_from_returns(block: &mut Vec<LirInstr>, vars: &[TypedSsaVar], ra: &
 	}
 }
 
-fn emit_save(block: &mut Vec<LirInstr>, to_save: &[TypedSsaVar], ra: &mut NoopRegAlloc) {
-	for var in to_save.iter() {
+fn get_save_reg_list(to_save: &[TypedSsaVar], ra: &mut NoopRegAlloc) -> Vec<Register> {
+	to_save.iter().flat_map(|var| {
 		match var.ty() {
 			Type::I32 => {
 				let reg = ra.get(var.into_untyped());
-				block.push(LirInstr::Push(reg));
+				[reg, reg].into_iter().take(1)
+				
 			}
 			Type::I64 => {
 				let reg = ra.get_double(var.into_untyped());
-				block.push(LirInstr::Push(reg.lo()));
-				block.push(LirInstr::Push(reg.hi()));
+				[reg.lo(), reg.hi()].into_iter().take(2)
 			}
-			_ => todo!(),
+			_ => todo!()
 		}
-	}
+	}).collect()
+}
+
+fn emit_save(block: &mut Vec<LirInstr>, to_save: &[TypedSsaVar], ra: &mut NoopRegAlloc) {
+	block.push(LirInstr::Push(get_save_reg_list(to_save, ra)));
 }
 
 fn emit_restore(block: &mut Vec<LirInstr>, to_restore: &[TypedSsaVar], ra: &mut NoopRegAlloc) {
-	for var in to_restore.iter().rev() {
-		match var.ty() {
-			Type::I32 => {
-				let reg = ra.get(var.into_untyped());
-				block.push(LirInstr::Pop(reg));
-			}
-			Type::I64 => {
-				let reg = ra.get_double(var.into_untyped());
-				block.push(LirInstr::Pop(reg.hi()));
-				block.push(LirInstr::Pop(reg.lo()));
-			}
-			_ => todo!(),
-		}
-	}
+	block.push(LirInstr::Pop(get_save_reg_list(to_restore, ra)));
 }
 
 fn emit_copy(block: &mut Vec<LirInstr>, in_params: &[TypedSsaVar], out_params: &[TypedSsaVar], ra: &mut NoopRegAlloc, conds: &[Condition]) {
@@ -983,7 +974,7 @@ pub fn convert(ssa_program: SsaProgram) -> LirProgram {
 
 	let code = ssa_program.code.iter().map(|block| lower(block, &ssa_program, &call_graph, &mut constants)).collect::<Vec<_>>();
 
-	for (func_id, func) in code.iter().enumerate().take(5) {
+	for (func_id, func) in code.iter().enumerate() {
 		println!("==== func {:?} ==== ", func_id);
 		for (block_id, block) in func.code.iter() {
 			println!("-- block {:?} --", block_id);

@@ -47,6 +47,8 @@ pub fn run(path: &str) {
 		}
 		println!();
 	}
+
+	pack_emitter::persist_program(std::path::Path::new("../out"), &datapack);
 }
 
 #[derive(Debug, PartialEq, Eq)]
