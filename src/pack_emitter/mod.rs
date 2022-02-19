@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::Path};
+use std::{collections::{HashSet, HashMap}, path::Path};
 
 use command_parser::{CommandParse, parse_command};
 use datapack_common::functions::{Function, Command, command_components::FunctionIdent};
@@ -888,15 +888,15 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 			code.push(format!("scoreboard players operation {reg} %= %%{} reg", u8::MAX as i32 + 1));
 			let lo_bound = i8::MIN as u8 as u32;
 			let hi_bound = u8::MAX as u8 as u32;
-			let high_bits = u32::MAX as i32 & !(u8::MAX as i32);
-			code.push(format!("execute if score {reg} matches {lo_bound}..{hi_bound} run scoreboard players add {reg} {high_bits}"));
+			let high_bits = -(u32::MAX as i32 & !(u8::MAX as i32));
+			code.push(format!("execute if score {reg} matches {lo_bound}..{hi_bound} run scoreboard players remove {reg} {high_bits}"));
 		}
 		&LirInstr::SignExtend16(reg) => {
 			code.push(format!("scoreboard players operation {reg} %= %%{} reg", u16::MAX as i32 + 1));
 			let lo_bound = i16::MIN as u16 as u32;
 			let hi_bound = u16::MAX as u16 as u32;
-			let high_bits = u32::MAX as i32 & !(u16::MAX as i32);
-			code.push(format!("execute if score {reg} matches {lo_bound}..{hi_bound} run scoreboard players add {reg} {high_bits}"));
+			let high_bits = -(u32::MAX as i32 & !(u16::MAX as i32));
+			code.push(format!("execute if score {reg} matches {lo_bound}..{hi_bound} run scoreboard players remove {reg} {high_bits}"));
 		}
 		&LirInstr::SignExtend32(reg) => {
 			let reg_lo = reg.lo();
@@ -1119,6 +1119,21 @@ pub fn load_intrinsics() -> Vec<Function> {
 	result
 }
 
+pub fn make_export_func(name: &str, id: BlockId) -> Function {
+	let wrapper_name = format!("wasmrunner:{name}");
+	let wrapper_id = wrapper_name.parse().unwrap();
+
+	let func_id = get_mc_id(id);
+	let cmd = format!("function {func_id}");
+	let cmd = cmd.parse().unwrap();
+
+	Function { id: wrapper_id, cmds: vec![cmd] }
+}
+
+pub fn add_export_funcs(exports: &HashMap<String, BlockId>, code: &mut Vec<Function>) {
+	code.extend(exports.iter().map(|(name, id)| make_export_func(name, *id)));
+}
+
 pub fn emit_program(lir_program: &LirProgram) -> Vec<Function> {
 	let mut result = Vec::new();
 	result.extend(load_intrinsics());
@@ -1129,6 +1144,8 @@ pub fn emit_program(lir_program: &LirProgram) -> Vec<Function> {
 
 	let init_func = create_init_func(lir_program);
 	result.push(init_func);
+
+	add_export_funcs(&lir_program.exports, &mut result);
 
 	result
 }

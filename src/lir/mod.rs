@@ -1,6 +1,6 @@
 pub mod interp;
 
-use std::{ops::RangeInclusive, fmt, collections::HashSet};
+use std::{ops::RangeInclusive, fmt, collections::{HashSet, HashMap}};
 
 use wasmparser::Type;
 
@@ -318,4 +318,5 @@ pub struct LirProgram {
 	pub tables: Vec<Table>,
 	pub code: Vec<LirFunction>,
 	pub constants: HashSet<i32>,
+	pub exports: HashMap<String, BlockId>,
 }

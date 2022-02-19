@@ -20,3 +20,8 @@ datapack_vm = { path = "../../datapackvm" }
 #datapack_common = { git = "https://github.com/SuperTails/datapack_common.git" }
 datapack_common = { path = "../../datapack_common" }
 command_parser = { git = "https://github.com/Inky-developer/command-parser" }
+
+[dev-dependencies]
+rcon = { version = "0", features = ["rt-async-std"] }
+async-std = "*"
+async-recursion = "1.0"

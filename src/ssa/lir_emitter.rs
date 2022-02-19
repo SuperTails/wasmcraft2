@@ -1002,5 +1002,5 @@ pub fn convert(ssa_program: SsaProgram) -> LirProgram {
 		}
 	}
 
-	LirProgram { code, memory: ssa_program.memory, tables: ssa_program.tables, globals: ssa_program.globals, constants }
+	LirProgram { code, memory: ssa_program.memory, tables: ssa_program.tables, globals: ssa_program.globals, constants, exports: ssa_program.exports }
 }

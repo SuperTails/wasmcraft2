@@ -6,7 +6,7 @@ pub mod ssa;
 pub mod lir;
 pub mod pack_emitter;
 
-pub fn run(path: &str) {
+pub fn run(path: &str, output_path: &str) {
 	let bytes = std::fs::read(path).unwrap();
 
 	let file = wasm_file::WasmFile::from(&bytes[..]);
@@ -48,7 +48,7 @@ pub fn run(path: &str) {
 		println!();
 	}
 
-	pack_emitter::persist_program(std::path::Path::new("../out"), &datapack);
+	pack_emitter::persist_program(std::path::Path::new(output_path), &datapack);
 }
 
 #[derive(Debug, PartialEq, Eq)]

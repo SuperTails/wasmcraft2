@@ -1,6 +1,6 @@
 use std::{ops::{Index, IndexMut}, collections::HashMap};
 
-use wasmparser::{Type, Operator, MemoryImmediate, DataKind, ElementKind, ElementItem};
+use wasmparser::{Type, Operator, MemoryImmediate, DataKind, ElementKind, ElementItem, ExternalKind};
 
 use crate::{wasm_file::{WasmFile, eval_init_expr_single}, ssa::{SsaBasicBlock, BlockId, SsaTerminator, TypedSsaVar, SsaInstr, SsaVarAlloc, JumpTarget, SsaProgram, SsaFunction, Memory, Table}};
 
@@ -1256,6 +1256,16 @@ pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {
 		}
 	}
 
+	let exports = wasm_file.exports.exports.iter().filter_map(|export| {
+		match export.kind {
+			ExternalKind::Function => {
+				let id = BlockId { func: export.index as usize, block: 0 };
+				Some((export.field.to_owned(), id))
+			}
+			ExternalKind::Memory => None,
+			_ => todo!("{:?}", export.kind)
+		}
+	}).collect();
 
 	SsaProgram {
 		local_types,
@@ -1263,5 +1273,6 @@ pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {
 		memory,
 		tables,
 		code,
+		exports,
 	}
 }

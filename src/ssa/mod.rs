@@ -438,6 +438,7 @@ pub struct SsaProgram {
 	pub memory: Vec<Memory>,
 	pub tables: Vec<Table>,
 	pub code: Vec<SsaFunction>,
+	pub exports: HashMap<String, BlockId>,
 }
 
 pub struct Memory {

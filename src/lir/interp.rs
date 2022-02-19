@@ -175,7 +175,7 @@ pub struct LirInterpreter {
 
 impl LirInterpreter {
 	pub fn new(program: LirProgram) -> Self {
-		let LirProgram { globals, memory, tables, code, constants: _ /* TODO: */ } = program;
+		let LirProgram { globals, memory, tables, code, constants: _, exports: _ /* TODO: */ } = program;
 
 		let globals = GlobalList::new(globals);
 

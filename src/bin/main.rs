@@ -3,5 +3,7 @@ fn main() {
 
     let path = &*args[0];
 
-    wasm_runner::run(path);
+    let out = args.get(1).map(|s| &**s).unwrap_or("../out");
+
+    wasm_runner::run(path, out);
 }
