@@ -276,6 +276,7 @@ pub enum LirInstr {
 	TurtleSetY(Register),
 	TurtleSetZ(Register),
 	TurtleSetBlock(Register),
+	TurtleGetBlock(Register),
 
 	PushReturnAddr(BlockId),
 }

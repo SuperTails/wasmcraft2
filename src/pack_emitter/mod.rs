@@ -582,6 +582,13 @@ fn turtle_set_block(reg: Register, code: &mut Vec<String>) {
 
 }
 
+fn turtle_get_block(reg: Register, code: &mut Vec<String>) {
+	code.push(format!("scoreboard players set {reg} 0"));
+	for (idx, block) in BLOCKS.iter().enumerate() {
+		code.push(format!("execute at @e[tag=turtle] run execute if block ~ ~ ~ {block} run scoreboard players set {reg} {idx}"));
+	}
+}
+
 
 fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 	match instr {
@@ -1035,7 +1042,8 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 		LirInstr::TurtleSetZ(z) => {
 			code.push(format!("execute as @e[tag=turtle] store result entity @s Pos[2] double 1 run scoreboard players get {z}"));
 		}
-		LirInstr::TurtleSetBlock(z) => turtle_set_block(*z, code),
+		LirInstr::TurtleSetBlock(r) => turtle_set_block(*r, code),
+		LirInstr::TurtleGetBlock(r) => turtle_get_block(*r, code),
 	}
 }
 
@@ -1060,7 +1068,8 @@ fn emit_block(block_id: BlockId, block: &LirBasicBlock, parent: &LirProgram) -> 
 		}
 		&LirTerminator::ScheduleJump(target, delay) => {
 			if jump_mode() == JumpMode::Direct {
-				code.push(format!("schedule function {} {delay} append", get_mc_id(target)));
+				// TODO: add the "append" keyword
+				code.push(format!("schedule function {} {delay}", get_mc_id(target)));
 			} else {
 				todo!()
 			}

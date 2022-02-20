@@ -521,7 +521,8 @@ impl LirInterpreter {
 			LirInstr::TurtleSetX(_) |
 			LirInstr::TurtleSetY(_) |
 			LirInstr::TurtleSetZ(_) |
-			LirInstr::TurtleSetBlock(_) => panic!("attempt to use minecraft IO from LIR interpreter"),
+			LirInstr::TurtleSetBlock(_) |
+			LirInstr::TurtleGetBlock(_) => panic!("attempt to use minecraft IO from LIR interpreter"),
 		}
 
 		if incr_pc {

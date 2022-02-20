@@ -578,7 +578,8 @@ impl SsaInterpreter {
 				super::SsaInstr::TurtleSetX(_) |
 				super::SsaInstr::TurtleSetY(_) |
 				super::SsaInstr::TurtleSetZ(_) |
-				super::SsaInstr::TurtleSetBlock(_) => panic!("trying to use minecraft IO in SSA interpreter")
+				super::SsaInstr::TurtleSetBlock(_) |
+				super::SsaInstr::TurtleGetBlock(_) => panic!("trying to use minecraft IO in SSA interpreter")
 			}
 
 			if incr_pc {

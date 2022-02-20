@@ -816,6 +816,11 @@ impl ValidationState<'_> {
 								assert_eq!(returns.len(), 0);
 								builder.current_block_mut().body.push(SsaInstr::TurtleSetBlock(params[0]));
 							}
+							("env", "turtle_get") => {
+								assert_eq!(params.len(), 0);
+								assert_eq!(returns.len(), 1);
+								builder.current_block_mut().body.push(SsaInstr::TurtleGetBlock(returns[0]));
+							}
 							("env", "sleep") => {
 								assert_eq!(params.len(), 0);
 								assert_eq!(returns.len(), 0);
