@@ -359,6 +359,7 @@ pub struct JumpTarget {
 #[derive(Debug)]
 pub enum SsaTerminator {
 	Unreachable,
+	ScheduleJump(JumpTarget, u32),
 	Jump(JumpTarget),
 	BranchIf { cond: TypedSsaVar, true_target: JumpTarget, false_target: JumpTarget },
 	BranchTable { cond: TypedSsaVar, default: JumpTarget, arms: Vec<JumpTarget> },
@@ -369,6 +370,9 @@ impl SsaTerminator {
 	pub fn uses(&self) -> Vec<TypedSsaVar> {
 		match self {
 			SsaTerminator::Unreachable => vec![],
+			SsaTerminator::ScheduleJump(target, _) => {
+				target.params.clone()
+			}
 			SsaTerminator::Jump(target) => {
 				target.params.clone()
 			}
@@ -394,10 +398,11 @@ impl SsaTerminator {
 		match self {
 			SsaTerminator::Unreachable => Vec::new(),
 			SsaTerminator::Jump(t) => vec![t.label],
-			SsaTerminator::BranchIf { cond, true_target, false_target } => {
+			SsaTerminator::ScheduleJump(t, _) => vec![t.label],
+			SsaTerminator::BranchIf { cond: _, true_target, false_target } => {
 				vec![true_target.label, false_target.label]
 			}
-			SsaTerminator::BranchTable { cond, default, arms } => {
+			SsaTerminator::BranchTable { cond: _, default, arms } => {
 				let mut result = vec![default.label];
 				result.extend(arms.iter().map(|t| t.label));
 				result

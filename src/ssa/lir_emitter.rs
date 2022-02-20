@@ -94,7 +94,7 @@ impl LirFuncBuilder {
 	}
 }
 
-fn lower_block<L>(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasicBlock, ra: &mut NoopRegAlloc, li: &L, call_graph: &NoopCallGraph, builder: &mut LirFuncBuilder)
+fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasicBlock, ra: &mut NoopRegAlloc, li: &L, call_graph: &NoopCallGraph, builder: &mut LirFuncBuilder)
 	where L: LivenessInfo
 {
 	fn do_binop<'a, F, G>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: TypedSsaVar, block: &'a mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F, g: G)
@@ -650,7 +650,19 @@ fn lower_block<L>(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBa
 
 				match jump_mode() {
 					JumpMode::Direct => {
-						block.push(LirInstr::Call { func: *function_index });
+						if call_graph.is_single_tick(*function_index) {
+							block.push(LirInstr::Call { func: *function_index });
+						} else {
+							let next_block_id = builder.alloc_block_id();
+
+							let entry_point = BlockId { func: *function_index as usize, block: 0 };
+
+							block.push(LirInstr::PushReturnAddr(next_block_id));
+							builder.push(block_id, block, LirTerminator::Jump(entry_point));
+
+							block_id = next_block_id;
+							block = Vec::new();
+						}
 					}
 				}
 
@@ -680,7 +692,25 @@ fn lower_block<L>(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBa
 
 				match jump_mode() {
 					JumpMode::Direct => {
-						block.push(LirInstr::CallIndirect { table_index: *table_index, table_entry })
+						if call_graph.table_is_single_tick(*table_index) {
+							block.push(LirInstr::CallIndirect { table_index: *table_index, table_entry })
+						} else {
+							let next_block_id = builder.alloc_block_id();
+
+							block.push(LirInstr::PushReturnAddr(next_block_id));
+
+							let arms = parent.tables[*table_index as usize].elements.iter().map(|elem| {
+								elem.map(|func_idx| {
+									BlockId { func: func_idx, block: 0 }
+								})
+							}).collect();
+
+							builder.push(block_id, block, LirTerminator::JumpTable { arms, default: None, cond: table_entry });
+
+
+							block_id = next_block_id;
+							block = Vec::new();
+						}
 					}
 				}
 
@@ -712,8 +742,14 @@ fn lower_block<L>(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBa
 
 	match &ssa_block.term {
 		crate::ssa::SsaTerminator::Unreachable => todo!(),
+		crate::ssa::SsaTerminator::ScheduleJump(target, delay) => {
+			assert!(target.params.is_empty());
+			assert!(parent_func.get(target.label).params.is_empty());
+			
+			builder.push(block_id, block, LirTerminator::ScheduleJump(target.label, *delay));
+		}
 		crate::ssa::SsaTerminator::Jump(target) => {
-			let out_params = &parent.get(target.label).params;
+			let out_params = &parent_func.get(target.label).params;
 			emit_copy(&mut block, &target.params, out_params, ra, &[]);
 
 			builder.push(block_id, block, LirTerminator::Jump(target.label));
@@ -726,8 +762,8 @@ fn lower_block<L>(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBa
 			assert_eq!(cond.ty(), Type::I32);
 			let cond = ra.get(cond.into_untyped());
 
-			let true_out_params = &parent.get(true_target.label).params;
-			let false_out_params = &parent.get(false_target.label).params;
+			let true_out_params = &parent_func.get(true_target.label).params;
+			let false_out_params = &parent_func.get(false_target.label).params;
 
 			let true_conds = &[Condition::eq_zero(Register::cond_taken()), Condition::neq_zero(cond)];
 			let false_conds = &[Condition::eq_zero(Register::cond_taken()), Condition::eq_zero(cond)];
@@ -749,7 +785,7 @@ fn lower_block<L>(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBa
 			}
 
 			if arms.is_empty() {
-				let out_params = &parent.get(default.label).params;
+				let out_params = &parent_func.get(default.label).params;
 				emit_copy(&mut block, &default.params, out_params, ra, &[]);
 
 				builder.push(block_id, block, LirTerminator::Jump(default.label));
@@ -757,8 +793,8 @@ fn lower_block<L>(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBa
 				assert_eq!(cond.ty(), Type::I32);
 				let cond = ra.get(cond.into_untyped());
 
-				let default_out_params = &parent.get(default.label).params;
-				let other_out_params = arms.iter().map(|arm| &parent.get(arm.label).params).flatten();
+				let default_out_params = &parent_func.get(default.label).params;
+				let other_out_params = arms.iter().map(|arm| &parent_func.get(arm.label).params).flatten();
 				for out_param in other_out_params.chain(default_out_params.iter()) {
 					assert_ne!(cond, ra.get(out_param.into_untyped()));
 				}
@@ -772,14 +808,14 @@ fn lower_block<L>(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBa
 				emit_copy(&mut block, &default.params, default_out_params, ra, default_conds);
 
 				for (i, arm) in arms.iter().enumerate() {
-					let out_params = &parent.get(arm.label).params;
+					let out_params = &parent_func.get(arm.label).params;
 					let conds = &[Condition::eq_zero(Register::cond_taken()), Condition::eq_const(cond, i as i32)];
 					emit_copy(&mut block, &arm.params, out_params, ra, conds);
 				}
 
-				let arm_labels = arms.iter().map(|arm| arm.label).collect();
+				let arm_labels = arms.iter().map(|arm| Some(arm.label)).collect();
 
-				builder.push(block_id, block, LirTerminator::JumpTable { default: default.label, arms: arm_labels, cond });
+				builder.push(block_id, block, LirTerminator::JumpTable { default: Some(default.label), arms: arm_labels, cond });
 			}
 		}
 		crate::ssa::SsaTerminator::Return(return_vars) => {
@@ -800,7 +836,11 @@ fn lower_block<L>(parent: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBa
 				}
 			}
 
-			builder.push(block_id, block, LirTerminator::Return);
+			if call_graph.is_single_tick(parent_func.func_id()) {
+				builder.push(block_id, block, LirTerminator::Return);
+			} else {
+				builder.push(block_id, block, LirTerminator::ReturnToSaved);
+			}
 		}
 	}
 }
@@ -965,7 +1005,7 @@ fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &NoopCall
 	let liveness_info = SimpleLivenessInfo::analyze(ssa_func);
 
 	for (block_id, block) in ssa_func.iter() {
-		lower_block(ssa_func, block_id, block, &mut reg_alloc, &liveness_info, call_graph, &mut builder);
+		lower_block(ssa_program, ssa_func, block_id, block, &mut reg_alloc, &liveness_info, call_graph, &mut builder);
 	}
 
 	let locals = ssa_program.local_types.get(&(ssa_func.func_id() as usize)).unwrap();

@@ -328,12 +328,13 @@ use wasmparser::Type;
 
 				let func_idx = test_state.wasm_file.find_func(func_name).unwrap();
 				let return_tys = &test_state.wasm_file.func_type(func_idx).returns;
-				let func_name = get_mc_id(BlockId { func: func_idx, block: 0 });
-				let (_, func_name) = FunctionIdent::parse_from_command(&func_name).unwrap();
 
-				println!("Calling func {func_name} with params {:?}", func_params);
+				let mc_func_name = format!("wasmrunner:{func_name}");
+				let (_, mc_func_name) = FunctionIdent::parse_from_command(&mc_func_name).unwrap();
 
-				let interp_idx = test_state.interp.get_func_idx(&func_name);
+				println!("Calling func {mc_func_name} with params {:?}", func_params);
+
+				let interp_idx = test_state.interp.get_func_idx(&mc_func_name);
 				test_state.interp.set_pos(interp_idx);
 
 				test_state.interp.run_to_end().unwrap();

@@ -198,7 +198,8 @@ impl SsaInterpreter {
 		if frame.pc.instr == block.body.len() {
 			match &block.term {
 				super::SsaTerminator::Unreachable => unreachable!(),
-				super::SsaTerminator::Jump(jump) => {
+				super::SsaTerminator::Jump(jump) |
+				super::SsaTerminator::ScheduleJump(jump, _) => {
 					let target_block = self.program.get(&jump.label).unwrap();
 					assert_eq!(target_block.params.len(), jump.params.len());
 					for (&dst, &src) in target_block.params.iter().zip(jump.params.iter()) {

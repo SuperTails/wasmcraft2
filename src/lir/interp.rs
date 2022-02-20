@@ -161,16 +161,37 @@ impl GlobalList {
 	}
 }
 
+#[derive(Debug, Default)]
+pub struct ReturnStack {
+	stack: Vec<Option<BlockId>>,
+}
+
+impl ReturnStack {
+	pub fn push(&mut self, block_id: Option<BlockId>) {
+		self.stack.push(block_id)
+	}
+
+	pub fn pop(&mut self) -> Option<BlockId> {
+		self.stack.pop().unwrap()
+	}
+
+	pub fn is_empty(&self) -> bool {
+		self.stack.is_empty()
+	}
+}
+
 pub struct LirInterpreter {
 	globals: GlobalList,
 	data_stack: Vec<i32>,
 	local_stack: LocalStack,
 	call_stack: CallStack,
+	return_stack: ReturnStack,
 	registers: RegContext,
 	memory: Vec<Memory>,
 	tables: Vec<Table>,
 	returns: HashMap<usize, Box<[Type]>>,
 	code: HashMap<BlockId, LirBasicBlock>,
+	scheduled: Option<BlockId>,
 }
 
 impl LirInterpreter {
@@ -191,11 +212,13 @@ impl LirInterpreter {
 			data_stack: Vec::new(),
 			local_stack: LocalStack::default(),
 			call_stack: CallStack::default(),
+			return_stack: ReturnStack::default(),
 			registers: RegContext::default(),
 			memory,
 			tables,
 			returns,
 			code,
+			scheduled: None,
 		}
 	}
 
@@ -224,7 +247,7 @@ impl LirInterpreter {
 	}
 
 	pub fn is_halted(&self) -> bool {
-		self.call_stack.is_empty()
+		self.call_stack.is_empty() && self.scheduled.is_none()
 	}
 
 	pub fn check_cond(&mut self, cond: &Condition) -> bool {
@@ -491,6 +514,10 @@ impl LirInterpreter {
 				self.local_stack.pop(tys);
 			}
 
+			LirInstr::PushReturnAddr(block_id) => {
+				self.return_stack.push(Some(*block_id));
+			}
+
 			LirInstr::TurtleSetX(_) |
 			LirInstr::TurtleSetY(_) |
 			LirInstr::TurtleSetZ(_) |
@@ -505,12 +532,25 @@ impl LirInterpreter {
 	pub fn step(&mut self) -> Option<Vec<TypedValue>> {
 		//println!("{:?}", self.call_stack);
 
+		if self.call_stack.is_empty() {
+			self.call_stack.push(Pc{ block: self.scheduled.take().unwrap(), instr: 0 });
+		}
+
 		let pc = self.call_stack.last_mut().expect("stepped while halted");
 
 		let block = self.code.get(&pc.block).unwrap();
 
 		if pc.instr == block.body.len() {
 			match &block.term {
+				LirTerminator::ScheduleJump(block_id, _delay) => {
+					assert!(self.scheduled.is_none());
+
+					self.scheduled = Some(*block_id);
+
+					self.call_stack.incr(&self.code);
+
+					None
+				}
 				LirTerminator::Jump(block_id) => {
 					if jump_mode() == JumpMode::Direct {
 						self.call_stack.incr(&self.code);
@@ -546,9 +586,9 @@ impl LirInterpreter {
 						let cond = self.registers.get(*cond);
 
 						if cond < 0 || cond as usize >= arms.len() {
-							self.call_stack.push(Pc { block: *default, instr: 0 });
+							self.call_stack.push(Pc { block: default.unwrap(), instr: 0 });
 						} else {
-							self.call_stack.push(Pc { block: arms[cond as usize], instr: 0 });
+							self.call_stack.push(Pc { block: arms[cond as usize].unwrap(), instr: 0 });
 						}
 
 						None
@@ -576,6 +616,39 @@ impl LirInterpreter {
 
 						Some(return_vals)
 					} else {
+						None
+					}
+				}
+				LirTerminator::ReturnToSaved => {
+					let returns = self.returns.get(&pc.block.func).unwrap();
+
+					let mut return_addr = self.return_stack.pop();
+
+					self.call_stack.incr(&self.code);
+
+					if self.call_stack.is_empty() {
+						assert!(return_addr.is_none());
+
+						let return_vals = returns.iter().enumerate().map(|(idx, return_ty)| {
+							match *return_ty {
+								Type::I32 => {
+									TypedValue::I32(self.registers.get(Register::return_lo(idx as u32)))
+								}
+								Type::I64 => {
+									TypedValue::I64(self.registers.get_64(DoubleRegister::return_reg(idx as u32)))
+								}
+								_ => todo!(),
+							}
+						}).collect();
+
+						Some(return_vals)
+					} else {
+						let return_addr = return_addr.unwrap();
+
+						self.call_stack.incr(&self.code);
+
+						self.call_stack.push(Pc { block: return_addr, instr: 0 });
+
 						None
 					}
 				}

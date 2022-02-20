@@ -23,4 +23,14 @@ impl NoopCallGraph {
 		// TODO:
 		true
 	}
+
+	pub fn is_single_tick(&self, func: u32) -> bool {
+		// TODO:
+		false
+	}
+
+	pub fn table_is_single_tick(&self, table: u32) -> bool {
+		// TODO:
+		false
+	}
 }

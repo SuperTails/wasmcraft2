@@ -276,6 +276,8 @@ pub enum LirInstr {
 	TurtleSetY(Register),
 	TurtleSetZ(Register),
 	TurtleSetBlock(Register),
+
+	PushReturnAddr(BlockId),
 }
 
 impl LirInstr {
@@ -290,10 +292,12 @@ impl LirInstr {
 
 #[derive(Debug)]
 pub enum LirTerminator {
+	ScheduleJump(BlockId, u32),
 	Jump(BlockId),
 	JumpIf { true_label: BlockId, false_label: BlockId, cond: Register },
-	JumpTable { arms: Vec<BlockId>, default: BlockId, cond: Register },
+	JumpTable { arms: Vec<Option<BlockId>>, default: Option<BlockId>, cond: Register },
 	Return,
+	ReturnToSaved,
 }
 
 pub struct LirBasicBlock {
@@ -319,4 +323,16 @@ pub struct LirProgram {
 	pub code: Vec<LirFunction>,
 	pub constants: HashSet<i32>,
 	pub exports: HashMap<String, BlockId>,
+}
+
+impl LirProgram {
+	pub fn all_block_ids<'a>(&'a self) -> impl Iterator<Item=BlockId> + 'a {
+		self.code.iter().flat_map(|func| {
+			func.code.iter().map(|(id, _)| *id)
+		})
+	}
+
+	pub fn get_block_index(&self, id: BlockId) -> usize {
+		self.all_block_ids().enumerate().find(|(_, i)| *i == id).unwrap().0
+	}
 }

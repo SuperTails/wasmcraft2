@@ -15,6 +15,7 @@ fn create_scoreboard_init(code: &mut Vec<String>) {
 fn create_stack_init(code: &mut Vec<String>) {
 	code.push("data modify storage wasm:datastack stack set value {}".to_string());
 	code.push("data modify storage wasm:localstack stack set value {}".to_string());
+	code.push("data modify storage wasm:returnstack stack set value {}".to_string());
 	code.push("data modify storage wasm:scratch stack set value {}".to_string());
 }
 
@@ -128,6 +129,44 @@ fn create_init_func(program: &LirProgram) -> Function {
 	Function { id: ident, cmds }
 }
 
+fn create_return_to_saved_func(program: &LirProgram) -> Function {
+	let reg = Register::temp_lo(0);
+	
+	let mut code = Vec::new();
+
+	// First, convert the string value on the stack to a numeric one
+	code.push(format!("scoreboard players set {reg} -1"));
+	for (idx, block_id) in program.all_block_ids().enumerate() {
+		let addr_str = get_mc_id(block_id);
+		code.push(format!("execute if data storage wasm:returnstack stack.data.'{addr_str}' run scoreboard players set {reg} {idx}"));
+	}
+	code.push("data modify storage wasm:returnstack stack set from storage wasm:returnstack stack.tail".to_string());
+
+	let cond_taken = Register::cond_taken();
+
+	code.push(format!("scoreboard players set {cond_taken} 0"));
+	for (idx, block_id) in program.all_block_ids().enumerate() {
+		let addr_str = get_mc_id(block_id);
+		code.push(format!("execute if score {cond_taken} matches 0 run execute if score {reg} matches {idx} run function {addr_str}"));
+	}
+	code.push(format!("scoreboard players set {cond_taken} 1"));
+
+	let (s, id) = FunctionIdent::parse_from_command("wasmrunner:__return_to_saved").unwrap();
+	assert!(s.is_empty());
+
+	let cmds = code.into_iter().map(|c| c.parse().unwrap()).collect::<Vec<Command>>();
+
+	Function { id, cmds }
+}
+
+fn push_return_addr(addr: BlockId, code: &mut Vec<String>) {
+	let addr_str = get_mc_id(addr);
+
+	code.push("data modify storage wasm:scratch stack.data set value {}".to_string());
+	code.push(format!("data modify storage wasm:scratch stack.data.'{addr_str}' set value 1"));
+	code.push("data modify storage wasm:scratch stack.tail set from storage wasm:returnstack stack".to_string());
+	code.push("data modify storage wasm:returnstack stack set from storage wasm:scratch stack".to_string());
+}
 
 fn push_data(regs: &[Register], code: &mut Vec<String>) {
 	let arr = create_zeroed_array(regs.len());
@@ -983,6 +1022,10 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 		LirInstr::PushLocalFrame(ty) => push_local_frame(ty, code),
 		LirInstr::PopLocalFrame(ty) => pop_local_frame(ty, code),
 
+		&LirInstr::PushReturnAddr(block_id) => {
+			push_return_addr(block_id, code);
+		}
+
 		LirInstr::TurtleSetX(x) => {
 			code.push(format!("execute as @e[tag=turtle] store result entity @s Pos[0] double 1 run scoreboard players get {x}"));
 		}
@@ -996,6 +1039,10 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>) {
 	}
 }
 
+// call a split function: push return address
+
+// jump to a split block: push return address
+
 fn emit_block(block_id: BlockId, block: &LirBasicBlock, parent: &LirProgram) -> Function {
 	let mut code: Vec<String> = Vec::new();
 
@@ -1007,6 +1054,13 @@ fn emit_block(block_id: BlockId, block: &LirBasicBlock, parent: &LirProgram) -> 
 		&LirTerminator::Jump(target) => {
 			if jump_mode() == JumpMode::Direct {
 				code.push(format!("function {}", get_mc_id(target)));
+			} else {
+				todo!()
+			}
+		}
+		&LirTerminator::ScheduleJump(target, delay) => {
+			if jump_mode() == JumpMode::Direct {
+				code.push(format!("schedule function {} {delay} append", get_mc_id(target)));
 			} else {
 				todo!()
 			}
@@ -1026,16 +1080,21 @@ fn emit_block(block_id: BlockId, block: &LirBasicBlock, parent: &LirProgram) -> 
 		LirTerminator::JumpTable { arms, default, cond } => {
 			if jump_mode() == JumpMode::Direct {
 				let cond_taken = Register::cond_taken();
-				let default_func = get_mc_id(*default);
 
 				code.push(format!("scoreboard players set {cond_taken} 0"));
 
 				for (idx, arm) in arms.iter().enumerate() {
-					let arm_func = get_mc_id(*arm);
-					code.push(format!("execute if score {cond_taken} matches 0 run execute if score {cond} matches {idx} run function {arm_func}"));
+					if let Some(arm) = arm {
+						let arm_func = get_mc_id(*arm);
+						code.push(format!("execute if score {cond_taken} matches 0 run execute if score {cond} matches {idx} run function {arm_func}"));
+					}
 				}
 
-				code.push(format!("execute if score {cond_taken} matches 0 run function {default_func}"));
+				if let Some(default) = *default {
+					let default_func = get_mc_id(default);
+
+					code.push(format!("execute if score {cond_taken} matches 0 run function {default_func}"));
+				}
 			} else {
 				todo!()
 			}
@@ -1043,6 +1102,13 @@ fn emit_block(block_id: BlockId, block: &LirBasicBlock, parent: &LirProgram) -> 
 		crate::lir::LirTerminator::Return => {
 			if jump_mode() == JumpMode::Direct {
 				// Do nothing
+			} else {
+				todo!()
+			}
+		}
+		crate::lir::LirTerminator::ReturnToSaved => {
+			if jump_mode() == JumpMode::Direct {
+				code.push("function wasmrunner:__return_to_saved".to_string());
 			} else {
 				todo!()
 			}
@@ -1124,10 +1190,14 @@ pub fn make_export_func(name: &str, id: BlockId) -> Function {
 	let wrapper_id = wrapper_name.parse().unwrap();
 
 	let func_id = get_mc_id(id);
-	let cmd = format!("function {func_id}");
-	let cmd = cmd.parse().unwrap();
+	let cmds: Vec<Command> = vec![
+		"data modify storage wasm:scratch stack.data set value {}".to_string().parse().unwrap(),
+		"data modify storage wasm:scratch stack.tail set from storage wasm:returnstack stack".parse().unwrap(),
+		"data modify storage wasm:returnstack stack set from storage wasm:scratch stack".parse().unwrap(),
+		format!("function {func_id}").parse().unwrap(),
+	];
 
-	Function { id: wrapper_id, cmds: vec![cmd] }
+	Function { id: wrapper_id, cmds }
 }
 
 pub fn add_export_funcs(exports: &HashMap<String, BlockId>, code: &mut Vec<Function>) {
@@ -1136,8 +1206,6 @@ pub fn add_export_funcs(exports: &HashMap<String, BlockId>, code: &mut Vec<Funct
 
 pub fn emit_program(lir_program: &LirProgram) -> Vec<Function> {
 	let mut result = Vec::new();
-	result.extend(load_intrinsics());
-
 	for func in lir_program.code.iter() {
 		result.extend(emit_function(func, lir_program));
 	}
@@ -1145,7 +1213,12 @@ pub fn emit_program(lir_program: &LirProgram) -> Vec<Function> {
 	let init_func = create_init_func(lir_program);
 	result.push(init_func);
 
+	let return_to_saved = create_return_to_saved_func(lir_program);
+	result.push(return_to_saved);
+
 	add_export_funcs(&lir_program.exports, &mut result);
+
+	result.extend(load_intrinsics());
 
 	result
 }

@@ -816,6 +816,17 @@ impl ValidationState<'_> {
 								assert_eq!(returns.len(), 0);
 								builder.current_block_mut().body.push(SsaInstr::TurtleSetBlock(params[0]));
 							}
+							("env", "sleep") => {
+								assert_eq!(params.len(), 0);
+								assert_eq!(returns.len(), 0);
+
+								let next_block = builder.alloc_block();
+
+								let target = JumpTarget { label: next_block, params: vec![] };
+								builder.finish_block(SsaTerminator::ScheduleJump(target, 1));
+
+								builder.set_block(next_block);
+							}
 							_ => todo!("{:?}", import),
 						}
 					} else {
