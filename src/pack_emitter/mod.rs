@@ -571,7 +571,8 @@ static BLOCKS: [&str; 10] = [
 
 fn turtle_set_block(reg: Register, code: &mut Vec<String>) {
 	for (idx, block) in BLOCKS.iter().enumerate() {
-		code.push(format!("execute at @e[tag=turtle] if score {reg} matches {idx} run setblock ~ ~ ~ {block} destroy"));
+		// TODO: Replace or destroy?
+		code.push(format!("execute at @e[tag=turtle] if score {reg} matches {idx} run setblock ~ ~ ~ {block} replace"));
 	}
 
 	let mut s = format!("execute unless score {reg} matches 0..{} run ", BLOCKS.len() - 1);
