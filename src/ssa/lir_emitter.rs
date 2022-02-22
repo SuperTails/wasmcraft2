@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use wasmparser::{Type, MemoryImmediate};
 
-use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half}, ssa::TypedSsaVar, jump_mode, JumpMode};
+use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half}, ssa::{TypedSsaVar, SsaVarOrConst}, jump_mode, JumpMode};
 
 use super::{SsaProgram, SsaFunction, SsaVar, SsaBasicBlock, BlockId, liveness::{NoopLivenessInfo, LivenessInfo, SimpleLivenessInfo}, call_graph::NoopCallGraph};
 
@@ -97,56 +97,91 @@ impl LirFuncBuilder {
 fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasicBlock, ra: &mut NoopRegAlloc, li: &L, call_graph: &NoopCallGraph, builder: &mut LirFuncBuilder)
 	where L: LivenessInfo
 {
-	fn do_binop<'a, F, G>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: TypedSsaVar, block: &'a mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F, g: G)
+	fn do_binop<'a, F, G, L, R>(dst: TypedSsaVar, lhs: L, rhs: R, block: &'a mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F, g: G)
 		where
 			F: FnOnce(Register, Register, Register, &'a mut Vec<LirInstr>),
 			G: FnOnce(DoubleRegister, DoubleRegister, DoubleRegister, &'a mut Vec<LirInstr>),
+			L: Into<SsaVarOrConst>,
+			R: Into<SsaVarOrConst>,
 	{
+		let lhs = lhs.into();
+		let rhs = rhs.into();
+
 		assert_eq!(dst.ty(), lhs.ty());
 		assert_eq!(lhs.ty(), rhs.ty());
 
 		match dst.ty() {
-			Type::I32 => f(ra.get(dst.into_untyped()), ra.get(lhs.into_untyped()), ra.get(rhs.into_untyped()), block),
-			Type::I64 => g(ra.get_double(dst.into_untyped()), ra.get_double(lhs.into_untyped()), ra.get_double(rhs.into_untyped()), block),
+			Type::I32 => f(ra.get(dst.into_untyped()), map_ra_i32(lhs, ra), map_ra_i32(rhs, ra), block),
+			Type::I64 => g(ra.get_double(dst.into_untyped()), map_ra_i64(lhs, ra), map_ra_i64(rhs, ra), block),
 			t => todo!("{:?}", t),
 		}
 	}
 
-	fn do_shiftop<F, G>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: TypedSsaVar, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F, g: G)
+	fn do_shiftop<F, G, R>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: R, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F, g: G)
 		where
 			F: FnOnce(Register, Register, Register) -> LirInstr,
 			G: FnOnce(DoubleRegister, DoubleRegister, DoubleRegister) -> LirInstr,
+			R: Into<SsaVarOrConst>,
 	{
+		let rhs = rhs.into();
+
 		assert_eq!(dst.ty(), lhs.ty());
 		assert_eq!(lhs.ty(), rhs.ty());
 
 		match dst.ty() {
-			Type::I32 => block.push(f(ra.get(dst.into_untyped()), ra.get(lhs.into_untyped()), ra.get(rhs.into_untyped()))),
-			Type::I64 => block.push(g(ra.get_double(dst.into_untyped()), ra.get_double(lhs.into_untyped()), ra.get_double(rhs.into_untyped()))),
+			Type::I32 => block.push(f(ra.get(dst.into_untyped()), ra.get(lhs.into_untyped()), map_ra_i32(rhs, ra))),
+			Type::I64 => block.push(g(ra.get_double(dst.into_untyped()), ra.get_double(lhs.into_untyped()), map_ra_i64(rhs, ra))),
 			t => todo!("{:?}", t),
 		}
 	}
 
-	fn do_bitwiseop<F>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: TypedSsaVar, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F)
+	fn do_bitwiseop<F, R>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: R, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F)
 		where
-			F: Fn(Register, Register, Register) -> LirInstr
+			F: Fn(Register, Register, Register) -> LirInstr,
+			R: Into<SsaVarOrConst>,
 	{
+		let rhs = rhs.into();
+
 		assert_eq!(dst.ty(), lhs.ty());
 		assert_eq!(lhs.ty(), rhs.ty());
 
 		match dst.ty() {
-			Type::I32 => block.push(f(ra.get(dst.into_untyped()), ra.get(lhs.into_untyped()), ra.get(rhs.into_untyped()))),
+			Type::I32 => block.push(f(ra.get(dst.into_untyped()), ra.get(lhs.into_untyped()), map_ra_i32(rhs, ra))),
 			Type::I64 => {
 				let dst = ra.get_double(dst.into_untyped());
 				let lhs = ra.get_double(lhs.into_untyped());
-				let rhs = ra.get_double(rhs.into_untyped());
+				let rhs = map_ra_i64(rhs, ra);
 				block.push(f(dst.lo(), lhs.lo(), rhs.lo()));
 				block.push(f(dst.hi(), lhs.hi(), rhs.hi()));
 			}
 			_ => todo!(),
 		}
 	}
-	
+
+	fn map_ra_i32(r: SsaVarOrConst, ra: &mut NoopRegAlloc) -> Register {
+		match r {
+			SsaVarOrConst::Var(v) => ra.get(v.unwrap_i32()),
+			SsaVarOrConst::Const(c) => {
+				let c = c.into_i32().unwrap();
+				ra.const_pool.insert(c);
+				Register::const_val(c)
+			}
+			_ => panic!()
+		}
+	}
+
+	fn map_ra_i64(r: SsaVarOrConst, ra: &mut NoopRegAlloc) -> DoubleRegister {
+		match r {
+			SsaVarOrConst::Var(v) => ra.get_double(v.unwrap_i64()),
+			SsaVarOrConst::Const(c) => {
+				let c = c.into_i64().unwrap();
+				ra.const_pool.insert(c as i32);
+				ra.const_pool.insert((c >> 32) as i32);
+				DoubleRegister::const_val(c)
+			}
+		}
+	}
+
 	fn do_compareop<F, G>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: TypedSsaVar, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F, g: G)
 		where
 			F: FnOnce(Register, Register, Register) -> LirInstr,
@@ -185,7 +220,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 		}
 	}
 
-	fn do_store<F>(mem: &MemoryImmediate, src: TypedSsaVar, addr: TypedSsaVar, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F)
+	fn do_store<F>(mem: &MemoryImmediate, src: TypedSsaVar, addr: SsaVarOrConst, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F)
 		where
 			F: FnOnce(Register, Register) -> LirInstr
 	{
@@ -194,18 +229,22 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 		assert_eq!(src.ty(), Type::I32);
 		let src = ra.get(src.into_untyped());
 
-		assert_eq!(addr.ty(), Type::I32);
-		let addr = ra.get(addr.into_untyped());
+		let addr = map_ra_i32(addr, ra);
 
-		// TODO: Coalescing?
-		let temp = Register::temp_lo(0);
+		if let Some(c) = addr.get_const() {
+			let addr = c + mem.offset as i32;
+			block.push(f(src, ra.get_const(addr)));
+		} else {
+			// TODO: Coalescing?
+			let temp = Register::temp_lo(0);
 
-		block.push(LirInstr::Assign(temp, addr));
-		block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
-		block.push(f(src, temp));
+			block.push(LirInstr::Assign(temp, addr));
+			block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
+			block.push(f(src, temp));
+		}
 	}
 
-	fn do_load_trunc(mem: &MemoryImmediate, dst: TypedSsaVar, addr: TypedSsaVar, bits: u32, signed: bool, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc)
+	fn do_load_trunc(mem: &MemoryImmediate, dst: TypedSsaVar, addr: SsaVarOrConst, bits: u32, signed: bool, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc)
 	{
 		assert_eq!(mem.memory, 0);
 
@@ -215,26 +254,32 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 			_ => todo!(),
 		};
 
-		assert_eq!(addr.ty(), Type::I32);
-		let addr = ra.get(addr.into_untyped());
+		let addr = map_ra_i32(addr, ra);
 
-		// TODO: Coalescing?
-		let temp = Register::temp_lo(0);
+		let addr_reg = if let Some(addr_c) = addr.get_const() {
+			ra.get_const(addr_c + mem.offset as i32)
+		} else {
+			// TODO: Coalescing?
+			let temp = Register::temp_lo(0);
 
-		block.push(LirInstr::Assign(temp, addr));
-		block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
+			block.push(LirInstr::Assign(temp, addr));
+			block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
+
+			temp
+		};
+
 		match bits {
 			32 => {
-				block.push(LirInstr::Load32(dst_lo, temp));
+				block.push(LirInstr::Load32(dst_lo, addr_reg));
 			}
 			16 => {
-				block.push(LirInstr::Load16(dst_lo, temp));
+				block.push(LirInstr::Load16(dst_lo, addr_reg));
 				if signed {
 					block.push(LirInstr::SignExtend16(dst_lo));
 				}
 			}
 			8 => {
-				block.push(LirInstr::Load8(dst_lo, temp));
+				block.push(LirInstr::Load8(dst_lo, addr_reg));
 				if signed {
 					block.push(LirInstr::SignExtend8(dst_lo));
 				}
@@ -464,22 +509,29 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 				assert_eq!(dst.ty(), Type::I64);
 				let dst = ra.get_double(dst.into_untyped());
 
-				assert_eq!(addr.ty(), Type::I32);
-				let addr = ra.get(addr.into_untyped());
+				let addr = map_ra_i32(*addr, ra);
 
-				// TODO: Coalescing?
-				let temp = Register::temp_lo(0);
+				if let Some(addr) = addr.get_const() {
+					let addr_lo = ra.get_const(addr + mem.offset as i32);
+					let addr_hi = ra.get_const(addr + mem.offset as i32 + 4);
+					
+					block.push(LirInstr::Load32(dst.lo(), addr_lo));
+					block.push(LirInstr::Load32(dst.hi(), addr_hi));
+				} else {
+					// TODO: Coalescing?
+					let temp = Register::temp_lo(0);
 
-				block.push(LirInstr::Assign(temp, addr));
-				block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
-				block.push(LirInstr::Load32(dst.lo(), temp));
+					block.push(LirInstr::Assign(temp, addr));
+					block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
+					block.push(LirInstr::Load32(dst.lo(), temp));
 
-				// TODO: Coalescing?
-				let temp = Register::temp_lo(0);
+					// TODO: Coalescing?
+					let temp = Register::temp_lo(0);
 
-				block.push(LirInstr::Assign(temp, addr));
-				block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32 + 4)));
-				block.push(LirInstr::Load32(dst.hi(), temp));
+					block.push(LirInstr::Assign(temp, addr));
+					block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32 + 4)));
+					block.push(LirInstr::Load32(dst.hi(), temp));
+				}
 			}
 			super::SsaInstr::Load32S(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 32, true, &mut block, ra),
 			super::SsaInstr::Load32U(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 32, false, &mut block, ra),
@@ -495,18 +547,26 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 				let src = ra.get_double(src.into_untyped());
 
 				assert_eq!(addr.ty(), Type::I32);
-				let addr = ra.get(addr.into_untyped());
+				let addr = map_ra_i32(*addr, ra);
 
-				// TODO: Coalescing?
-				let temp = Register::temp_lo(0);
+				if let Some(c) = addr.get_const() {
+					let addr_lo = c + mem.offset as i32;
+					let addr_hi = c + mem.offset as i32 + 4;
+					
+					block.push(LirInstr::Store32(src.lo(), ra.get_const(addr_lo)));
+					block.push(LirInstr::Store32(src.hi(), ra.get_const(addr_hi)));
+				} else {
+					// TODO: Coalescing?
+					let temp = Register::temp_lo(0);
 
-				block.push(LirInstr::Assign(temp, addr));
-				block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
-				block.push(LirInstr::Store32(src.lo(), temp));
+					block.push(LirInstr::Assign(temp, addr));
+					block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
+					block.push(LirInstr::Store32(src.lo(), temp));
 
-				block.push(LirInstr::Assign(temp, addr));
-				block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32 + 4)));
-				block.push(LirInstr::Store32(src.hi(), temp));
+					block.push(LirInstr::Assign(temp, addr));
+					block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32 + 4)));
+					block.push(LirInstr::Store32(src.hi(), temp));
+				}
 			}
 			super::SsaInstr::Store32(mem, src, addr) => do_store(mem, *src, *addr, &mut block, ra, LirInstr::Store32),
 			super::SsaInstr::Store16(mem, src, addr) => do_store(mem, *src, *addr, &mut block, ra, LirInstr::Store16),

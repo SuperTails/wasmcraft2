@@ -109,7 +109,7 @@ impl RegContext {
 	}
 
 	pub fn get(&mut self, reg: Register) -> i32 {
-		if let DoubleRegister::Const(c) = reg.double {
+		if let Some(c) = reg.get_const() {
 			return c;
 		} else {
 			// TODO: Remove this
@@ -124,6 +124,16 @@ impl RegContext {
 		let hi = self.get(reg.hi());
 
 		((hi as i64) << 32) | (lo as u32 as i64)
+	}
+}
+
+trait Reg {
+	fn eval(&self, ctx: &mut RegContext) -> i32;
+}
+
+impl Reg for Register {
+	fn eval(&self, ctx: &mut RegContext) -> i32 {
+		ctx.get(*self)
 	}
 }
 
@@ -286,11 +296,13 @@ impl LirInterpreter {
 			regs.set_64(dst, f(val));
 		}
 
-		fn do_binaryop<F>(dst: Register, lhs: Register, rhs: Register, regs: &mut RegContext, f: F)
-			where F: FnOnce(i32, i32) -> i32
+		fn do_binaryop<F, R>(dst: Register, lhs: Register, rhs: R, regs: &mut RegContext, f: F)
+			where
+				F: FnOnce(i32, i32) -> i32,
+				R: Reg,
 		{
-			let lhs = regs.get(lhs);
-			let rhs = regs.get(rhs);
+			let lhs = lhs.eval(regs);
+			let rhs = rhs.eval(regs);
 			regs.set(dst, f(lhs, rhs));
 		}
 

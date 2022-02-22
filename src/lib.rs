@@ -66,7 +66,7 @@ pub fn run(path: &str, output_path: &str) {
 	let interp_idx = interp.get_func_idx(&func_name);
 	interp.set_pos(interp_idx);
 
-	interp.run_to_end().unwrap();
+	dbg!(interp.run_to_end());
 
 	let mut traces = interp.traces.into_iter().collect::<Vec<_>>();
 	traces.sort_by_key(|(_, c)| std::cmp::Reverse(*c));

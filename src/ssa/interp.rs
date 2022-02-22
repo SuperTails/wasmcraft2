@@ -4,7 +4,7 @@ use wasmparser::{Type, MemoryImmediate};
 
 use crate::ssa::TypedSsaVar;
 
-use super::{BlockId, SsaBasicBlock, SsaVar, SsaProgram, Memory, Table};
+use super::{BlockId, SsaBasicBlock, SsaVar, SsaProgram, Memory, Table, SsaVarOrConst};
 
 #[derive(Debug)]
 pub struct Pc {
@@ -138,6 +138,25 @@ impl VarContext {
 			None
 		}
 	}	
+}
+
+trait Var {
+	fn eval(&self, var_context: &VarContext) -> Option<TypedValue>;
+}
+
+impl Var for TypedSsaVar {
+	fn eval(&self, var_context: &VarContext) -> Option<TypedValue> {
+		var_context.get_typed(*self)
+	}
+}
+
+impl Var for SsaVarOrConst {
+	fn eval(&self, var_context: &VarContext) -> Option<TypedValue> {
+		match self {
+			SsaVarOrConst::Var(v) => v.eval(var_context),
+			SsaVarOrConst::Const(c) => Some(*c),
+		}
+	}
 }
 
 pub struct SsaInterpreter {
@@ -303,9 +322,13 @@ impl SsaInterpreter {
 				var_context.insert(dst.into_untyped(), result);
 			}
 
-			fn do_binop(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: TypedSsaVar, var_context: &mut VarContext, f: impl FnOnce(i32, i32) -> i32, g: impl FnOnce(i64, i64) -> i64) {
-				let l = var_context.get_typed(lhs).expect("lhs was uninit");
-				let r = var_context.get_typed(rhs).expect("rhs was uninit");
+			fn do_binop<L, R>(dst: TypedSsaVar, lhs: L, rhs: R, var_context: &mut VarContext, f: impl FnOnce(i32, i32) -> i32, g: impl FnOnce(i64, i64) -> i64)
+				where
+					L: Var,
+					R: Var,
+			{
+				let l = lhs.eval(var_context).expect("lhs was uninit");
+				let r = rhs.eval(var_context).expect("rhs was uninit");
 
 				let result = match (l, r) {
 					(TypedValue::I32(l), TypedValue::I32(r)) => {
@@ -364,8 +387,8 @@ impl SsaInterpreter {
 				var_context.insert(dst.into_untyped(), result);
 			}
 
-			fn do_store_op(memarg: MemoryImmediate, src: TypedSsaVar, addr: TypedSsaVar, size: usize, var_context: &mut VarContext, memory: &mut [Memory]) {
-				let offset = var_context.get_typed(addr).unwrap();
+			fn do_store_op(memarg: MemoryImmediate, src: TypedSsaVar, addr: SsaVarOrConst, size: usize, var_context: &mut VarContext, memory: &mut [Memory]) {
+				let offset = addr.eval(var_context).unwrap();
 				let offset = offset.into_i32().unwrap();
 				let addr = memarg.offset as usize + offset as usize;
 
@@ -379,8 +402,8 @@ impl SsaInterpreter {
 				}
 			}
 
-			fn do_load_op(memarg: MemoryImmediate, dst: TypedSsaVar, addr: TypedSsaVar, f: impl FnOnce(i64) -> i32, g: impl FnOnce(i64) -> i64, size: usize, var_context: &mut VarContext, memory: &mut [Memory]) {
-				let offset = var_context.get_typed(addr).unwrap();
+			fn do_load_op(memarg: MemoryImmediate, dst: TypedSsaVar, addr: SsaVarOrConst, f: impl FnOnce(i64) -> i32, g: impl FnOnce(i64) -> i64, size: usize, var_context: &mut VarContext, memory: &mut [Memory]) {
+				let offset = addr.eval(var_context).unwrap();
 				let offset = offset.into_i32().unwrap();
 				let addr = memarg.offset as usize + offset as usize;
 

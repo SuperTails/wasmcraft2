@@ -28,7 +28,7 @@ pub enum DoubleRegister {
 	Temp(u32),
 	Return(u32),
 	Param(u32),
-	Const(i32),
+	Const(i64),
 	Global(u32),
 	CondTaken,
 }
@@ -60,6 +60,10 @@ impl DoubleRegister {
 	
 	pub fn global(id: u32) -> DoubleRegister {
 		DoubleRegister::Global(id)
+	}
+
+	pub fn const_val(val: i64) -> DoubleRegister {
+		DoubleRegister::Const(val)
 	}
 }
 
@@ -115,7 +119,18 @@ impl Register {
 	}
 
 	pub fn const_val(v: i32) -> Register {
-		DoubleRegister::Const(v).lo()
+		DoubleRegister::Const(v as i64).lo()
+	}
+
+	pub fn get_const(self) -> Option<i32> {
+		if let DoubleRegister::Const(c) = self.double {
+			match self.half {
+				Half::Hi => Some((c >> 32) as i32),
+				Half::Lo => Some(c as i32),
+			}
+		} else {
+			None
+		}
 	}
 }
 
@@ -130,7 +145,8 @@ impl fmt::Display for Register {
 			DoubleRegister::Return(reg) => write!(f, "%return%{reg}%{half}")?,
 			DoubleRegister::Param(reg) => write!(f, "%param%{reg}%{half}")?,
 			DoubleRegister::Global(reg) => write!(f, "%global%{reg}%{half}")?,
-			DoubleRegister::Const(val) => write!(f, "%const%{val}")?,
+			DoubleRegister::Const(val) if half == Half::Hi => write!(f, "%const%{}", (val >> 32) as i32)?,
+			DoubleRegister::Const(val) => write!(f,"%const%{}", val as i32)?,
 			DoubleRegister::CondTaken => write!(f, "%condtaken")?,
 		}
 

@@ -2,6 +2,7 @@ pub mod interp;
 pub mod lir_emitter;
 pub mod liveness;
 pub mod call_graph;
+pub mod const_prop;
 
 use std::collections::HashMap;
 
@@ -65,6 +66,40 @@ impl SsaVar {
 	}
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SsaVarOrConst {
+	Var(TypedSsaVar),
+	Const(TypedValue),
+}
+
+impl SsaVarOrConst {
+	pub fn ty(&self) -> Type {
+		match self {
+			SsaVarOrConst::Var(v) => v.ty(),
+			SsaVarOrConst::Const(c) => c.ty(),
+		}
+	}
+
+	pub fn get_var(self) -> Option<TypedSsaVar> {
+		if let Self::Var(v) = self {
+			Some(v)
+		} else {
+			None
+		}
+	}
+}
+
+impl From<TypedSsaVar> for SsaVarOrConst {
+	fn from(v: TypedSsaVar) -> Self {
+		Self::Var(v)
+	}
+}
+
+impl From<TypedValue> for SsaVarOrConst {
+	fn from(c: TypedValue) -> Self {
+		Self::Const(c)
+	}
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypedSsaVar(u32, Type);
@@ -96,20 +131,20 @@ pub enum SsaInstr {
 
 	// binop instructions: dst, lhs, rhs
 
-	Add(TypedSsaVar, TypedSsaVar, TypedSsaVar),
+	Add(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
 	Sub(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	Mul(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	DivS(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	DivU(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	RemS(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	RemU(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	Shl(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	ShrS(TypedSsaVar, TypedSsaVar, TypedSsaVar),
+	Shl(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
+	ShrS(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
 	ShrU(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	Rotl(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	Rotr(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	Xor(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	And(TypedSsaVar, TypedSsaVar, TypedSsaVar),
+	And(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
 	Or(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 
 	// comp instructions: dst, lhs, rhs
@@ -139,18 +174,18 @@ pub enum SsaInstr {
 	// loads: dst, addr
 	// stores: src, addr
 
-	Load64(MemoryImmediate, TypedSsaVar, TypedSsaVar),
-	Load32S(MemoryImmediate, TypedSsaVar, TypedSsaVar),
-	Load32U(MemoryImmediate, TypedSsaVar, TypedSsaVar),
-	Load16S(MemoryImmediate, TypedSsaVar, TypedSsaVar),
-	Load16U(MemoryImmediate, TypedSsaVar, TypedSsaVar),
-	Load8S(MemoryImmediate, TypedSsaVar, TypedSsaVar),
-	Load8U(MemoryImmediate, TypedSsaVar, TypedSsaVar),
+	Load64(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
+	Load32S(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
+	Load32U(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
+	Load16S(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
+	Load16U(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
+	Load8S(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
+	Load8U(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
 
-	Store64(MemoryImmediate, TypedSsaVar, TypedSsaVar),
-	Store32(MemoryImmediate, TypedSsaVar, TypedSsaVar),
-	Store16(MemoryImmediate, TypedSsaVar, TypedSsaVar),
-	Store8(MemoryImmediate, TypedSsaVar, TypedSsaVar),
+	Store64(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
+	Store32(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
+	Store16(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
+	Store8(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
 
 	// variable instructions
 
@@ -207,20 +242,21 @@ impl SsaInstr {
 			SsaInstr::I32Set(_, _) => vec![],
 			SsaInstr::I64Set(_, _) => vec![],
 
-			SsaInstr::Add(_, lhs, rhs) |
+			SsaInstr::Add(_, lhs, rhs) => lhs.get_var().into_iter().chain(rhs.get_var()).collect(),
+
 			SsaInstr::Sub(_, lhs, rhs) |
 			SsaInstr::Mul(_, lhs, rhs) |
 			SsaInstr::DivS(_, lhs, rhs) |
 			SsaInstr::DivU(_, lhs, rhs) |
 			SsaInstr::RemS(_, lhs, rhs) |
 			SsaInstr::RemU(_, lhs, rhs) |
-			SsaInstr::Shl(_, lhs, rhs) |
-			SsaInstr::ShrS(_, lhs, rhs) |
+			SsaInstr::Shl(_, lhs, SsaVarOrConst::Var(rhs)) |
+			SsaInstr::ShrS(_, lhs, SsaVarOrConst::Var(rhs)) |
 			SsaInstr::ShrU(_, lhs, rhs) |
 			SsaInstr::Rotl(_, lhs, rhs) |
 			SsaInstr::Rotr(_, lhs, rhs) |
+			SsaInstr::And(_, lhs, SsaVarOrConst::Var(rhs)) |
 			SsaInstr::Xor(_, lhs, rhs) |
-			SsaInstr::And(_, lhs, rhs) |
 			SsaInstr::Or(_, lhs, rhs) |
 			SsaInstr::GtS(_, lhs, rhs) |
 			SsaInstr::GtU(_, lhs, rhs) |
@@ -232,6 +268,11 @@ impl SsaInstr {
 			SsaInstr::LeU(_, lhs, rhs) |
 			SsaInstr::Eq(_, lhs, rhs) |
 			SsaInstr::Ne(_, lhs, rhs) => vec![*lhs, *rhs],
+
+			SsaInstr::And(_, lhs, SsaVarOrConst::Const(_)) |
+			SsaInstr::Shl(_, lhs, SsaVarOrConst::Const(_)) |
+			SsaInstr::ShrS(_, lhs, SsaVarOrConst::Const(_)) => vec![*lhs],
+
 
 			SsaInstr::Popcnt(_, src) |
 			SsaInstr::Clz(_, src) |
@@ -245,12 +286,12 @@ impl SsaInstr {
 			SsaInstr::Load16S(_, _, addr) |
 			SsaInstr::Load16U(_, _, addr) |
 			SsaInstr::Load8S(_, _, addr) |
-			SsaInstr::Load8U(_, _, addr) => vec![*addr],
+			SsaInstr::Load8U(_, _, addr) => addr.get_var().into_iter().collect(),
 
 			SsaInstr::Store64(_, src, addr) |
 			SsaInstr::Store32(_, src, addr) | 
 			SsaInstr::Store16(_, src, addr) |
-			SsaInstr::Store8(_, src, addr) => vec![*src, *addr],
+			SsaInstr::Store8(_, src, addr) => Some(*src).into_iter().chain(addr.get_var()).collect(),
 
 			SsaInstr::GlobalSet(_, src) => vec![*src],
 			SsaInstr::GlobalGet(_, _) => vec![],
@@ -349,6 +390,31 @@ impl SsaInstr {
 			SsaInstr::TurtleSetZ(_) => Vec::new(),
 			SsaInstr::TurtleSetBlock(_) => Vec::new(),
 			SsaInstr::TurtleGetBlock(b) => vec![*b],
+		}
+	}
+
+	pub fn constable_vars(&mut self) -> Vec<&mut SsaVarOrConst> {
+		match self {
+			SsaInstr::Add(_, l, r) => vec![l, r],
+
+			SsaInstr::Shl(_, _, r) |
+			SsaInstr::ShrS(_, _, r) |
+			SsaInstr::And(_, _, r) => vec![r],
+
+			SsaInstr::Load64(_, _, addr) | 
+			SsaInstr::Load32S(_, _, addr) |
+			SsaInstr::Load32U(_, _, addr) |
+			SsaInstr::Load16S(_, _, addr) |
+			SsaInstr::Load16U(_, _, addr) |
+			SsaInstr::Load8S(_, _, addr) |
+			SsaInstr::Load8U(_, _, addr) => vec![addr],
+
+			SsaInstr::Store64(_, _, addr) |
+			SsaInstr::Store32(_, _, addr) |
+			SsaInstr::Store16(_, _, addr) |
+			SsaInstr::Store8(_, _, addr) => vec![addr],
+
+			_ => Vec::new(),
 		}
 	}
 }

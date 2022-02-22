@@ -2,7 +2,7 @@ use std::{ops::{Index, IndexMut}, collections::HashMap};
 
 use wasmparser::{Type, Operator, MemoryImmediate, DataKind, ElementKind, ElementItem, ExternalKind};
 
-use crate::{wasm_file::{WasmFile, eval_init_expr_single}, ssa::{SsaBasicBlock, BlockId, SsaTerminator, TypedSsaVar, SsaInstr, SsaVarAlloc, JumpTarget, SsaProgram, SsaFunction, Memory, Table}};
+use crate::{wasm_file::{WasmFile, eval_init_expr_single}, ssa::{SsaBasicBlock, BlockId, SsaTerminator, TypedSsaVar, SsaInstr, SsaVarAlloc, JumpTarget, SsaProgram, SsaFunction, Memory, Table, SsaVarOrConst}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UncertainVar {
@@ -426,9 +426,11 @@ impl ValidationState<'_> {
 		let alloc = &mut self.alloc;
 		let validator = &mut self.validator;
 
-		fn make_i32_binop<F>(f: F, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
+		fn make_i32_binop<F, L, R>(f: F, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
 			where
-				F: FnOnce(TypedSsaVar, TypedSsaVar, TypedSsaVar) -> SsaInstr
+				F: FnOnce(TypedSsaVar, L, R) -> SsaInstr,
+				L: From<TypedSsaVar>,
+				R: From<TypedSsaVar>,
 		{
 			let rhs = validator.pop_value_ty(Type::I32.into());
 			let lhs = validator.pop_value_ty(Type::I32.into());
@@ -437,13 +439,15 @@ impl ValidationState<'_> {
 			validator.push_value(dst);
 
 			if let Some((lhs, rhs)) = zip_vars!(lhs, rhs) {
-				builder.current_block_mut().body.push(f(dst, lhs, rhs));
+				builder.current_block_mut().body.push(f(dst, lhs.into(), rhs.into()));
 			}
 		}
 
-		fn make_i64_binop<F>(f: F, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
+		fn make_i64_binop<F, L, R>(f: F, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
 			where
-				F: FnOnce(TypedSsaVar, TypedSsaVar, TypedSsaVar) -> SsaInstr
+				F: FnOnce(TypedSsaVar, L, R) -> SsaInstr,
+				L: From<TypedSsaVar>,
+				R: From<TypedSsaVar>,
 		{
 			let rhs = validator.pop_value_ty(Type::I64.into());
 			let lhs = validator.pop_value_ty(Type::I64.into());
@@ -452,7 +456,7 @@ impl ValidationState<'_> {
 			validator.push_value(dst);
 
 			if let Some((lhs, rhs)) = zip_vars!(lhs, rhs) {
-				builder.current_block_mut().body.push(f(dst, lhs, rhs));
+				builder.current_block_mut().body.push(f(dst, lhs.into(), rhs.into()));
 			}
 		}
 
@@ -499,51 +503,51 @@ impl ValidationState<'_> {
 
 		fn make_i32_load<F>(f: F, memarg: MemoryImmediate, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
 			where
-				F: FnOnce(MemoryImmediate, TypedSsaVar, TypedSsaVar) -> SsaInstr,
+				F: FnOnce(MemoryImmediate, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
 		{
 			let addr = validator.pop_value_ty(Type::I32.into());
 			let dst = alloc.new_i32();
 			validator.push_value(dst);
 
 			if validator.reachable() {
-				builder.current_block_mut().body.push(f(memarg, dst, addr.unwrap()));
+				builder.current_block_mut().body.push(f(memarg, dst, addr.unwrap().into()));
 			}
 		}
 
 		fn make_i64_load<F>(f: F, memarg: MemoryImmediate, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
 			where
-				F: FnOnce(MemoryImmediate, TypedSsaVar, TypedSsaVar) -> SsaInstr,
+				F: FnOnce(MemoryImmediate, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
 		{
 			let addr = validator.pop_value_ty(Type::I32.into());
 			let dst = alloc.new_i64();
 			validator.push_value(dst);
 			
 			if validator.reachable() {
-				builder.current_block_mut().body.push(f(memarg, dst, addr.unwrap()));
+				builder.current_block_mut().body.push(f(memarg, dst, addr.unwrap().into()));
 			}
 		}
 
 		fn make_i32_store<F>(f: F, memarg: MemoryImmediate, builder: &mut SsaFuncBuilder, validator: &mut Validator, _: &mut SsaVarAlloc)
 			where
-				F: FnOnce(MemoryImmediate, TypedSsaVar, TypedSsaVar) -> SsaInstr,
+				F: FnOnce(MemoryImmediate, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
 		{
 			let src = validator.pop_value_ty(Type::I32.into());
 			let addr = validator.pop_value_ty(Type::I32.into());
 
 			if validator.reachable() {
-				builder.current_block_mut().body.push(f(memarg, src.unwrap(), addr.unwrap()));
+				builder.current_block_mut().body.push(f(memarg, src.unwrap(), addr.unwrap().into()));
 			}
 		}
 
 		fn make_i64_store<F>(f: F, memarg: MemoryImmediate, builder: &mut SsaFuncBuilder, validator: &mut Validator, _: &mut SsaVarAlloc)
 			where
-				F: FnOnce(MemoryImmediate, TypedSsaVar, TypedSsaVar) -> SsaInstr,
+				F: FnOnce(MemoryImmediate, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
 		{
 			let src = validator.pop_value_ty(Type::I64.into());
 			let addr = validator.pop_value_ty(Type::I32.into());
 
 			if validator.reachable() {
-				builder.current_block_mut().body.push(f(memarg, src.unwrap(), addr.unwrap()));
+				builder.current_block_mut().body.push(f(memarg, src.unwrap(), addr.unwrap().into()));
 			}
 		}
 
@@ -1283,12 +1287,16 @@ pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {
 		}
 	}).collect();
 
-	SsaProgram {
+	let mut program = SsaProgram {
 		local_types,
 		globals,
 		memory,
 		tables,
 		code,
 		exports,
-	}
+	};
+
+	crate::ssa::const_prop::do_const_prop(&mut program);
+	
+	program
 }
