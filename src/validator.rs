@@ -836,6 +836,12 @@ impl ValidationState<'_> {
 
 								builder.set_block(next_block);
 							}
+							("env", "print") => {
+								assert_eq!(params.len(), 1);
+								assert_eq!(returns.len(), 0);
+
+								builder.current_block_mut().body.push(SsaInstr::PrintInt(params[0]));
+							}
 							_ => todo!("{:?}", import),
 						}
 					} else {

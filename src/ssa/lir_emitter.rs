@@ -801,6 +801,10 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 				let reg = ra.get(v.unwrap_i32());
 				block.push(LirInstr::TurtleGetBlock(reg));
 			}
+			&super::SsaInstr::PrintInt(v) => {
+				let reg = ra.get(v.unwrap_i32());
+				block.push(LirInstr::PrintInt(reg));
+			}
 		}
 	}
 

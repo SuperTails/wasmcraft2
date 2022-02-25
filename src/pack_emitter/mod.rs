@@ -691,7 +691,7 @@ fn signed_greater_than_eq_64(dst: Register, lhs: DoubleRegister, rhs: DoubleRegi
 	signed_less_than_eq_64(dst, rhs, lhs, code)
 }
 
-static BLOCKS: [&str; 10] = [
+static BLOCKS: [&str; 14] = [
 	"minecraft:air",
 	"minecraft:cobblestone",
 	"minecraft:granite",
@@ -702,6 +702,10 @@ static BLOCKS: [&str; 10] = [
 	"minecraft:gold_block",
 	"minecraft:diamond_block",
 	"minecraft:redstone_block",
+	"minecraft:emerald_block",
+	"minecraft:dirt",
+	"minecraft:oak_leaves",
+	"minecraft:oak_wood",
 ];
 
 fn turtle_set_block(reg: Register, code: &mut Vec<String>) {
@@ -725,9 +729,43 @@ fn turtle_get_block(reg: Register, code: &mut Vec<String>) {
 	}
 }
 
+fn get_all_bit_runs(mut value: i32) -> impl Iterator<Item=Range<u32>> {
+	std::iter::from_fn(move || {
+		let run = get_first_bit_run(value)?;
+
+		value &= !bit_run_to_mask(run.clone());
+
+		Some(run)
+	})
+}
+
+fn get_first_bit_run(value: i32) -> Option<Range<u32>> {
+	if value == 0 {
+		None
+	} else {
+		let start = value.trailing_zeros();
+
+		for i in start..(32 - value.trailing_zeros()) {
+			if value & (1 << i) == 0 {
+				return Some(start..i)
+			}
+		}
+
+		Some(start..32)
+	}
+}
+
+fn bit_run_to_mask(run: Range<u32>) -> i32 {
+	let mut v = 0;
+	for i in run {
+		v |= 1 << i;
+	}
+	v
+}
+
 fn get_bit_run(value: i32) -> Option<Range<u32>> {
 	if value == 0 {
-		return None
+		None
 	} else {
 		let start = value.trailing_zeros();
 		let end = 32 - value.leading_zeros();
@@ -747,45 +785,42 @@ fn emit_constant_and(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Stri
 		code.push(format!("scoreboard players set {dst} 0"));
 	} else if rhs == -1 {
 		code.push(format!("scoreboard players operation {dst} = {lhs}"));
-	} else if let Some(bit_run) = get_bit_run(rhs) {
-		code.push(format!("scoreboard players operation {dst} = {lhs}"));
-		if bit_run.end == 31 {
-			let int_min = i32::MIN;
-			const_pool.insert(int_min);
-			let int_min = Register::const_val(int_min);
-
-			code.push(format!("execute if score {dst} matches ..-1 run scoreboard players operation {dst} += {int_min}"));
-		} else if bit_run.end < 32 {
-			// 0111
-			// end == 3
-			let modulus = 1 << bit_run.end;
-			const_pool.insert(modulus);
-			let modulus = Register::const_val(modulus);
-			code.push(format!("scoreboard players operation {dst} %= {modulus}"));
-		}
-
-		if bit_run.start > 0 {
-			// 0010
-			// start == 1
-			let tmp = Register::temp_lo(1234);
-			code.push(format!("scoreboard players operation {tmp} = {lhs}"));
-			
-			let modulus = 1 << bit_run.start;
-			const_pool.insert(modulus);
-			let modulus = Register::const_val(modulus);
-			code.push(format!("scoreboard players operation {tmp} %= {modulus}"));
-
-			code.push(format!("scoreboard players operation {dst} -= {tmp}"));
-		}
 	} else {
-		// TODO: More cases
+		let tmp_dst = Register::temp_lo(1235);
 
-		todo!("{:?}", rhs);
+		code.push(format!("scoreboard players set {dst} 0"));
+		for bit_run in get_all_bit_runs(rhs) {
+			code.push(format!("scoreboard players operation {tmp_dst} = {lhs}"));
+			if bit_run.end == 31 {
+				let int_min = i32::MIN;
+				const_pool.insert(int_min);
+				let int_min = Register::const_val(int_min);
 
-		code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
-		code.push(format!("scoreboard players set %param1%0 reg {rhs}"));
-		code.push("function intrinsic:and".to_string());
-		code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
+				code.push(format!("execute if score {tmp_dst} matches ..-1 run scoreboard players operation {tmp_dst} += {int_min}"));
+			} else if bit_run.end < 32 {
+				// 0111
+				// end == 3
+				let modulus = 1 << bit_run.end;
+				const_pool.insert(modulus);
+				let modulus = Register::const_val(modulus);
+				code.push(format!("scoreboard players operation {tmp_dst} %= {modulus}"));
+			}
+
+			if bit_run.start > 0 {
+				// 0010
+				// start == 1
+				let tmp = Register::temp_lo(1234);
+				code.push(format!("scoreboard players operation {tmp} = {lhs}"));
+				
+				let modulus = 1 << bit_run.start;
+				const_pool.insert(modulus);
+				let modulus = Register::const_val(modulus);
+				code.push(format!("scoreboard players operation {tmp} %= {modulus}"));
+
+				code.push(format!("scoreboard players operation {tmp_dst} -= {tmp}"));
+			}
+			code.push(format!("scoreboard players operation {dst} += {tmp_dst}"));
+		}
 	}
 }
 
@@ -1274,6 +1309,16 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 		}
 		LirInstr::TurtleSetBlock(r) => turtle_set_block(*r, code),
 		LirInstr::TurtleGetBlock(r) => turtle_get_block(*r, code),
+		LirInstr::PrintInt(i) => {
+			let mut s = String::new();
+			s.push_str(r#"tellraw @a [{"text":"Printed "},{"score":{"name":""#);
+			let i = i.to_string();
+			let (i, _) = i.split_once(' ').unwrap();
+			s.push_str(i);
+			s.push_str(r#"","objective":"reg"}}]"#);
+			code.push(s);
+
+		}
 	}
 }
 

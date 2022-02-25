@@ -234,6 +234,7 @@ pub enum SsaInstr {
 	TurtleSetZ(TypedSsaVar),
 	TurtleSetBlock(TypedSsaVar),
 	TurtleGetBlock(TypedSsaVar),
+	PrintInt(TypedSsaVar),
 }
 
 impl SsaInstr {
@@ -316,6 +317,7 @@ impl SsaInstr {
 			SsaInstr::TurtleSetZ(z) => vec![*z],
 			SsaInstr::TurtleSetBlock(b) => vec![*b],
 			SsaInstr::TurtleGetBlock(_) => Vec::new(),
+			SsaInstr::PrintInt(i) => vec![*i],
 		}
 	}
 
@@ -390,6 +392,7 @@ impl SsaInstr {
 			SsaInstr::TurtleSetZ(_) => Vec::new(),
 			SsaInstr::TurtleSetBlock(_) => Vec::new(),
 			SsaInstr::TurtleGetBlock(b) => vec![*b],
+			SsaInstr::PrintInt(_) => Vec::new(),
 		}
 	}
 
