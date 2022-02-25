@@ -1,10 +1,21 @@
 use std::{collections::{HashSet, HashMap}, path::Path, ops::Range};
 
-use command_parser::{CommandParse, parse_command};
+use command_parser::parse_command;
 use datapack_common::functions::{Function, Command, command_components::FunctionIdent};
 use wasmparser::Type;
 
 use crate::{lir::{LirProgram, LirFunction, LirBasicBlock, LirInstr, Register, LirTerminator, Condition, Half, DoubleRegister}, ssa::{BlockId, Memory, interp::TypedValue}, jump_mode, JumpMode};
+
+fn parse_function<'a, C, T>(id: &str, code: C) -> Function
+	where
+		C: IntoIterator<Item=T>,
+		T: AsRef<str>,
+{
+	let id = parse_command::<FunctionIdent>(id).unwrap();
+	let code = code.into_iter();
+	let cmds = code.map(|cmd| cmd.as_ref().parse().unwrap()).collect();
+	Function { id, cmds }
+}
 
 fn create_scoreboard_init(code: &mut Vec<String>) {
 	code.push("# Set up scoreboard".to_string());
@@ -122,12 +133,7 @@ fn create_init_func(program: &LirProgram, constants: &HashSet<i32>) -> Function 
 	create_memory_init(&program.memory, &mut code);
 	create_globals_init(&program.globals, &mut code);
 
-	let cmds = code.into_iter().map(|c| c.parse().unwrap()).collect::<Vec<Command>>();
-
-	let (rest, ident) = FunctionIdent::parse_from_command("wasmrunner:init").unwrap();
-	assert!(rest.is_empty());
-
-	Function { id: ident, cmds }
+	parse_function("wasmrunner:init", code)
 }
 
 fn create_return_to_saved_func(program: &LirProgram) -> Function {
@@ -152,12 +158,7 @@ fn create_return_to_saved_func(program: &LirProgram) -> Function {
 	}
 	code.push(format!("scoreboard players set {cond_taken} 1"));
 
-	let (s, id) = FunctionIdent::parse_from_command("wasmrunner:__return_to_saved").unwrap();
-	assert!(s.is_empty());
-
-	let cmds = code.into_iter().map(|c| c.parse().unwrap()).collect::<Vec<Command>>();
-
-	Function { id, cmds }
+	parse_function("wasmrunner:__return_to_saved", &code)
 }
 
 fn push_return_addr(addr: BlockId, code: &mut Vec<String>) {
@@ -745,7 +746,7 @@ fn get_first_bit_run(value: i32) -> Option<Range<u32>> {
 	} else {
 		let start = value.trailing_zeros();
 
-		for i in start..(32 - value.trailing_zeros()) {
+		for i in start..32 {
 			if value & (1 << i) == 0 {
 				return Some(start..i)
 			}
@@ -763,23 +764,6 @@ fn bit_run_to_mask(run: Range<u32>) -> i32 {
 	v
 }
 
-fn get_bit_run(value: i32) -> Option<Range<u32>> {
-	if value == 0 {
-		None
-	} else {
-		let start = value.trailing_zeros();
-		let end = 32 - value.leading_zeros();
-
-		for i in start..end {
-			if value & (1 << i) == 0 {
-				return None;
-			}
-		}
-
-		Some(start..end)
-	}
-}
-
 fn emit_constant_and(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	if rhs == 0 {
 		code.push(format!("scoreboard players set {dst} 0"));
@@ -790,14 +774,27 @@ fn emit_constant_and(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Stri
 
 		code.push(format!("scoreboard players set {dst} 0"));
 		for bit_run in get_all_bit_runs(rhs) {
+			assert!(bit_run.end > bit_run.start);
+
+			if bit_run.start == 31 {
+				let int_min = i32::MIN;
+				const_pool.insert(int_min);
+				let int_min = Register::const_val(int_min);
+				code.push(format!("execute if score {lhs} matches ..-1 run scoreboard players operation {dst} += {int_min}"));
+				continue;
+			}
+
 			code.push(format!("scoreboard players operation {tmp_dst} = {lhs}"));
-			if bit_run.end == 31 {
+			if bit_run.end == 32 {
+				// Do nothing, because we don't have to zero out any high bits
+			} else if bit_run.end == 31 {
 				let int_min = i32::MIN;
 				const_pool.insert(int_min);
 				let int_min = Register::const_val(int_min);
 
-				code.push(format!("execute if score {tmp_dst} matches ..-1 run scoreboard players operation {tmp_dst} += {int_min}"));
-			} else if bit_run.end < 32 {
+				// Zero out just the high bit
+				code.push(format!("execute if score {tmp_dst} matches ..-1 run scoreboard players operation {tmp_dst} -= {int_min}"));
+			} else if bit_run.end < 31 {
 				// 0111
 				// end == 3
 				let modulus = 1 << bit_run.end;
@@ -807,7 +804,7 @@ fn emit_constant_and(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Stri
 			}
 
 			if bit_run.start > 0 {
-				// 0010
+				// 1110
 				// start == 1
 				let tmp = Register::temp_lo(1234);
 				code.push(format!("scoreboard players operation {tmp} = {lhs}"));
@@ -816,9 +813,9 @@ fn emit_constant_and(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Stri
 				const_pool.insert(modulus);
 				let modulus = Register::const_val(modulus);
 				code.push(format!("scoreboard players operation {tmp} %= {modulus}"));
-
 				code.push(format!("scoreboard players operation {tmp_dst} -= {tmp}"));
 			}
+
 			code.push(format!("scoreboard players operation {dst} += {tmp_dst}"));
 		}
 	}
@@ -1403,13 +1400,8 @@ fn emit_block(block_id: BlockId, block: &LirBasicBlock, parent: &LirProgram, con
 		code.push(format!("scoreboard players set {} 1", Register::cond_taken()));
 	}
 
-	let cmds = code.into_iter().map(|c| c.parse().unwrap()).collect::<Vec<Command>>();
-
 	let block_id_str = get_mc_id(block_id);
-	let (rest, ident) = FunctionIdent::parse_from_command(&block_id_str).unwrap();
-	assert!(rest.is_empty());
-
-	Function { id: ident, cmds }
+	parse_function(&block_id_str, &code)
 }
 
 fn emit_function(func: &LirFunction, parent: &LirProgram, const_pool: &mut HashSet<i32>) -> Vec<Function> {
@@ -1432,13 +1424,12 @@ pub fn load_intrinsics() -> Vec<Function> {
 			let contents = std::fs::read_to_string(file.path()).unwrap();
 			let cmds = contents.lines()
 				.map(|l| l.trim())
-				.filter(|l| !l.is_empty() && !l.starts_with('#'))
-				.map(|l| l.parse().unwrap()).collect::<Vec<_>>();
+				.filter(|l| !l.is_empty());
 
 			let func_name = format!("intrinsic:{}", file_name.strip_suffix(".mcfunction").unwrap());
 			let func_ident: FunctionIdent = parse_command(&func_name).unwrap();
 
-			result.push(Function { id: func_ident, cmds });
+			result.push(parse_function(&func_name, cmds));
 		} else {
 			for file2 in std::fs::read_dir(file.path()).unwrap() {
 				let file2 = file2.unwrap();
@@ -1657,6 +1648,75 @@ pub fn persist_program(folder_path: &Path, funcs: &[Function]) {
 			let name = &name[..name.len() - ".mcfunction".len()];
 			let contents = std::fs::read_to_string(i.path()).unwrap();
 			datapack.write_function(folder_path, "intrinsic", name, &contents).unwrap();
+		}
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use datapack_common::functions::command_components::Objective;
+	use datapack_vm::Interpreter;
+
+	use super::*;
+
+	fn test_constant_and<I>(lhs_vals: I, rhs: i32)
+		where I: Iterator<Item=i32>,
+	{
+		let dst = Register::return_lo(0);
+		let lhs = Register::param_lo(0);
+
+		let mut code = Vec::new();
+		let mut const_pool = HashSet::new();
+		emit_constant_and(dst, lhs, rhs, &mut code, &mut const_pool);
+
+		let func = parse_function("wasmrunner:test_constant_and", &code);
+		let func_id = func.id.clone();
+		let program = vec![func];
+
+		let mut interp = Interpreter::new(program, 0);
+
+		interp.scoreboard.0.insert(Objective::new("reg".to_string()).unwrap(), Default::default());
+
+		for c in const_pool {
+			let (holder, obj) = Register::const_val(c).scoreboard_pair();
+			interp.scoreboard.set(&holder, &obj, c);
+		}
+
+		let (lhs_holder, lhs_obj) = lhs.scoreboard_pair();
+		let (dst_holder, dst_lo) = dst.scoreboard_pair();
+		for lhs_val in lhs_vals {
+			interp.scoreboard.set(&lhs_holder, &lhs_obj, lhs_val);
+
+			let interp_idx = interp.get_func_idx(&func_id);
+			interp.set_pos(interp_idx);
+			interp.run_to_end().unwrap();
+
+			let dst_val = interp.scoreboard.get(&dst_holder, &dst_lo).unwrap();
+
+			if dst_val != lhs_val & rhs {
+				eprintln!("Code:");
+				for c in code.iter() {
+					eprintln!("    {}", c);
+				}
+				eprintln!("Actual: {}", dst_val);
+				eprintln!("Expected: {}", lhs_val & rhs);
+				eprintln!("LHS: {}", lhs_val);
+				eprintln!("RHS: {}", rhs);
+				panic!("actual and expected values differed");
+			}
+		}
+	}
+
+	#[test]
+	fn constant_and() {
+		// -1 - INT_MIN * (-1)
+
+		let test_vals = [
+			0, -1, 1, 2, 4, i32::MAX, i32::MIN, 17, 39, -58, -107, 0x5555_5555, 1234567, -983253743, 1_000_000_000
+		];
+
+		for rhs in test_vals {
+			test_constant_and(test_vals.into_iter(), rhs);
 		}
 	}
 }

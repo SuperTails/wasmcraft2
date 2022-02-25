@@ -249,26 +249,17 @@ use wasmparser::Type;
 		for (param_idx, param) in func_params.iter().enumerate() {
 			match *param {
 				TypedValue::I32(v) => {
-					let param_pair = Register::param_lo(param_idx as u32).to_string();
-					let (holder, obj) = param_pair.split_once(' ').unwrap();
-					let holder = ScoreHolder::new(holder.to_owned()).unwrap();
-					let obj = Objective::new(obj.to_owned()).unwrap();
+					let (holder, obj) = Register::param_lo(param_idx as u32).scoreboard_pair();
 					interp.scoreboard.set(&holder, &obj, v);
 				}
 				TypedValue::I64(v) => {
 					let v_lo = v as i32;
 					let v_hi = (v >> 32) as i32;
 
-					let param_pair_lo = Register::param_lo(param_idx as u32).to_string();
-					let (holder_lo, obj_lo) = param_pair_lo.split_once(' ').unwrap();
-					let holder_lo = ScoreHolder::new(holder_lo.to_owned()).unwrap();
-					let obj_lo = Objective::new(obj_lo.to_owned()).unwrap();
+					let (holder_lo, obj_lo) = Register::param_lo(param_idx as u32).scoreboard_pair();
 					interp.scoreboard.set(&holder_lo, &obj_lo, v_lo);
 
-					let param_pair_hi = Register::param_hi(param_idx as u32).to_string();
-					let (holder_hi, obj_hi) = param_pair_hi.split_once(' ').unwrap();
-					let holder_hi = ScoreHolder::new(holder_hi.to_owned()).unwrap();
-					let obj_hi = Objective::new(obj_hi.to_owned()).unwrap();
+					let (holder_hi, obj_hi) = Register::param_hi(param_idx as u32).scoreboard_pair();
 					interp.scoreboard.set(&holder_hi, &obj_hi, v_hi);
 				}
 			}
@@ -279,25 +270,15 @@ use wasmparser::Type;
 		return_tys.iter().enumerate().map(|(idx, ty)| {
 			match ty {
 				Type::I32 => {
-					let param_pair = Register::return_lo(idx as u32).to_string();
-					let (holder, obj) = param_pair.split_once(' ').unwrap();
-					let holder = ScoreHolder::new(holder.to_owned()).unwrap();
-					let obj = Objective::new(obj.to_owned()).unwrap();
+					let (holder, obj) = Register::return_lo(idx as u32).scoreboard_pair();
 					let v = interp.scoreboard.get(&holder, &obj).unwrap();
-
 					TypedValue::I32(v)
 				}
 				Type::I64 => {
-					let param_pair_lo = Register::return_lo(idx as u32).to_string();
-					let (holder_lo, obj_lo) = param_pair_lo.split_once(' ').unwrap();
-					let holder_lo = ScoreHolder::new(holder_lo.to_owned()).unwrap();
-					let obj_lo = Objective::new(obj_lo.to_owned()).unwrap();
+					let (holder_lo, obj_lo) = Register::return_lo(idx as u32).scoreboard_pair();
 					let v_lo = interp.scoreboard.get(&holder_lo, &obj_lo).unwrap();
 
-					let param_pair_hi = Register::return_hi(idx as u32).to_string();
-					let (holder_hi, obj_hi) = param_pair_hi.split_once(' ').unwrap();
-					let holder_hi = ScoreHolder::new(holder_hi.to_owned()).unwrap();
-					let obj_hi = Objective::new(obj_hi.to_owned()).unwrap();
+					let (holder_hi, obj_hi) = Register::return_hi(idx as u32).scoreboard_pair();
 					let v_hi = interp.scoreboard.get(&holder_hi, &obj_hi).unwrap();
 
 					let v = (v_lo as u32 as i64) | ((v_hi as i64) << 32);

@@ -2,6 +2,7 @@ pub mod interp;
 
 use std::{ops::RangeInclusive, fmt, collections::{HashSet, HashMap}};
 
+use datapack_common::functions::command_components::{ScoreHolder, Objective};
 use wasmparser::Type;
 
 use crate::ssa::{BlockId, Memory, interp::TypedValue, Table};
@@ -131,6 +132,14 @@ impl Register {
 		} else {
 			None
 		}
+	}
+
+	pub fn scoreboard_pair(self) -> (ScoreHolder, Objective) {
+		let s = self.to_string();
+		let (holder, obj) = s.split_once(' ').unwrap();
+		let holder = ScoreHolder::new(holder.to_string()).unwrap();
+		let obj = Objective::new(obj.to_string()).unwrap();
+		(holder, obj)
 	}
 }
 
