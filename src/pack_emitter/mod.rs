@@ -883,6 +883,43 @@ fn emit_constant_and(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Stri
 	}
 }
 
+fn emit_constant_shru(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+	let rhs = rhs.rem_euclid(32);
+
+	if rhs == 31 {
+		code.push(format!("execute store success score {dst} if score {lhs} matches ..-1"));
+	} else if rhs > 0 {
+		if dst != lhs {
+			code.push(format!("scoreboard players operation {dst} = {lhs}"));
+		}
+
+		let dst_is_neg = Register::temp_lo(789);
+
+		code.push(format!("execute store success score {dst_is_neg} if score {dst} matches ..-1"));
+
+		// Zero out the high bit, if necessary
+		const_pool.insert(i32::MIN);
+		let int_min = Register::const_val(i32::MIN);
+		code.push(format!("execute if score {dst_is_neg} matches 1 run scoreboard players operation {dst} -= {int_min}"));
+
+		let factor = 1 << rhs;
+		const_pool.insert(factor);
+		let factor = Register::const_val(factor);
+
+		code.push(format!("scoreboard players operation {dst} /= {factor}"));
+
+		let high_bit_factor = 1 << (31 - rhs);
+		const_pool.insert(high_bit_factor);
+		let high_bit_factor = Register::const_val(high_bit_factor);
+
+		code.push(format!("scoreboard players operation {dst_is_neg} *= {high_bit_factor}"));
+		code.push(format!("scoreboard players operation {dst} += {dst_is_neg}"));
+	} else if dst != lhs {
+		code.push(format!("scoreboard players operation {dst} = {lhs}"));
+	}
+}
+
+
 
 fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	match instr {
@@ -1045,11 +1082,15 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 			}
 		}
 		&LirInstr::ShrU(dst, lhs, rhs) => {
-			code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
-			code.push(format!("scoreboard players operation %param1%0 reg = {rhs}"));
-			code.push("scoreboard players operation %param1%0 reg %= %%32 reg".to_string());
-			code.push("function intrinsic:lshr".to_string());
-			code.push(format!("scoreboard players operation {dst} = %param0%0 reg"));
+			if let Some(rhs) = rhs.get_const() {
+				emit_constant_shru(dst, lhs, rhs, code, const_pool);
+			} else {
+				code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
+				code.push(format!("scoreboard players operation %param1%0 reg = {rhs}"));
+				code.push("scoreboard players operation %param1%0 reg %= %%32 reg".to_string());
+				code.push("function intrinsic:lshr".to_string());
+				code.push(format!("scoreboard players operation {dst} = %param0%0 reg"));
+			}
 		}
 		&LirInstr::Rotl(dst, lhs, rhs) => {
 			code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
@@ -1725,17 +1766,20 @@ mod test {
 
 	use super::*;
 
-	fn test_constant_and<I>(lhs_vals: I, rhs: i32)
-		where I: Iterator<Item=i32>,
+	fn test_constant_func<I, E, F>(lhs_vals: I, rhs: i32, emitter: E, ex: F) 
+		where
+			I: Iterator<Item=i32>,
+			E: FnOnce(Register, Register, i32, &mut Vec<String>, &mut HashSet<i32>),
+			F: Fn(i32, i32) -> i32,
 	{
 		let dst = Register::return_lo(0);
 		let lhs = Register::param_lo(0);
 
 		let mut code = Vec::new();
 		let mut const_pool = HashSet::new();
-		emit_constant_and(dst, lhs, rhs, &mut code, &mut const_pool);
+		emitter(dst, lhs, rhs, &mut code, &mut const_pool);
 
-		let func = parse_function("wasmrunner:test_constant_and", &code);
+		let func = parse_function("wasmrunner:test_constant", &code);
 		let func_id = func.id.clone();
 		let program = vec![func];
 
@@ -1753,24 +1797,41 @@ mod test {
 		for lhs_val in lhs_vals {
 			interp.scoreboard.set(&lhs_holder, &lhs_obj, lhs_val);
 
+			println!("{:?} {:?}", lhs_val, rhs);
+
 			let interp_idx = interp.get_func_idx(&func_id);
 			interp.set_pos(interp_idx);
 			interp.run_to_end().unwrap();
 
 			let dst_val = interp.scoreboard.get(&dst_holder, &dst_lo).unwrap();
 
-			if dst_val != lhs_val & rhs {
+			let exp = ex(lhs_val, rhs);
+
+			if dst_val != exp {
 				eprintln!("Code:");
 				for c in code.iter() {
 					eprintln!("    {}", c);
 				}
 				eprintln!("Actual: {}", dst_val);
-				eprintln!("Expected: {}", lhs_val & rhs);
+				eprintln!("Expected: {}", exp);
 				eprintln!("LHS: {}", lhs_val);
 				eprintln!("RHS: {}", rhs);
 				panic!("actual and expected values differed");
 			}
 		}
+	}
+
+
+	fn test_constant_and<I>(lhs_vals: I, rhs: i32)
+		where I: Iterator<Item=i32>,
+	{
+		test_constant_func(lhs_vals, rhs, emit_constant_and, |a, b| a & b);
+	}
+
+	fn test_constant_shru<I>(lhs_vals: I, rhs: i32)
+		where I: Iterator<Item=i32>,
+	{
+		test_constant_func(lhs_vals, rhs, emit_constant_shru, |a, b| ((a as u32) >> b) as i32);
 	}
 
 	#[test]
@@ -1783,6 +1844,17 @@ mod test {
 
 		for rhs in test_vals {
 			test_constant_and(test_vals.into_iter(), rhs);
+		}
+	}
+
+	#[test]
+	fn constant_shru() {
+		let test_vals = [
+			0, -1, 1, 2, 4, i32::MAX, i32::MIN, 17, 39, -58, -107, 0x5555_5555, 1234567, -983253743, 1_000_000_000
+		];
+
+		for rhs in 0..32 {
+			test_constant_shru(test_vals.into_iter(), rhs);
 		}
 	}
 }
