@@ -111,6 +111,109 @@ impl LivenessInfo for SimpleLivenessInfo {
 	}
 }
 
+// Just a list of the variables that are defined at each instruction
+pub struct FullBlockLivenessInfo {
+	live_in: Vec<HashSet<TypedSsaVar>>,
+	live_out: HashSet<TypedSsaVar>,
+}
+
+impl FullBlockLivenessInfo {
+	pub fn new(block: &SsaBasicBlock, mut live_out: HashSet<TypedSsaVar>) -> Self {
+		let live_out2 = live_out.clone();
+
+		let mut live_in = live_out.clone();
+		live_in.extend(block.term.uses());
+
+		let mut live_in_list = vec![live_in.clone()];
+
+		live_out = live_in.clone();
+
+		for instr in block.body.iter().rev() {
+			let defs = instr.defs();
+			let uses = instr.uses();
+
+			live_in = live_out.iter().copied().filter(|v| !defs.contains(v)).collect();
+			live_in.extend(uses.into_iter());
+
+			live_in_list.push(live_in.clone());
+
+			live_out = live_in.clone();
+		}
+
+		live_in_list.reverse();
+
+		live_in.extend(block.params.iter().copied());
+
+		FullBlockLivenessInfo { live_in: live_in_list, live_out: live_out2 }
+	}
+
+	pub fn live_in_body(&self, instr: usize) -> HashSet<TypedSsaVar> {
+		self.live_in[instr].clone()
+	}
+
+	pub fn live_out_body(&self, instr: usize) -> HashSet<TypedSsaVar> {
+		if instr == self.live_in.len() - 1 {
+			self.live_out.clone()
+		} else {
+			self.live_in[instr + 1].clone()
+		}
+	}
+}
+
+pub struct FullLivenessInfo(HashMap<BlockId, FullBlockLivenessInfo>);
+
+impl LivenessInfo for FullLivenessInfo {
+	fn analyze(func: &SsaFunction) -> Self {
+		let mut result = HashMap::new();
+
+		for (block_id, block) in func.iter() {
+			result.insert(block_id, FullBlockLivenessInfo::new(block, HashSet::new()));
+		}
+
+		let mut changed = true;
+		while changed {
+			changed = false;
+
+			for (block_id, block) in func.iter() {
+				let mut live_out = HashSet::new();
+				for succ in block.term.successors() {
+					let succ_live_in = result.get(&succ).unwrap();
+					live_out.extend(succ_live_in.live_in[0].iter().copied());
+				}
+
+				let block_info = result.get(&block_id).unwrap();
+				if block_info.live_out != live_out {
+					changed = true;
+					let new_info = FullBlockLivenessInfo::new(block, live_out);
+					/*println!("New info for block {:?}", block_id);
+					println!("LIVE IN:  {:?}", new_info.live_in[0]);
+					println!("LIVE OUT: {:?}", new_info.live_out);*/
+					println!();
+					result.insert(block_id, new_info);
+				}
+			}
+		}
+
+		FullLivenessInfo(result)
+	}
+
+	fn live_in_body(&self, block: BlockId, instr: usize) -> HashSet<TypedSsaVar> {
+		let block_info = self.0.get(&block).unwrap();
+		block_info.live_in_body(instr)
+	}
+
+	fn live_out_body(&self, block: BlockId, instr: usize) -> HashSet<TypedSsaVar> {
+		let block_info = if let Some(bi) = self.0.get(&block) {
+			bi
+		} else {
+			return HashSet::new();
+		};
+
+		block_info.live_out_body(instr)
+	}
+}
+
+
 pub fn get_postorder(func: &SsaFunction) -> Vec<BlockId> {
 	let mut result = Vec::new();
 	let mut visited = HashSet::new();

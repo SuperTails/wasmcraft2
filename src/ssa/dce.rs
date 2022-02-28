@@ -1,8 +1,8 @@
-use super::{SsaProgram, liveness::{LivenessInfo, NoopLivenessInfo}, BlockId, SsaBasicBlock};
+use super::{SsaProgram, liveness::{LivenessInfo, FullLivenessInfo}, BlockId, SsaBasicBlock};
 
 pub fn do_dead_code_elim(program: &mut SsaProgram) {
 	for func in program.code.iter_mut() {
-		let live_info = NoopLivenessInfo::analyze(func);
+		let live_info = FullLivenessInfo::analyze(func);
 		
 		for (block_id, block) in func.code.iter_mut() {
 			let changes = get_dce_changes(*block_id, block, &live_info);
@@ -12,7 +12,7 @@ pub fn do_dead_code_elim(program: &mut SsaProgram) {
 	}
 }
 
-fn get_dce_changes(block_id: BlockId, block: &SsaBasicBlock, live_info: &NoopLivenessInfo) -> Vec<usize> {
+fn get_dce_changes(block_id: BlockId, block: &SsaBasicBlock, live_info: &FullLivenessInfo) -> Vec<usize> {
 	block.body.iter().enumerate().filter_map(|(idx, instr)| {
 		let live_out = live_info.live_out_body(block_id, idx);
 		let defs = instr.defs();
