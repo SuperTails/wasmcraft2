@@ -4,7 +4,7 @@ use wasmparser::{Type, MemoryImmediate};
 
 use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half}, ssa::{TypedSsaVar, SsaVarOrConst}, jump_mode, JumpMode};
 
-use super::{SsaProgram, SsaFunction, SsaVar, SsaBasicBlock, BlockId, liveness::{NoopLivenessInfo, LivenessInfo, SimpleLivenessInfo}, call_graph::NoopCallGraph};
+use super::{SsaProgram, SsaFunction, SsaVar, SsaBasicBlock, BlockId, liveness::{NoopLivenessInfo, LivenessInfo, SimpleLivenessInfo}, call_graph::CallGraph};
 
 trait RegAlloc {
 	fn analyze(ssa_func: &SsaFunction) -> Self;
@@ -94,7 +94,7 @@ impl LirFuncBuilder {
 	}
 }
 
-fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasicBlock, ra: &mut NoopRegAlloc, li: &L, call_graph: &NoopCallGraph, builder: &mut LirFuncBuilder)
+fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasicBlock, ra: &mut NoopRegAlloc, li: &L, call_graph: &CallGraph, builder: &mut LirFuncBuilder)
 	where L: LivenessInfo
 {
 	fn do_binop<'a, F, G, L, R>(dst: TypedSsaVar, lhs: L, rhs: R, block: &'a mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F, g: G)
@@ -702,7 +702,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 				}
 				let to_save = to_save.into_iter().collect::<Vec<_>>();
 
-				let needs_save = call_graph.may_recurse_in(block_id.func as u32, *function_index);
+				let needs_save = call_graph.may_call(*function_index, block_id.func as u32);
 
 				if needs_save {
 					emit_save(&mut block, &to_save, ra);
@@ -741,7 +741,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 				}
 				let to_save = to_save.into_iter().collect::<Vec<_>>();
 
-				let needs_save = call_graph.may_recurse_in_table(block_id.func as u32, *table_index);
+				let needs_save = call_graph.table_may_call(*table_index, block_id.func as u32);
 
 				if needs_save {
 					emit_save(&mut block, &to_save, ra);
@@ -1065,7 +1065,7 @@ fn gen_prologue(ssa_func: &SsaFunction, ssa_program: &SsaProgram, ra: &mut NoopR
 	result
 }
 
-fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &NoopCallGraph, constant_pool: &mut HashSet<i32>) -> LirFunction {
+fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &CallGraph, constant_pool: &mut HashSet<i32>) -> LirFunction {
 	let mut reg_alloc = NoopRegAlloc::analyze(&ssa_func);
 
 	let mut builder = LirFuncBuilder::new(ssa_func);
@@ -1093,7 +1093,7 @@ fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &NoopCall
 }
 
 pub fn convert(ssa_program: SsaProgram) -> LirProgram {
-	let call_graph = NoopCallGraph::new(&ssa_program);
+	let call_graph = CallGraph::new(&ssa_program);
 
 	let mut constants = HashSet::new();
 

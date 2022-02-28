@@ -518,6 +518,12 @@ pub struct SsaProgram {
 	pub exports: HashMap<String, BlockId>,
 }
 
+impl SsaProgram {
+	pub fn get_func(&self, func_id: u32) -> &SsaFunction {
+		self.code.iter().find(|f| f.func_id() == func_id).unwrap()
+	}
+}
+
 pub struct Memory {
 	pub data: Vec<u8>,
 	pub maximum: Option<usize>,
