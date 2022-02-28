@@ -3,6 +3,7 @@ pub mod lir_emitter;
 pub mod liveness;
 pub mod call_graph;
 pub mod const_prop;
+pub mod dce;
 
 use std::collections::HashMap;
 
@@ -397,6 +398,75 @@ impl SsaInstr {
 			SsaInstr::TurtleGetBlock(b) => vec![*b],
 			SsaInstr::PrintInt(_) => Vec::new(),
 		}
+	}
+
+	pub fn has_side_effects(&self) -> bool {
+		match self {
+			SsaInstr::I32Set(_, _) |
+			SsaInstr::I64Set(_, _) |
+			SsaInstr::Add(_, _, _) |
+			SsaInstr::Sub(_, _, _) |
+			SsaInstr::Mul(_, _, _) |
+			SsaInstr::DivS(_, _, _) |
+			SsaInstr::DivU(_, _, _) |
+			SsaInstr::RemS(_, _, _) |
+			SsaInstr::RemU(_, _, _) |
+			SsaInstr::Shl(_, _, _) |
+			SsaInstr::ShrS(_, _, _) |
+			SsaInstr::ShrU(_, _, _) |
+			SsaInstr::Rotl(_, _, _) |
+			SsaInstr::Rotr(_, _, _) |
+			SsaInstr::Xor(_, _, _) |
+			SsaInstr::And(_, _, _) |
+			SsaInstr::Or(_, _, _) |
+			SsaInstr::GtS(_, _, _) |
+			SsaInstr::GtU(_, _, _) |
+			SsaInstr::GeS(_, _, _) |
+			SsaInstr::GeU(_, _, _) |
+			SsaInstr::LtS(_, _, _) |
+			SsaInstr::LtU(_, _, _) |
+			SsaInstr::LeS(_, _, _) |
+			SsaInstr::LeU(_, _, _) |
+			SsaInstr::Eq(_, _, _) |
+			SsaInstr::Ne(_, _, _) |
+			SsaInstr::Popcnt(_, _) |
+			SsaInstr::Clz(_, _) |
+			SsaInstr::Ctz(_, _) |
+			SsaInstr::Eqz(_, _) => false,
+
+			SsaInstr::Load64(_, _, _) |
+			SsaInstr::Load32S(_, _, _) |
+			SsaInstr::Load32U(_, _, _) |
+			SsaInstr::Load16S(_, _, _) |
+			SsaInstr::Load16U(_, _, _) |
+			SsaInstr::Load8S(_, _, _) |
+			SsaInstr::Load8U(_, _, _) |
+			SsaInstr::Store64(_, _, _) |
+			SsaInstr::Store32(_, _, _) |
+			SsaInstr::Store16(_, _, _) |
+			SsaInstr::Store8(_, _, _) |
+			SsaInstr::GlobalSet(_, _) |
+			SsaInstr::GlobalGet(_, _) |
+			SsaInstr::LocalSet(_, _) |
+			SsaInstr::LocalGet(_, _) => true,
+
+			SsaInstr::Extend8S(_, _) |
+			SsaInstr::Extend16S(_, _) |
+			SsaInstr::Extend32S(_, _) |
+			SsaInstr::Extend32U(_, _) |
+			SsaInstr::Wrap(_, _) |
+			SsaInstr::Select { .. } => false,
+
+			SsaInstr::Call { .. } |
+			SsaInstr::CallIndirect { .. } |
+			SsaInstr::TurtleSetX(_) |
+			SsaInstr::TurtleSetY(_) |
+			SsaInstr::TurtleSetZ(_) |
+			SsaInstr::TurtleSetBlock(_) |
+			SsaInstr::TurtleGetBlock(_) |
+			SsaInstr::PrintInt(_) => true,
+		}
+
 	}
 
 	pub fn constable_vars(&mut self) -> Vec<&mut SsaVarOrConst> {
