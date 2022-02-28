@@ -1,51 +1,9 @@
-scoreboard players set %return%0 reg 0
+scoreboard players operation %tempp1lo reg = %param0%0 reg
+scoreboard players operation %tempp1lo reg %= %%65536 reg
 
-# First half:
-# 1-4
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
+execute unless score %param1%0 reg matches 0..65535 run scoreboard players set %temp1lo reg 1
 
-# 5-8
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
+execute if score %tempp1lo reg matches 0 run scoreboard players operation %return%0 reg = %param0%0 reg
+execute if score %tempp1lo reg matches 0 run scoreboard players operation %return%0 reg += %param1%0 reg
 
-# 9-12
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
-
-# 13-16
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
-
-# Second half:
-# 1-4
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
-
-# 5-8
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
-
-# 9-12
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
-
-# 13-16
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
-function intrinsic:or_inner
+execute unless score %tempp1lo reg matches 0 run function intrinsic:or_normal

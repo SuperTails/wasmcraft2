@@ -1026,6 +1026,8 @@ fn emit_copy(block: &mut Vec<LirInstr>, in_params: &[TypedSsaVar], out_params: &
 	}
 }
 
+const MANUALLY_ZERO_LOCALS: bool = false;
+
 fn gen_prologue(ssa_func: &SsaFunction, ssa_program: &SsaProgram, ra: &mut NoopRegAlloc) -> Vec<LirInstr> {
 	let mut result = Vec::new();
 
@@ -1049,16 +1051,18 @@ fn gen_prologue(ssa_func: &SsaFunction, ssa_program: &SsaProgram, ra: &mut NoopR
 		}
 	}
 
-	for (idx, local) in locals.iter().enumerate().skip(ssa_func.params.len()) {
-		match *local {
-			Type::I32 => {
-				result.push(LirInstr::LocalSet(idx as u32, Half::Lo, ra.get_const(0)));
+	if MANUALLY_ZERO_LOCALS {
+		for (idx, local) in locals.iter().enumerate().skip(ssa_func.params.len()) {
+			match *local {
+				Type::I32 => {
+					result.push(LirInstr::LocalSet(idx as u32, Half::Lo, ra.get_const(0)));
+				}
+				Type::I64 => {
+					result.push(LirInstr::LocalSet(idx as u32, Half::Lo, ra.get_const(0)));
+					result.push(LirInstr::LocalSet(idx as u32, Half::Hi, ra.get_const(0)));
+				}
+				_ => todo!(),
 			}
-			Type::I64 => {
-				result.push(LirInstr::LocalSet(idx as u32, Half::Lo, ra.get_const(0)));
-				result.push(LirInstr::LocalSet(idx as u32, Half::Hi, ra.get_const(0)));
-			}
-			_ => todo!(),
 		}
 	}
 

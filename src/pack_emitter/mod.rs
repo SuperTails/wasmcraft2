@@ -141,21 +141,16 @@ fn create_return_to_saved_func(program: &LirProgram) -> Function {
 	
 	let mut code = Vec::new();
 
-	// First, convert the string value on the stack to a numeric one
 	code.push(format!("scoreboard players set {reg} -1"));
-	for (idx, block_id) in program.all_block_ids().enumerate() {
-		let addr_str = get_mc_id(block_id);
-		code.push(format!("execute if data storage wasm:returnstack stack.data.'{addr_str}' run scoreboard players set {reg} {idx}"));
-	}
-	code.push("data modify storage wasm:returnstack stack set from storage wasm:returnstack stack.tail".to_string());
-
 	let cond_taken = Register::cond_taken();
-
 	code.push(format!("scoreboard players set {cond_taken} 0"));
-	for (idx, block_id) in program.all_block_ids().enumerate() {
+	code.push("data modify storage wasm:scratch stack.data set from storage wasm:returnstack stack.data".to_string());
+	code.push("data modify storage wasm:returnstack stack set from storage wasm:returnstack stack.tail".to_string());
+	for block_id in program.all_block_ids() {
 		let addr_str = get_mc_id(block_id);
-		code.push(format!("execute if score {cond_taken} matches 0 run execute if score {reg} matches {idx} run function {addr_str}"));
+		code.push(format!("execute if score {cond_taken} matches 0 if data storage wasm:scratch stack.data.'{addr_str}' run function {addr_str}"));
 	}
+
 	code.push(format!("scoreboard players set {cond_taken} 1"));
 
 	parse_function("wasmrunner:__return_to_saved", &code)
@@ -171,9 +166,10 @@ fn push_return_addr(addr: BlockId, code: &mut Vec<String>) {
 }
 
 fn push_data(regs: &[Register], code: &mut Vec<String>) {
-	let arr = create_zeroed_array(regs.len());
+	let arr = create_array_with_consts(regs);
 	code.push(format!("data modify storage wasm:scratch stack.data set value {arr}"));
 	for (idx, reg) in regs.iter().enumerate() {
+		if reg.get_const().is_some() { continue; }
 		code.push(format!("execute store result storage wasm:scratch stack.data[{idx}] int 1 run scoreboard players get {reg}"));
 	}
 	code.push("data modify storage wasm:scratch stack.tail set from storage wasm:datastack stack".to_string());
@@ -185,6 +181,23 @@ fn pop_data(regs: &[Register], code: &mut Vec<String>) {
 		code.push(format!("execute store result score {reg} run data get storage wasm:datastack stack.data[{idx}] 1"));
 	}
 	code.push("data modify storage wasm:datastack stack set from storage wasm:datastack stack.tail".to_string());
+}
+
+fn create_array_with_consts(regs: &[Register]) -> String {
+	let mut arr = '['.to_string();
+	for (i, r) in regs.iter().enumerate() {
+		if let Some(r) = r.get_const() {
+			arr.push_str(&r.to_string())
+		} else {
+			arr.push('0');
+		}
+		if i != regs.len() - 1 {
+			arr.push_str(", ");
+		}
+	}
+	arr.push(']');
+
+	arr
 }
 
 fn create_zeroed_array(count: usize) -> String {
@@ -883,6 +896,27 @@ fn emit_constant_and(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Stri
 	}
 }
 
+fn emit_constant_xor(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+	if dst != lhs {
+		code.push(format!("scoreboard players operation {dst} = {lhs}"));
+	}
+
+	if rhs == -1 {
+		// (-x - 1) = (~x)
+		const_pool.insert(-1);
+		let neg_one = Register::const_val(-1);
+		code.push(format!("scoreboard players operation {dst} *= {neg_one}"));
+		code.push(format!("scoreboard players remove {dst} 1"));
+	} else if rhs != 0 {
+		// TODO:
+		code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
+		code.push(format!("scoreboard players set %param1%0 reg {rhs}"));
+		code.push("function intrinsic:xor".to_string());
+		code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
+	}
+}
+
+
 fn emit_constant_shru(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	let rhs = rhs.rem_euclid(32);
 
@@ -1174,10 +1208,14 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 		}
 
 		&LirInstr::Xor(dst, lhs, rhs) => {
-			code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
-			code.push(format!("scoreboard players operation %param1%0 reg = {rhs}"));
-			code.push("function intrinsic:xor".to_string());
-			code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
+			if let Some(rhs) = rhs.get_const() {
+				emit_constant_xor(dst, lhs, rhs, code, const_pool);
+			} else {
+				code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
+				code.push(format!("scoreboard players operation %param1%0 reg = {rhs}"));
+				code.push("function intrinsic:xor".to_string());
+				code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
+			}
 		}
 		&LirInstr::And(dst, lhs, rhs) => {
 			if let Some(c) = rhs.get_const() {
@@ -1834,6 +1872,12 @@ mod test {
 		test_constant_func(lhs_vals, rhs, emit_constant_shru, |a, b| ((a as u32) >> b) as i32);
 	}
 
+	fn test_constant_xor<I>(lhs_vals: I, rhs: i32)
+		where I: Iterator<Item=i32>,
+	{
+		test_constant_func(lhs_vals, rhs, emit_constant_xor, |a, b| a ^ b);
+	}
+
 	#[test]
 	fn constant_and() {
 		// -1 - INT_MIN * (-1)
@@ -1855,6 +1899,20 @@ mod test {
 
 		for rhs in 0..32 {
 			test_constant_shru(test_vals.into_iter(), rhs);
+		}
+	}
+
+	// TODO:
+
+	#[test]
+	#[ignore]
+	fn constant_xor() {
+		let test_vals = [
+			0, -1, 1, 2, 4, i32::MAX, i32::MIN, 17, 39, -58, -107, 0x5555_5555, 1234567, -983253743, 1_000_000_000
+		];
+
+		for rhs in test_vals {
+			test_constant_xor(test_vals.into_iter(), rhs);
 		}
 	}
 }
