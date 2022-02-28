@@ -140,7 +140,7 @@ pub enum SsaInstr {
 	RemU(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	Shl(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
 	ShrS(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
-	ShrU(TypedSsaVar, TypedSsaVar, TypedSsaVar),
+	ShrU(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
 	Rotl(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	Rotr(TypedSsaVar, TypedSsaVar, TypedSsaVar),
 	Xor(TypedSsaVar, TypedSsaVar, TypedSsaVar),
@@ -253,7 +253,7 @@ impl SsaInstr {
 			SsaInstr::RemU(_, lhs, rhs) |
 			SsaInstr::Shl(_, lhs, SsaVarOrConst::Var(rhs)) |
 			SsaInstr::ShrS(_, lhs, SsaVarOrConst::Var(rhs)) |
-			SsaInstr::ShrU(_, lhs, rhs) |
+			SsaInstr::ShrU(_, lhs, SsaVarOrConst::Var(rhs)) |
 			SsaInstr::Rotl(_, lhs, rhs) |
 			SsaInstr::Rotr(_, lhs, rhs) |
 			SsaInstr::And(_, lhs, SsaVarOrConst::Var(rhs)) |
@@ -272,7 +272,8 @@ impl SsaInstr {
 
 			SsaInstr::And(_, lhs, SsaVarOrConst::Const(_)) |
 			SsaInstr::Shl(_, lhs, SsaVarOrConst::Const(_)) |
-			SsaInstr::ShrS(_, lhs, SsaVarOrConst::Const(_)) => vec![*lhs],
+			SsaInstr::ShrS(_, lhs, SsaVarOrConst::Const(_)) |
+			SsaInstr::ShrU(_, lhs, SsaVarOrConst::Const(_)) => vec![*lhs],
 
 
 			SsaInstr::Popcnt(_, src) |
@@ -402,6 +403,7 @@ impl SsaInstr {
 
 			SsaInstr::Shl(_, _, r) |
 			SsaInstr::ShrS(_, _, r) |
+			SsaInstr::ShrU(_, _, r) |
 			SsaInstr::And(_, _, r) => vec![r],
 
 			SsaInstr::Load64(_, _, addr) | 
