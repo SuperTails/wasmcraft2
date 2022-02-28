@@ -227,6 +227,10 @@ pub fn get_mc_id(block_id: BlockId) -> String {
 }
 
 fn mem_store_32(src: Register, addr: Register, code: &mut Vec<String>) {
+	if INSERT_MEM_PRINTS {
+		code.push(tellraw_mem_store(32, src, addr));
+	}
+
 	if let Some(addr) = addr.get_const() {
 		match addr % 4 {
 			0 => {
@@ -245,6 +249,10 @@ fn mem_store_32(src: Register, addr: Register, code: &mut Vec<String>) {
 }
 
 fn mem_store_16(src: Register, addr: Register, code: &mut Vec<String>) {
+	if INSERT_MEM_PRINTS {
+		code.push(tellraw_mem_store(16, src, addr));
+	}
+
 	if let Some(addr) = addr.get_const() {
 		match addr % 4 {
 			a @ (0 | 1 | 2 | 3) => todo!("{:?}", a),
@@ -258,6 +266,10 @@ fn mem_store_16(src: Register, addr: Register, code: &mut Vec<String>) {
 }
 
 fn mem_store_8 (src: Register, addr: Register, code: &mut Vec<String>) {
+	if INSERT_MEM_PRINTS {
+		code.push(tellraw_mem_store(8, src, addr));
+	}
+
 	if let Some(addr) = addr.get_const() {
 		match addr % 4 {
 			0 => {
@@ -340,6 +352,44 @@ fn get_address_pos(addr: i32) -> (i32, i32, i32) {
 	(x, y, z)
 }
 
+const INSERT_MEM_PRINTS: bool = false;
+
+fn tellraw_mem_store(size: u32, src: Register, addr: Register) -> String {
+	let mut s = format!(r#"tellraw @a [{{"text":"Memory store of size {size} to "}},"#);
+
+	s.push_str(r#"{"score":{"name":""#);
+	s.push_str(&addr.scoreboard_pair().0.to_string());
+	s.push_str(r#"","objective":"reg"}}"#);
+
+	s.push_str(r#",{"text":", value: "},"#);
+
+	s.push_str(r#"{"score":{"name":""#);
+	s.push_str(&src.scoreboard_pair().0.to_string());
+	s.push_str(r#"","objective":"reg"}}"#);
+
+	s.push(']');
+
+	s
+}
+
+fn tellraw_mem_load(size: u32, dst: Register, addr: Register) -> String {
+	let mut s = format!(r#"tellraw @a [{{"text":"Memory load of size {size} from "}},"#);
+
+	s.push_str(r#"{"score":{"name":""#);
+	s.push_str(&addr.scoreboard_pair().0.to_string());
+	s.push_str(r#"","objective":"reg"}}"#);
+
+	s.push_str(r#",{"text":", value: "},"#);
+
+	s.push_str(r#"{"score":{"name":""#);
+	s.push_str(&dst.scoreboard_pair().0.to_string());
+	s.push_str(r#"","objective":"reg"}}"#);
+
+	s.push(']');
+
+	s
+}
+
 fn mem_load_32(dst: Register, addr: Register, code: &mut Vec<String>) {
 	if let Some(addr) = addr.get_const() {
 		match addr % 4 {
@@ -356,6 +406,10 @@ fn mem_load_32(dst: Register, addr: Register, code: &mut Vec<String>) {
 		code.push("function intrinsic:setptr".to_string());
 		code.push("function intrinsic:load_word".to_string());
 		code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
+	}
+
+	if INSERT_MEM_PRINTS {
+		code.push(tellraw_mem_load(32, dst, addr));
 	}
 }
 
@@ -378,6 +432,10 @@ fn mem_load_16(dst: Register, addr: Register, code: &mut Vec<String>) {
 		code.push("function intrinsic:load_halfword_unaligned".to_string());
 		code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
 	}
+
+	if INSERT_MEM_PRINTS {
+		code.push(tellraw_mem_load(16, dst, addr));
+	}
 }
 
 fn mem_load_8 (dst: Register, addr: Register, code: &mut Vec<String>) {
@@ -399,6 +457,10 @@ fn mem_load_8 (dst: Register, addr: Register, code: &mut Vec<String>) {
 		code.push("function intrinsic:setptr".to_string());
 		code.push("function intrinsic:load_byte".to_string());
 		code.push(format!("scoreboard players operation {dst} = %param0%0 reg"));
+	}
+
+	if INSERT_MEM_PRINTS {
+		code.push(tellraw_mem_load(8, dst, addr));
 	}
 }
 
@@ -705,8 +767,8 @@ static BLOCKS: [&str; 14] = [
 	"minecraft:redstone_block",
 	"minecraft:emerald_block",
 	"minecraft:dirt",
-	"minecraft:oak_leaves",
 	"minecraft:oak_wood",
+	"minecraft:green_wool", // FIXME: THIS IS LEAVES
 ];
 
 fn turtle_set_block(reg: Register, code: &mut Vec<String>) {
@@ -1325,6 +1387,10 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 
 fn emit_block(block_id: BlockId, block: &LirBasicBlock, parent: &LirProgram, const_pool: &mut HashSet<i32>) -> Function {
 	let mut code: Vec<String> = Vec::new();
+
+	/*if block_id.block == 0 {
+		code.push(format!("tellraw @a [{{\"text\":\"{block_id:?}\"}}]"));
+	}*/
 
 	for instr in block.body.iter() {
 		emit_instr(instr, parent, &mut code, const_pool);
