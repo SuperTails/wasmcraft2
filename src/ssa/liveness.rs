@@ -1,8 +1,8 @@
-use std::{collections::{HashSet, HashMap}, ops::RangeInclusive};
+use std::{collections::{HashSet, HashMap}, ops::RangeInclusive, fmt};
 
 use super::{TypedSsaVar, SsaFunction, BlockId, SsaBasicBlock};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BlockLiveRange {
 	pub live_in: bool,
 	/// This *includes* the instruction that creates/kills the variable!
@@ -46,7 +46,7 @@ impl BlockLiveRange {
 	}
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LiveRange(HashMap<BlockId, BlockLiveRange>);
 
 impl LiveRange {
@@ -209,16 +209,18 @@ impl LivenessInfo for SimpleLivenessInfo {
 }
 
 // Just a list of the variables that are defined at each instruction
+#[derive(Debug)]
 pub struct FullBlockLivenessInfo {
-	live_in: Vec<HashSet<TypedSsaVar>>,
+	pub live_in: Vec<HashSet<TypedSsaVar>>,
 	live_out: HashSet<TypedSsaVar>,
 }
 
 impl FullBlockLivenessInfo {
-	pub fn new(block: &SsaBasicBlock, mut live_out: HashSet<TypedSsaVar>) -> Self {
+	pub fn new(block: &SsaBasicBlock, parent: &SsaFunction, mut live_out: HashSet<TypedSsaVar>) -> Self {
 		let live_out2 = live_out.clone();
 
-		let mut live_in = live_out.clone();
+		let term_defs = block.term.defs(parent);
+		let mut live_in = live_out.iter().copied().filter(|v| !term_defs.contains(v)).collect::<HashSet<_>>();
 		live_in.extend(block.term.uses());
 
 		let mut live_in_list = vec![live_in.clone()];
@@ -239,7 +241,8 @@ impl FullBlockLivenessInfo {
 
 		live_in_list.reverse();
 
-		live_in.extend(block.params.iter().copied());
+		// TODO:
+		//live_in_list[0].extend(block.params.iter().copied());
 
 		FullBlockLivenessInfo { live_in: live_in_list, live_out: live_out2 }
 	}
@@ -276,21 +279,25 @@ impl FullBlockLivenessInfo {
 		}
 
 		if let Some(start_idx) = start_idx {
-			body.push(start_idx..=self.live_in.len() - 1);
+			body.push(start_idx - 1..=self.live_in.len() - 1);
+		} else if live_out {
+			// It must be defined by the terminator
+			body.push(self.live_in.len() - 1..=self.live_in.len() - 1);
 		}
 
 		BlockLiveRange { live_in, body, live_out }
 	}
 }
 
-pub struct FullLivenessInfo(HashMap<BlockId, FullBlockLivenessInfo>);
+#[derive(Debug)]
+pub struct FullLivenessInfo(pub HashMap<BlockId, FullBlockLivenessInfo>);
 
 impl LivenessInfo for FullLivenessInfo {
 	fn analyze(func: &SsaFunction) -> Self {
 		let mut result = HashMap::new();
 
 		for (block_id, block) in func.iter() {
-			result.insert(block_id, FullBlockLivenessInfo::new(block, HashSet::new()));
+			result.insert(block_id, FullBlockLivenessInfo::new(block, func, HashSet::new()));
 		}
 
 		let mut changed = true;
@@ -307,11 +314,11 @@ impl LivenessInfo for FullLivenessInfo {
 				let block_info = result.get(&block_id).unwrap();
 				if block_info.live_out != live_out {
 					changed = true;
-					let new_info = FullBlockLivenessInfo::new(block, live_out);
+					let new_info = FullBlockLivenessInfo::new(block, func, live_out);
 					/*println!("New info for block {:?}", block_id);
 					println!("LIVE IN:  {:?}", new_info.live_in[0]);
-					println!("LIVE OUT: {:?}", new_info.live_out);*/
-					println!();
+					println!("LIVE OUT: {:?}", new_info.live_out);
+					println!();*/
 					result.insert(block_id, new_info);
 				}
 			}
@@ -338,6 +345,49 @@ impl LivenessInfo for FullLivenessInfo {
 	fn live_range(&self, var: TypedSsaVar) -> LiveRange {
 		let blocks = self.0.iter().map(|(id, block)| (*id, block.live_range(var))).collect();
 		LiveRange(blocks)
+	}
+}
+
+pub fn print_liveness_info(li: &FullLivenessInfo, func: &SsaFunction) {
+	for (id, block) in func.iter() {
+		let block_info = li.0.get(&id).unwrap();
+		assert_eq!(block_info.live_in.len(), block.body.len() + 1);
+		println!("---- block {id:?} ---- ");
+		for (live_in, instr) in block_info.live_in.iter().zip(block.body.iter()) {
+			println!("\t--> {:?}", live_in);
+			println!("\t\t{:?}", instr);
+		}
+		println!("\t--> {:?}", block_info.live_in.last().unwrap());
+		println!("\t\t{:?}", block.term);
+		println!("\t--> {:?}", block_info.live_out);
+	}
+}
+
+pub fn print_live_ranges(lr: &[LiveRange], func: &SsaFunction) {
+	for (block_id, block) in func.iter() {
+		println!("------- block {:?} ------", block_id);
+
+		for r in lr.iter() {
+			let r = r.0.get(&block_id).unwrap();
+			if r.live_in { print!(" + "); } else { print!("   "); }
+		}
+		println!("parameters: {:?}", block.params);
+		
+		for (idx, instr) in block.body.iter().enumerate() {
+			for r in lr.iter() {
+				let r = r.0.get(&block_id).unwrap();
+				let is_live = r.body.iter().any(|r2| r2.contains(&idx));
+				if is_live { print!(" + ") } else { print!("   "); }
+			}
+			println!("{:?}", instr);
+		}
+
+		for r in lr.iter() {
+			let r = r.0.get(&block_id).unwrap();
+			let is_live = r.body.iter().any(|r2| r2.contains(&block.body.len()));
+			if is_live { print!(" + "); } else { print!("   "); }
+		}
+		println!("{:?}", block.term);
 	}
 }
 

@@ -8,6 +8,17 @@ pub mod ssa;
 pub mod lir;
 pub mod pack_emitter;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodegenStage {
+	Ssa,
+	Lir,
+	Datapack,
+}
+
+const CODEGEN_STAGE: CodegenStage = CodegenStage::Datapack;
+
+const RUN_PROGRAM: bool = true;
+
 pub fn run(path: &str, output_path: &str) {
 	let bytes = std::fs::read(path).unwrap();
 
@@ -27,7 +38,15 @@ pub fn run(path: &str, output_path: &str) {
 
 	let ssa_program = wasm_to_ssa(&file);
 
+	if CODEGEN_STAGE == CodegenStage::Ssa {
+		return;
+	}
+
 	let lir_program = lir_emitter::convert(ssa_program);
+
+	if CODEGEN_STAGE == CodegenStage::Lir {
+		return;
+	}
 
 	let datapack = pack_emitter::emit_program(&lir_program);
 	
@@ -52,29 +71,31 @@ pub fn run(path: &str, output_path: &str) {
 
 	pack_emitter::persist_program(std::path::Path::new(output_path), &datapack);
 
-	let mut interp = datapack_vm::Interpreter::new(datapack, 0);
+	if RUN_PROGRAM {
+		let mut interp = datapack_vm::Interpreter::new(datapack, 0);
 
-	let (_, func_name) = datapack_common::functions::command_components::FunctionIdent::parse_from_command("wasmrunner:init").unwrap();
+		let (_, func_name) = datapack_common::functions::command_components::FunctionIdent::parse_from_command("wasmrunner:init").unwrap();
 
-	let interp_idx = interp.get_func_idx(&func_name);
-	interp.set_pos(interp_idx);
+		let interp_idx = interp.get_func_idx(&func_name);
+		interp.set_pos(interp_idx);
 
-	interp.run_to_end().unwrap();
+		interp.run_to_end().unwrap();
 
-	let (_, func_name) = datapack_common::functions::command_components::FunctionIdent::parse_from_command("wasmrunner:_start").unwrap();
+		let (_, func_name) = datapack_common::functions::command_components::FunctionIdent::parse_from_command("wasmrunner:_start").unwrap();
 
-	let interp_idx = interp.get_func_idx(&func_name);
-	interp.set_pos(interp_idx);
+		let interp_idx = interp.get_func_idx(&func_name);
+		interp.set_pos(interp_idx);
 
-	dbg!(interp.run_to_end());
+		dbg!(interp.run_to_end());
 
-	let mut traces = interp.traces.into_iter().collect::<Vec<_>>();
-	traces.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
-	let total: usize = traces.iter().map(|(_, c)| *c).sum();
+		let mut traces = interp.traces.into_iter().collect::<Vec<_>>();
+		traces.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+		let total: usize = traces.iter().map(|(_, c)| *c).sum();
 
-	println!("\nTOTAL: {}", total);
-	for (id, count) in traces {
-		println!("{}: {}", id, count);
+		println!("\nTOTAL: {}", total);
+		for (id, count) in traces {
+			println!("{}: {}", id, count);
+		}
 	}
 }
 

@@ -296,6 +296,24 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 				block.push(LirInstr::Set(reg.hi(), (val >> 32) as i32));
 			}
 
+			&super::SsaInstr::Assign(lhs, rhs) => {
+				assert_eq!(lhs.ty(), rhs.ty());
+				match lhs.ty() {
+					Type::I32 => {
+						let lhs = ra.get(lhs.into_untyped());
+						let rhs = ra.get(rhs.into_untyped());
+						block.push(LirInstr::Assign(lhs, rhs));
+					}
+					Type::I64 => {
+						let lhs = ra.get_double(lhs.into_untyped());
+						let rhs = ra.get_double(rhs.into_untyped());
+						block.push(LirInstr::Assign(lhs.lo(), rhs.lo()));
+						block.push(LirInstr::Assign(lhs.hi(), rhs.hi()));
+					}
+					_ => todo!(),
+				}
+			}
+
 			&super::SsaInstr::Add(dst, lhs, rhs) => {
 				let i32_add = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
 					if dst != lhs {
@@ -571,6 +589,22 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 						let reg = ra.get_double(dst.into_untyped());
 						block.push(LirInstr::LocalGet(reg.lo(), *src, Half::Lo));
 						block.push(LirInstr::LocalGet(reg.hi(), *src, Half::Hi));
+					}
+					_ => todo!(),
+				}
+			}
+			super::SsaInstr::ParamGet(dst, src) => {
+				match dst.ty() {
+					Type::I32 => {
+						let dst = ra.get(dst.into_untyped());
+						let src = Register::param_lo(*src);
+						block.push(LirInstr::Assign(dst, src));
+					}
+					Type::I64 => {
+						let dst = ra.get_double(dst.into_untyped());
+						let src = DoubleRegister::param(*src);
+						block.push(LirInstr::Assign(dst.lo(), src.lo()));
+						block.push(LirInstr::Assign(dst.hi(), src.hi()));
 					}
 					_ => todo!(),
 				}
@@ -945,9 +979,17 @@ fn emit_copy(block: &mut Vec<LirInstr>, in_params: &[TypedSsaVar], out_params: &
 		block.push(instr);
 	};
 
+	let param_pairs = in_params.iter().zip(out_params.iter()).filter(|(i, o)| {
+		match i.ty() {
+			Type::I32 => ra.get(i.into_untyped()) != ra.get(o.into_untyped()),
+			Type::I64 => ra.get_double(i.into_untyped()) != ra.get_double(o.into_untyped()),
+			_ => todo!(),
+		}
+	});
+
 	// TODO: Optimize
 
-	for (idx, in_param) in in_params.iter().enumerate() {
+	for (idx, (in_param, _)) in param_pairs.clone().enumerate() {
 		match in_param.ty() {
 			Type::I32 => {
 				let tmp = Register::temp_lo(idx as u32);
@@ -964,7 +1006,7 @@ fn emit_copy(block: &mut Vec<LirInstr>, in_params: &[TypedSsaVar], out_params: &
 		}
 	}
 
-	for (idx, out_param) in out_params.iter().enumerate() {
+	for (idx, (_, out_param)) in param_pairs.enumerate() {
 		match out_param.ty() {
 			Type::I32 => {
 				let tmp = Register::temp_lo(idx as u32);

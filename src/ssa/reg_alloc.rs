@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 
-use crate::lir::{Register, DoubleRegister};
+use crate::{lir::{Register, DoubleRegister}, ssa::liveness::print_live_ranges};
 
-use super::{SsaFunction, SsaVar, liveness::{NoopLivenessInfo, LivenessInfo, FullLivenessInfo}, TypedSsaVar};
+use super::{SsaFunction, SsaVar, liveness::{NoopLivenessInfo, LivenessInfo, FullLivenessInfo}, TypedSsaVar, BlockId};
 
 pub trait RegAlloc {
 	fn analyze(ssa_func: &SsaFunction) -> Self;
@@ -54,20 +54,18 @@ pub struct FullRegAlloc {
 	temp: u32,
 }
 
-fn elems_in_set<'a>(all_vars: &'a HashSet<TypedSsaVar>, rep: &'a SsaVar, union_find: &'a UnionFind<SsaVar>) -> impl Iterator<Item=TypedSsaVar> + 'a {
-	all_vars.iter().copied().filter(|v| union_find.equiv(*rep, v.into_untyped()))
-}
-
 mod register_set {
 	use crate::ssa::liveness::LiveRange;
 
 	use super::*;
 
+	#[derive(Debug)]
 	pub struct MergedRegister {
 		pub members: HashSet<TypedSsaVar>,
 		pub live_range: LiveRange,
 	}
 
+	#[derive(Debug)]
 	pub struct RegisterSet(Vec<MergedRegister>);
 	
 	impl RegisterSet {
@@ -75,6 +73,8 @@ mod register_set {
 			let all_vars = NoopLivenessInfo::analyze(func).vars;
 
 			let live_info = FullLivenessInfo::analyze(func);
+
+			//crate::ssa::liveness::print_liveness_info(&live_info, func);
 
 			let regs = all_vars.into_iter().map(|var| {
 				let members = Some(var).into_iter().collect();
@@ -97,7 +97,7 @@ mod register_set {
 			let merged2 = self.0.remove(r2);
 
 			merged1.members.extend(merged2.members);
-			merged1.live_range = merged1.live_range.overlap(&merged2.live_range);
+			merged1.live_range.merge(merged2.live_range);
 
 			self.0.push(merged1);
 		}
@@ -109,10 +109,40 @@ mod register_set {
 		pub fn get_idx2(&self, var1: SsaVar) -> usize {
 			self.0.iter().enumerate().find(|(_, reg)| reg.members.iter().any(|r| r.0 == var1.0)).unwrap().0
 		}
+
+		pub fn get_rep(&self, var1: SsaVar) -> TypedSsaVar {
+			let idx = self.get_idx2(var1);
+			*self.0[idx].members.iter().next().unwrap()
+		}
 	}
 }
 
 use register_set::*;
+
+fn try_merge(sets: &mut RegisterSet, block_id: BlockId, instr_idx: usize, dst: &TypedSsaVar, src: &TypedSsaVar, func: &SsaFunction) {
+	if sets.get_idx(*dst) == sets.get_idx(*src) {
+		return;
+	}
+
+	let dst_set = sets.get(*dst);
+	let src_set = sets.get(*src);
+
+	//println!();
+	//println!("{:?} {:?}", dst, src);
+	//println!("Members: {:?}", dst_set.members);
+	//println!("         {:?}", src_set.members);
+
+	//print_live_ranges(&[dst_set.live_range.clone(), src_set.live_range.clone()], func);
+
+	let overlap = dst_set.live_range.overlap(&src_set.live_range);
+
+	if let Some((_overlap_id, _overlap_instr)) = overlap.get_single_point() {
+		//assert_eq!(overlap_id, block_id);
+		//assert_eq!(overlap_instr, instr_idx);
+
+		sets.merge(*dst, *src);
+	}
+}
 
 impl RegAlloc for FullRegAlloc {
 	fn analyze(func: &SsaFunction) -> Self {
@@ -126,26 +156,12 @@ impl RegAlloc for FullRegAlloc {
 					assert!(uses.contains(src));
 					assert!(defs.contains(dst));
 
-					let dst_set = sets.get(*dst);
-					let src_set = sets.get(*src);
-
-					println!("{:?} {:?}", dst, src);
-
-					println!("{} : {:?}", instr_idx, instr);
-
-					println!("DST RANGE {:?}", dst_set.live_range);
-					println!("SRC RANGE {:?}", src_set.live_range);
-
-					let overlap = dst_set.live_range.overlap(&src_set.live_range);
-
-					if let Some((overlap_id, overlap_instr)) = overlap.get_single_point() {
-						assert_eq!(overlap_id, block_id);
-						assert_eq!(overlap_instr, instr_idx);
-
-						sets.merge(*dst, *src);
-					}
-
+					try_merge(&mut sets, block_id, instr_idx, dst, src, func);
 				}
+			}
+
+			for (dst, src) in func.coalescable_term_vars(block_id) {
+				try_merge(&mut sets, block_id, block.body.len(), &dst, &src, func);
 			}
 		}
 
@@ -153,12 +169,12 @@ impl RegAlloc for FullRegAlloc {
 	}
 
 	fn get(&self, val: SsaVar) -> Register {
-		let rep = self.set.get_idx2(val);
+		let rep = self.set.get_rep(val).0;
 		Register::work_lo(self.func, rep as u32)
 	}
 
 	fn get_double(&self, val: SsaVar) -> DoubleRegister {
-		let rep = self.set.get_idx2(val);
+		let rep = self.set.get_rep(val).0;
 		DoubleRegister::Work(self.func, rep as u32)
 	}
 
@@ -171,5 +187,83 @@ impl RegAlloc for FullRegAlloc {
 		let reg = Register::temp_lo(self.temp);
 		self.temp += 1;
 		reg
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use wasmparser::Type;
+
+	use crate::ssa::{SsaBasicBlock, TypedSsaVar, SsaInstr, SsaTerminator, JumpTarget, BlockId, SsaFunction, liveness::{FullLivenessInfo, LivenessInfo, print_liveness_info}};
+
+use super::{FullRegAlloc, RegAlloc};
+
+	/*#[test]
+	fn reg_across_jump() {
+		let r0 = TypedSsaVar(0, Type::I32);
+		let r1 = TypedSsaVar(1, Type::I32);
+
+		let b0 = SsaBasicBlock {
+			// TODO: ???
+			params: Vec::new(),
+			body: vec![
+				SsaInstr::I32Set(r0, 123),
+			],
+			term: SsaTerminator::Jump(JumpTarget {
+				label: BlockId { func: 0, block: 1 },
+				params: vec![r0],
+			})
+		};
+	}*/
+
+	#[test]
+	#[ignore]
+	fn coalesce_jump_param() {
+		let r0 = TypedSsaVar(0, Type::I32);
+		let r1 = TypedSsaVar(1, Type::I32);
+
+		let b0 = SsaBasicBlock {
+			params: Vec::new(),
+			body: vec![
+				SsaInstr::I32Set(r0, 123)
+			],
+			term: SsaTerminator::Jump(JumpTarget {
+				label: BlockId { func: 0, block: 1},
+				params: vec![r0]
+			})
+		};
+
+		let b1 = SsaBasicBlock {
+			params: vec![r1],
+			body: Vec::new(),
+			term: SsaTerminator::Return(vec![r1]),
+		};
+
+		let func = SsaFunction {
+			code: vec![
+				(BlockId { func: 0, block: 0 }, b0),
+				(BlockId { func: 0, block: 1 }, b1),
+			],
+			params: Box::new([]),
+			returns: Box::new([Type::I32])
+		};
+
+		let reg_alloc = FullRegAlloc::analyze(&func);
+
+		println!("{:?}", reg_alloc.set);
+		panic!();
+		
+		/*let liveness = FullLivenessInfo::analyze(&func);
+
+		let r0_range = liveness.live_range(r0);
+		let r1_range = liveness.live_range(r1);
+
+		print_liveness_info(&liveness, &func);
+		println!();
+
+		println!("{:?}\n", r0_range);
+		println!("{:?}\n", r1_range);
+		println!("{:?}\n", overlap);
+		panic!();*/
 	}
 }

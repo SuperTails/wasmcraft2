@@ -431,6 +431,11 @@ impl SsaInterpreter {
 					assert_eq!(dst.ty(), Type::I64);
 					frame.var_context.insert(dst.into_untyped(), val.into());
 				}
+				&super::SsaInstr::Assign(dst, src) => {
+					assert_eq!(dst.ty(), src.ty());
+					let val = frame.var_context.get(src.into_untyped()).unwrap();
+					frame.var_context.insert(dst.into_untyped(), val);
+				}
 
 				&super::SsaInstr::Add(dst, lhs, rhs) => do_binop(dst, lhs, rhs, &mut frame.var_context, i32::wrapping_add, i64::wrapping_add),
 				&super::SsaInstr::Sub(dst, lhs, rhs) => do_binop(dst, lhs, rhs, &mut frame.var_context, i32::wrapping_sub, i64::wrapping_sub),
@@ -547,6 +552,7 @@ impl SsaInterpreter {
 					assert_eq!(dst.ty(), val.ty());
 					frame.var_context.insert(dst.into_untyped(), val);
 				}
+				&super::SsaInstr::ParamGet(dst, src) => todo!(),
 				super::SsaInstr::Call { function_index, params, returns } => {
 					incr_pc = false;
 

@@ -221,10 +221,44 @@ impl<'a> IndexMut<TopIndex> for ControlStack {
     }
 }
 
+struct PartialBasicBlock {
+	block: SsaBasicBlock,
+	finished: bool,
+	count: i32,
+	has_new_locals: bool,
+	starting_locals: Vec<TypedSsaVar>,
+}
+
+impl PartialBasicBlock {
+	pub fn new(old_locals: &[TypedSsaVar]) -> Self {
+		PartialBasicBlock {
+			block: SsaBasicBlock::default(),
+			finished: false,
+			count: -1,
+			has_new_locals: false,
+			starting_locals: old_locals.to_owned(),
+		}
+	}
+
+	pub fn new_with_locals(locals: &[Type], alloc: &mut SsaVarAlloc) -> Self {
+		let new_locals = locals.iter().map(|&ty| alloc.new_typed(ty)).collect::<Vec<_>>();
+
+		let mut block = SsaBasicBlock::default();
+		block.params.extend(new_locals.iter().copied());
+
+		PartialBasicBlock { block, finished: false, count: -1, has_new_locals: true, starting_locals: new_locals }
+	}
+
+	pub fn starting_locals(&self) -> &[TypedSsaVar] {
+		&self.starting_locals
+	}
+}
+
 struct SsaFuncBuilder {
-	blocks: Vec<(SsaBasicBlock, bool, i32)>,
+	blocks: Vec<PartialBasicBlock>,
 	counter: usize,
 	current_block: usize,
+	current_locals: Vec<TypedSsaVar>,
 	func: usize,
 }
 
@@ -234,23 +268,45 @@ impl SsaFuncBuilder {
 			blocks: Vec::new(),
 			current_block: 0,
 			counter: 0,
+			current_locals: Vec::new(),
 			func,
 		}
 	}
 
 	pub fn alloc_block(&mut self) -> BlockId {
 		let block = self.blocks.len();
-		self.blocks.push((SsaBasicBlock::default(), false, -1));
+		self.blocks.push(PartialBasicBlock::new(&self.current_locals));
+		BlockId { func: self.func, block }
+	}
+
+	pub fn alloc_block_with_locals(&mut self, locals: &[Type], var_alloc: &mut SsaVarAlloc) -> BlockId {
+		let block = self.blocks.len();
+		self.blocks.push(PartialBasicBlock::new_with_locals(locals, var_alloc));
 		BlockId { func: self.func, block }
 	}
 
 	pub fn set_block(&mut self, block_id: BlockId) {
 		assert_eq!(self.func, block_id.func);
 		self.current_block = block_id.block;
-		assert_eq!(self.blocks[self.current_block].2, -1);
-		self.blocks[self.current_block].2 = self.counter as i32;
+		assert_eq!(self.blocks[self.current_block].count, -1);
+		self.blocks[self.current_block].count = self.counter as i32;
+		self.current_locals = self.blocks[self.current_block].starting_locals().to_owned();
 		self.counter += 1;
 	}
+
+	/*pub fn get_local_vars(&self, block_id: BlockId, locals: &[Type]) -> &[TypedSsaVar] {
+		let part = &self.blocks[block_id.block];
+		if part.has_new_locals {
+			&self.get(block_id).params[..locals.len()]
+		} else {
+			&[]
+		}
+	}
+
+	pub fn current_local_vars(&self, locals: &[Type]) -> &[TypedSsaVar] {
+		let id = BlockId { func: self.func, block: self.current_block };
+		self.get_local_vars(id, locals)
+	}*/
 
 	pub fn current_block_mut(&mut self) -> &mut SsaBasicBlock {
 		let id = BlockId { func: self.func, block: self.current_block };
@@ -259,32 +315,32 @@ impl SsaFuncBuilder {
 
 	pub fn get(&self, block_id: BlockId) -> &SsaBasicBlock {
 		assert_eq!(self.func, block_id.func);
-		&self.blocks[block_id.block].0
+		&self.blocks[block_id.block].block
 	}
 
 	pub fn get_mut(&mut self, block_id: BlockId) -> &mut SsaBasicBlock {
 		assert_eq!(self.func, block_id.func);
-		let (block, finished, _) = &mut self.blocks[block_id.block];
-		assert!(!*finished);
-		block
+		let block = &mut self.blocks[block_id.block];
+		assert!(!block.finished);
+		&mut block.block
 	}
 
 	pub fn finish_block(&mut self, term: SsaTerminator) {
-		let (block, finished, _) = &mut self.blocks[self.current_block];
-		assert!(!*finished);
+		let block = &mut self.blocks[self.current_block];
+		assert!(!block.finished);
 
-		block.term = term;
-		*finished = true;
+		block.block.term = term;
+		block.finished = true;
 	}
 
 	pub fn finish(self) -> (usize, Vec<(BlockId, SsaBasicBlock)>) {
 		let mut blocks = self.blocks.into_iter()
 			.enumerate()
-			.map(|(idx, (block, finished, count))| {
-				assert_ne!(count, -1);
-				assert!(finished);
+			.map(|(idx, part_block)| {
+				assert_ne!(part_block.count, -1);
+				assert!(part_block.finished);
 				let id = BlockId { func: self.func, block: idx };
-				(count, id, block)
+				(part_block.count, id, part_block.block)
 			})
 			.collect::<Vec<_>>();
 		
@@ -356,7 +412,7 @@ impl Validator {
 }
 
 fn make_params(builder: &mut SsaFuncBuilder, validator: &mut Validator, t: &[Type], alloc: &mut SsaVarAlloc) {
-	assert!(builder.current_block_mut().params.is_empty());
+	//assert!(builder.current_block_mut().params.is_empty());
 
 	validator.pop_values(t);
 	for &ty in t {
@@ -731,14 +787,21 @@ impl ValidationState<'_> {
 				let ty = locals[local_index as usize];
 				let src = validator.pop_value_ty(ty.into());
 				if let UncertainVar::Known(src) = src {
-					builder.current_block_mut().body.push(SsaInstr::LocalSet(local_index, src));
+					//builder.current_block_mut().body.push(SsaInstr::LocalSet(local_index, src));
+
+					let new_local = alloc.new_typed(ty);
+					builder.current_locals[local_index as usize] = new_local;
+					builder.current_block_mut().body.push(SsaInstr::Assign(new_local, src));
 				}
 			}
 			&Operator::LocalGet { local_index } => {
 				let ty = locals[local_index as usize];
 				let dst = alloc.new_typed(ty);
 				validator.push_value(dst);
-				builder.current_block_mut().body.push(SsaInstr::LocalGet(dst, local_index));
+				//builder.current_block_mut().body.push(SsaInstr::LocalGet(dst, local_index));
+
+				let local_var = builder.current_locals[local_index as usize];
+				builder.current_block_mut().body.push(SsaInstr::Assign(dst, local_var));
 			}
 			&Operator::LocalTee { local_index } => {
 				let ty = locals[local_index as usize];
@@ -747,7 +810,10 @@ impl ValidationState<'_> {
 				validator.push_value(src);
 
 				if let UncertainVar::Known(src) = src {
-					builder.current_block_mut().body.push(SsaInstr::LocalSet(local_index, src));
+					//builder.current_block_mut().body.push(SsaInstr::LocalSet(local_index, src));
+					let new_local = alloc.new_typed(ty);
+					builder.current_locals[local_index as usize] = new_local;
+					builder.current_block_mut().body.push(SsaInstr::Assign(new_local, src));
 				}
 
 				validator.pop_push_values(&[ty], &[src]);
@@ -831,7 +897,7 @@ impl ValidationState<'_> {
 
 								let next_block = builder.alloc_block();
 
-								let target = JumpTarget { label: next_block, params: vec![] };
+								let target = JumpTarget { label: next_block, params: Vec::new() };
 								builder.finish_block(SsaTerminator::ScheduleJump(target, 1));
 
 								builder.set_block(next_block);
@@ -874,7 +940,7 @@ impl ValidationState<'_> {
 				}
 			}
 			Operator::Block { ty } => {
-				let block = builder.alloc_block();
+				let block = builder.alloc_block_with_locals(&locals, alloc);
 
 				let start_types = wasm_file.types.start_types(*ty);
 				let end_types = wasm_file.types.end_types(*ty);
@@ -885,19 +951,21 @@ impl ValidationState<'_> {
 				validator.push_ctrl(control_op, &start_vals, start_types, end_types);
 			}
 			Operator::Loop { ty } => {
-				let block = builder.alloc_block();
+				let block = builder.alloc_block_with_locals(&locals, alloc);
 
 				let start_types = wasm_file.types.start_types(*ty);
 				let end_types = wasm_file.types.end_types(*ty);
 				let control_op = ControlOp::Loop(block);
 
 				let start_vals = validator.pop_values(&start_types);
-				let start_vals_known = start_vals.iter().copied().map(Option::from).collect::<Option<Vec<_>>>();
+				let start_vals_known = start_vals.iter().copied().map(Option::from).collect::<Option<Vec<TypedSsaVar>>>();
 
 				validator.push_ctrl(control_op, &start_vals, start_types.clone(), end_types);
 
 				if let Some(start_vals_known) = start_vals_known {
-					let target = JumpTarget { label: block, params: start_vals_known };
+					let mut params = builder.current_locals.clone();
+					params.extend(start_vals_known);
+					let target = JumpTarget { label: block, params };
 					builder.finish_block(SsaTerminator::Jump(target));
 				} else {
 					builder.finish_block(SsaTerminator::Unreachable);
@@ -912,7 +980,7 @@ impl ValidationState<'_> {
 				let end_types = wasm_file.types.end_types(*ty);
 
 				let false_label = builder.alloc_block();
-				let next_label = builder.alloc_block();
+				let next_label = builder.alloc_block_with_locals(&locals, alloc);
 
 				let cond: Option<_> = validator.pop_value_ty(Type::I32.into()).into();
 
@@ -954,12 +1022,15 @@ impl ValidationState<'_> {
 					panic!();
 				};
 
-				let end_vals_known = end_vals.iter().copied().map(Option::from).collect::<Option<Vec<_>>>();
+				let end_vals_known = end_vals.iter().copied().map(Option::from).collect::<Option<Vec<TypedSsaVar>>>();
 
 				if let Some(end_vals_known) = end_vals_known {
+					let mut params = builder.current_locals.clone();
+					params.extend(end_vals_known);
+
 					let target = JumpTarget {
 						label: next_label,
-						params: end_vals_known,
+						params,
 					};
 
 					builder.finish_block(SsaTerminator::Jump(target));
@@ -993,7 +1064,9 @@ impl ValidationState<'_> {
 						let end_vals_known = end_vals.iter().map(|v| Option::from(*v)).collect::<Option<Vec<TypedSsaVar>>>();
 
 						if let Some(end_vals_known) = end_vals_known {
-							let target = JumpTarget { label, params: end_vals_known };
+							let mut params = builder.current_locals.clone();
+							params.extend(end_vals_known);
+							let target = JumpTarget { label, params };
 							builder.finish_block(SsaTerminator::Jump(target));
 
 						} else {
@@ -1008,9 +1081,11 @@ impl ValidationState<'_> {
 					}
 					ControlOp::If { .. } => unreachable!(),
 					ControlOp::Else { next_label } => {
-						let end_vals_known = end_vals.iter().copied().map(Option::from).collect::<Option<Vec<_>>>();
+						let end_vals_known = end_vals.iter().copied().map(Option::from).collect::<Option<Vec<TypedSsaVar>>>();
 						if let Some(end_vals) = end_vals_known {
-							let target = JumpTarget { label: next_label, params: end_vals };
+							let mut params = builder.current_locals.clone();
+							params.extend(end_vals);
+							let target = JumpTarget { label: next_label, params };
 							builder.finish_block(SsaTerminator::Jump(target));
 						} else {
 							builder.finish_block(SsaTerminator::Unreachable);
@@ -1033,12 +1108,14 @@ impl ValidationState<'_> {
 				let label_types = target_frame.label_types().to_owned();
 				let target_label = target_frame.operator.target_label();
 
-				let label_vals = validator.pop_values(&label_types).into_iter().map(Option::from).collect::<Option<Vec<_>>>();
+				let label_vals = validator.pop_values(&label_types).into_iter().map(Option::from).collect::<Option<Vec<TypedSsaVar>>>();
 
 				validator.mark_unreachable();
 
 				if let Some(label_vals) = label_vals {
-					let target = JumpTarget { label: target_label, params: label_vals };
+					let mut params = builder.current_locals.clone();
+					params.extend(label_vals);
+					let target = JumpTarget { label: target_label, params };
 					builder.finish_block(SsaTerminator::Jump(target));
 				} else {
 					builder.finish_block(SsaTerminator::Unreachable);
@@ -1054,12 +1131,15 @@ impl ValidationState<'_> {
 				let default_label = default_frame.operator.target_label();
 				let default_label_types = default_frame.label_types().to_owned();
 
-				let label_vals = validator.pop_values(&default_label_types).into_iter().map(Option::from).collect::<Option<Vec<_>>>();
+				let label_vals = validator.pop_values(&default_label_types).into_iter().map(Option::from).collect::<Option<Vec<TypedSsaVar>>>();
 
 				if let (Some(cond), Some(label_vals)) = (cond, label_vals) {
+					let mut params = builder.current_locals.clone();
+					params.extend(label_vals);
+
 					let default = JumpTarget {
 						label: default_label, 
-						params: label_vals.clone()
+						params: params.clone()
 					};
 
 					let arms = table.targets().map(|arm| {
@@ -1070,7 +1150,7 @@ impl ValidationState<'_> {
 						let label = arm_frame.operator.target_label();
 						JumpTarget {
 							label,
-							params: label_vals.clone(),
+							params: params.clone(),
 						}
 					}).collect::<Vec<_>>();
 
@@ -1093,21 +1173,28 @@ impl ValidationState<'_> {
 
 				let cond: Option<_> = validator.pop_value_ty(Type::I32.into()).into();
 
-				let label_vals = validator.pop_values(&label_types).into_iter().map(Option::from).collect::<Option<Vec<_>>>();
+				let label_vals = validator.pop_values(&label_types).into_iter().map(Option::from).collect::<Option<Vec<TypedSsaVar>>>();
 
-				let next_block = builder.alloc_block();
+				// TODO: Does this need its own locals???
+				let next_block = builder.alloc_block_with_locals(&locals, alloc);
 
 				if let (Some(cond), Some(label_vals)) = (cond, label_vals) {
 					validator.push_values(&label_vals);
 
+					let mut true_params = builder.current_locals.clone();
+					true_params.extend(label_vals.iter().copied());
+
 					let true_target = JumpTarget {
 						label: true_label,
-						params: label_vals.clone(),
+						params: true_params,
 					};
+
+					let mut false_params = builder.current_locals.clone();
+					false_params.extend(label_vals.iter().copied());
 
 					let false_target = JumpTarget {
 						label: next_block,
-						params: label_vals,
+						params: false_params,
 					};
 
 					builder.finish_block(SsaTerminator::BranchIf { cond, true_target, false_target });
@@ -1148,12 +1235,37 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 
 	let mut builder = SsaFuncBuilder::new(func);
 
-	let alloc = SsaVarAlloc::new();
+	let mut alloc = SsaVarAlloc::new();
 
-	let start_block = builder.alloc_block();
-	let end_block = builder.alloc_block();
+	let locals = wasm_file.func_locals(func);
+
+	let start_block = builder.alloc_block_with_locals(&locals, &mut alloc);
+	let end_block = builder.alloc_block_with_locals(&locals, &mut alloc);
 
 	builder.set_block(start_block);
+
+	builder.current_block_mut().params = Vec::new();
+
+	let start_locals = builder.current_locals.clone();
+
+	let params = start_locals.iter().copied().zip(func_ty.params.iter().copied());
+	for (param_idx, (param_var, param_ty)) in params.into_iter().enumerate() {
+		assert_eq!(param_var.ty(), param_ty);
+
+		builder.current_block_mut().body.push(SsaInstr::ParamGet(param_var, param_idx as u32));
+	}
+
+	for local in start_locals.iter().skip(func_ty.params.len()) {
+		match local.ty() {
+			Type::I32 => {
+				builder.current_block_mut().body.push(SsaInstr::I32Set(*local, 0));
+			}
+			Type::I64 => {
+				builder.current_block_mut().body.push(SsaInstr::I64Set(*local, 0));
+			}
+			_ => todo!(),
+		}
+	}
 
 	let mut validator = Validator::default();
 
@@ -1293,6 +1405,10 @@ pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {
 		}
 	}).collect();
 
+	for func in code.iter() {
+		validate_ssa_jump_params(func);
+	}
+
 	let mut program = SsaProgram {
 		local_types,
 		globals,
@@ -1305,6 +1421,44 @@ pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {
 	crate::ssa::const_prop::do_const_prop(&mut program);
 
 	crate::ssa::dce::do_dead_code_elim(&mut program);
+
+	for func in program.code.iter() {
+		validate_ssa_jump_params(func);
+	}
 	
 	program
+}
+
+pub fn validate_ssa_jump_params(func: &SsaFunction) {
+	fn types_match(a: &[TypedSsaVar], b: &[TypedSsaVar]) -> bool {
+		a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.ty() == b.ty())
+
+	}
+
+	for (source_id, source) in func.iter() {
+		match &source.term {
+			SsaTerminator::Unreachable => {},
+			SsaTerminator::ScheduleJump(t, _) |
+			SsaTerminator::Jump(t) => {
+				let target = func.get(t.label);
+				assert!(types_match(&t.params, &target.params), "{:?} {:?}", source_id, t.label);
+			}
+			SsaTerminator::BranchIf { cond: _, true_target, false_target } => {
+				let t_target = func.get(true_target.label);
+				let f_target = func.get(false_target.label);
+				assert!(types_match(&t_target.params, &true_target.params), "{:?} {:?}", source_id, true_target.label);
+				assert!(types_match(&f_target.params, &false_target.params), "{:?} {:?}", source_id, false_target.label);
+			}
+			SsaTerminator::BranchTable { cond: _, default, arms } => {
+				let d_target = func.get(default.label);
+				assert!(types_match(&d_target.params, &default.params), "{:?} {:?}", source_id, default.label);
+
+				for arm in arms.iter() {
+					let target = func.get(arm.label);
+					assert!(types_match(&target.params, &arm.params), "{:?} {:?}", source_id, arm.label);
+				}
+			},
+			SsaTerminator::Return(_) => {},
+		}
+	}
 }

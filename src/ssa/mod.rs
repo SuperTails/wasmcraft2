@@ -131,6 +131,8 @@ pub enum SsaInstr {
 	I32Set(TypedSsaVar, i32),
 	I64Set(TypedSsaVar, i64),
 
+	Assign(TypedSsaVar, TypedSsaVar),
+
 	// binop instructions: dst, lhs, rhs
 
 	Add(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
@@ -197,6 +199,8 @@ pub enum SsaInstr {
 	LocalSet(u32, TypedSsaVar),
 	LocalGet(TypedSsaVar, u32),
 
+	ParamGet(TypedSsaVar, u32),
+
 	// conversion ops: dst, src
 
 	Extend8S(TypedSsaVar, TypedSsaVar),
@@ -244,6 +248,8 @@ impl SsaInstr {
 		match self {
 			SsaInstr::I32Set(_, _) => vec![],
 			SsaInstr::I64Set(_, _) => vec![],
+
+			SsaInstr::Assign(_, src) => vec![*src],
 
 			SsaInstr::Add(_, lhs, rhs) => lhs.get_var().into_iter().chain(rhs.get_var()).collect(),
 
@@ -305,6 +311,8 @@ impl SsaInstr {
 			SsaInstr::LocalSet(_, src) => vec![*src],
 			SsaInstr::LocalGet(_, _) => vec![], 
 
+			SsaInstr::ParamGet(_, _) => vec![],
+
 			SsaInstr::Extend8S(_, src) |
 			SsaInstr::Extend16S(_, src) |
 			SsaInstr::Extend32S(_, src) |
@@ -330,6 +338,8 @@ impl SsaInstr {
 		match self {
 			SsaInstr::I32Set(dst, _) => vec![*dst],
 			SsaInstr::I64Set(dst, _) => vec![*dst],
+
+			SsaInstr::Assign(dst, _) => vec![*dst],
 
 			SsaInstr::Add(dst, _, _) |
 			SsaInstr::Sub(dst, _, _) |
@@ -382,6 +392,8 @@ impl SsaInstr {
 			SsaInstr::LocalSet(_, _) => vec![],
 			SsaInstr::LocalGet(dst, _) => vec![*dst], 
 
+			SsaInstr::ParamGet(dst, _) => vec![*dst],
+
 			SsaInstr::Extend8S(dst, _) |
 			SsaInstr::Extend16S(dst, _) |
 			SsaInstr::Extend32S(dst, _) |
@@ -405,6 +417,7 @@ impl SsaInstr {
 		match self {
 			SsaInstr::I32Set(_, _) |
 			SsaInstr::I64Set(_, _) |
+			SsaInstr::Assign(_, _) |
 			SsaInstr::Add(_, _, _) |
 			SsaInstr::Sub(_, _, _) |
 			SsaInstr::Mul(_, _, _) |
@@ -449,7 +462,8 @@ impl SsaInstr {
 			SsaInstr::GlobalSet(_, _) |
 			SsaInstr::GlobalGet(_, _) |
 			SsaInstr::LocalSet(_, _) |
-			SsaInstr::LocalGet(_, _) => true,
+			SsaInstr::LocalGet(_, _) |
+			SsaInstr::ParamGet(_, _) => true,
 
 			SsaInstr::Extend8S(_, _) |
 			SsaInstr::Extend16S(_, _) |
@@ -563,6 +577,18 @@ impl SsaTerminator {
 		}
 	}
 
+	pub fn defs(&self, parent: &SsaFunction) -> Vec<TypedSsaVar> {
+		let mut result = Vec::new();
+
+		for succ in self.successors() {
+			let block = parent.get(succ);
+			result.extend(block.params.iter().copied());
+		}
+
+		result
+
+	}
+
 	pub fn successors(&self) -> Vec<BlockId> {
 		match self {
 			SsaTerminator::Unreachable => Vec::new(),
@@ -596,6 +622,10 @@ impl SsaFunction {
 		&self.code.iter().find(|(id, _)| *id == block_id).unwrap_or_else(|| panic!("{:?}", block_id)).1
 	}
 
+	pub fn get_mut(&mut self, block_id: BlockId) -> &mut SsaBasicBlock {
+		&mut self.code.iter_mut().find(|(id, _)| *id == block_id).unwrap_or_else(|| panic!("{:?}", block_id)).1
+	}
+
 	pub fn func_id(&self) -> u32 {
 		self.code[0].0.func as u32
 	}
@@ -603,6 +633,36 @@ impl SsaFunction {
 	pub fn entry_point_id(&self) -> BlockId {
 		let func = self.func_id() as usize;
 		BlockId { func, block: 0 }
+	}
+
+	pub fn coalescable_term_vars(&self, source_id: BlockId) -> Vec<(TypedSsaVar, TypedSsaVar)> {
+		let mut result = Vec::new();
+		let source = self.get(source_id);
+		match &source.term {
+			SsaTerminator::Unreachable => {},
+			SsaTerminator::ScheduleJump(t, _) => { assert!(t.params.is_empty()); },
+			SsaTerminator::Jump(t) => {
+				let target_params = &self.get(t.label).params;
+				result.extend(target_params.iter().copied().zip(t.params.iter().copied()));
+			},
+			SsaTerminator::BranchIf { cond: _, true_target, false_target } => {
+				let t_params = &self.get(true_target.label).params;
+				let f_params = &self.get(false_target.label).params;
+				result.extend(t_params.iter().copied().zip(true_target.params.iter().copied()));
+				result.extend(f_params.iter().copied().zip(false_target.params.iter().copied()));
+			},
+			SsaTerminator::BranchTable { cond: _, default, arms } => {
+				let d_params = &self.get(default.label).params;
+				result.extend(d_params.iter().copied().zip(default.params.iter().copied()));
+
+				for arm in arms.iter() {
+					let a_params = &self.get(arm.label).params;
+					result.extend(a_params.iter().copied().zip(arm.params.iter().copied()));
+				}
+			},
+			SsaTerminator::Return(_) => {},
+		}
+		result
 	}
 }
 
