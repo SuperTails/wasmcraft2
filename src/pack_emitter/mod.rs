@@ -831,6 +831,18 @@ fn get_first_bit_run(value: i32) -> Option<Range<u32>> {
 	}
 }
 
+fn get_single_bit_run(value: i32) -> Option<Range<u32>> {
+	let mut bit_runs = get_all_bit_runs(value);
+
+	if let Some(run) = bit_runs.next() {
+		if bit_runs.next().is_none() {
+			return Some(run)
+		}
+	}
+
+	None
+}
+
 fn bit_run_to_mask(run: Range<u32>) -> i32 {
 	let mut v = 0;
 	for i in run {
@@ -843,7 +855,35 @@ fn emit_constant_and(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Stri
 	if rhs == 0 {
 		code.push(format!("scoreboard players set {dst} 0"));
 	} else if rhs == -1 {
-		code.push(format!("scoreboard players operation {dst} = {lhs}"));
+		if dst != lhs {
+			code.push(format!("scoreboard players operation {dst} = {lhs}"));
+		}
+	} else if rhs.leading_zeros() + rhs.trailing_ones() == 32 {
+		let bit_run = get_single_bit_run(rhs).unwrap();
+		
+		assert_eq!(bit_run.start, 0);
+
+		if dst != lhs {
+			code.push(format!("scoreboard players operation {dst} = {lhs}"));
+		}
+
+		if bit_run.end == 32 {
+			// Do nothing, because we don't have to zero out any high bits
+		} else if bit_run.end == 31 {
+			let int_min = i32::MIN;
+			const_pool.insert(int_min);
+			let int_min = Register::const_val(int_min);
+
+			// Zero out just the high bit
+			code.push(format!("execute if score {dst} matches ..-1 run scoreboard players operation {dst} -= {int_min}"));
+		} else if bit_run.end < 31 {
+			// 0111
+			// end == 3
+			let modulus = 1 << bit_run.end;
+			const_pool.insert(modulus);
+			let modulus = Register::const_val(modulus);
+			code.push(format!("scoreboard players operation {dst} %= {modulus}"));
+		}
 	} else {
 		let tmp_dst = Register::temp_lo(1235);
 

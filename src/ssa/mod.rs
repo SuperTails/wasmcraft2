@@ -4,6 +4,7 @@ pub mod liveness;
 pub mod call_graph;
 pub mod const_prop;
 pub mod dce;
+pub mod reg_alloc;
 
 use std::collections::HashMap;
 
@@ -496,6 +497,26 @@ impl SsaInstr {
 			_ => Vec::new(),
 		}
 	}
+
+	pub fn coalescable_vars(&self) -> Option<(&TypedSsaVar, &TypedSsaVar)> {
+		match self {
+			SsaInstr::Add(dst, SsaVarOrConst::Var(lhs), _) if dst.ty() == Type::I32 => Some((dst, lhs)),
+			SsaInstr::Mul(dst, lhs, _) if dst.ty() == Type::I32 => Some((dst, lhs)),
+			SsaInstr::ShrS(dst, lhs, _) if dst.ty() == Type::I32 => Some((dst, lhs)),
+			SsaInstr::ShrU(dst, lhs, _) if dst.ty() == Type::I32 => Some((dst, lhs)),
+			SsaInstr::Shl(dst, lhs, _) if dst.ty() == Type::I32 => Some((dst, lhs)),
+			SsaInstr::Xor(dst, lhs, _) => Some((dst, lhs)),
+
+			SsaInstr::And(dst, lhs, SsaVarOrConst::Const(c))
+				if dst.ty() == Type::I32 && is_simple_and_mask(c.into_i32().unwrap()) => Some((dst, lhs)),
+
+			_ => None, 
+		}
+	}
+}
+
+fn is_simple_and_mask(i: i32) -> bool {
+	i == 0 || i.leading_zeros() + i.trailing_ones() == 32
 }
 
 #[derive(Debug, Clone)]

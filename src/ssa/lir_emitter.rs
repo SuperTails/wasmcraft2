@@ -4,50 +4,8 @@ use wasmparser::{Type, MemoryImmediate};
 
 use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half}, ssa::{TypedSsaVar, SsaVarOrConst}, jump_mode, JumpMode};
 
-use super::{SsaProgram, SsaFunction, SsaVar, SsaBasicBlock, BlockId, liveness::{NoopLivenessInfo, LivenessInfo, SimpleLivenessInfo}, call_graph::CallGraph};
+use super::{SsaProgram, SsaFunction, SsaBasicBlock, BlockId, reg_alloc::*, liveness::{LivenessInfo, SimpleLivenessInfo}, call_graph::CallGraph};
 
-trait RegAlloc {
-	fn analyze(ssa_func: &SsaFunction) -> Self;
-
-	fn get(&self, val: SsaVar) -> Register;
-
-	fn get_double(&self, val: SsaVar) -> DoubleRegister;
-
-	fn get_const(&mut self, val: i32) -> Register;
-
-	fn get_temp(&mut self) -> Register;
-}
-
-struct NoopRegAlloc {
-	const_pool: HashSet<i32>,
-	func: u32,
-	temp: u32,
-}
-
-impl RegAlloc for NoopRegAlloc {
-	fn analyze(func: &SsaFunction) -> Self {
-		NoopRegAlloc { const_pool: HashSet::new(), func: func.iter().next().unwrap().0.func as u32, temp: 1000 }
-	}
-
-	fn get(&self, val: SsaVar) -> Register {
-		Register::work_lo(self.func, val.0)
-	}
-
-	fn get_double(&self, val: SsaVar) -> DoubleRegister {
-		DoubleRegister::Work(self.func, val.0)
-	}
-
-	fn get_const(&mut self, val: i32) -> Register {
-		self.const_pool.insert(val);
-		Register::const_val(val)
-	}
-
-	fn get_temp(&mut self) -> Register {
-		let reg = Register::temp_lo(self.temp);
-		self.temp += 1;
-		reg
-	}
-}
 
 struct LirFuncBuilder {
 	used_ids: HashSet<BlockId>,
@@ -94,10 +52,10 @@ impl LirFuncBuilder {
 	}
 }
 
-fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasicBlock, ra: &mut NoopRegAlloc, li: &L, call_graph: &CallGraph, builder: &mut LirFuncBuilder)
+fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasicBlock, ra: &mut FullRegAlloc, li: &L, call_graph: &CallGraph, builder: &mut LirFuncBuilder)
 	where L: LivenessInfo
 {
-	fn do_binop<'a, F, G, L, R>(dst: TypedSsaVar, lhs: L, rhs: R, block: &'a mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F, g: G)
+	fn do_binop<'a, F, G, L, R>(dst: TypedSsaVar, lhs: L, rhs: R, block: &'a mut Vec<LirInstr>, ra: &mut FullRegAlloc, f: F, g: G)
 		where
 			F: FnOnce(Register, Register, Register, &'a mut Vec<LirInstr>),
 			G: FnOnce(DoubleRegister, DoubleRegister, DoubleRegister, &'a mut Vec<LirInstr>),
@@ -117,7 +75,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 		}
 	}
 
-	fn do_shiftop<F, G, R>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: R, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F, g: G)
+	fn do_shiftop<F, G, R>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: R, block: &mut Vec<LirInstr>, ra: &mut FullRegAlloc, f: F, g: G)
 		where
 			F: FnOnce(Register, Register, Register) -> LirInstr,
 			G: FnOnce(DoubleRegister, DoubleRegister, DoubleRegister) -> LirInstr,
@@ -135,7 +93,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 		}
 	}
 
-	fn do_bitwiseop<F, R>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: R, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F)
+	fn do_bitwiseop<F, R>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: R, block: &mut Vec<LirInstr>, ra: &mut FullRegAlloc, f: F)
 		where
 			F: Fn(Register, Register, Register) -> LirInstr,
 			R: Into<SsaVarOrConst>,
@@ -158,19 +116,17 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 		}
 	}
 
-	fn map_ra_i32(r: SsaVarOrConst, ra: &mut NoopRegAlloc) -> Register {
+	fn map_ra_i32(r: SsaVarOrConst, ra: &mut FullRegAlloc) -> Register {
 		match r {
 			SsaVarOrConst::Var(v) => ra.get(v.unwrap_i32()),
 			SsaVarOrConst::Const(c) => {
-				let c = c.into_i32().unwrap();
-				ra.const_pool.insert(c);
-				Register::const_val(c)
+				ra.get_const(c.into_i32().unwrap())
 			}
 			_ => panic!()
 		}
 	}
 
-	fn map_ra_i64(r: SsaVarOrConst, ra: &mut NoopRegAlloc) -> DoubleRegister {
+	fn map_ra_i64(r: SsaVarOrConst, ra: &mut FullRegAlloc) -> DoubleRegister {
 		match r {
 			SsaVarOrConst::Var(v) => ra.get_double(v.unwrap_i64()),
 			SsaVarOrConst::Const(c) => {
@@ -182,7 +138,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 		}
 	}
 
-	fn do_compareop<F, G>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: TypedSsaVar, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F, g: G)
+	fn do_compareop<F, G>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: TypedSsaVar, block: &mut Vec<LirInstr>, ra: &mut FullRegAlloc, f: F, g: G)
 		where
 			F: FnOnce(Register, Register, Register) -> LirInstr,
 			G: FnOnce(Register, DoubleRegister, DoubleRegister) -> LirInstr,
@@ -206,7 +162,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 		}
 	}
 
-	fn do_unaryop<'a, F, G>(dst: TypedSsaVar, src: TypedSsaVar, block: &'a mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F, g: G)
+	fn do_unaryop<'a, F, G>(dst: TypedSsaVar, src: TypedSsaVar, block: &'a mut Vec<LirInstr>, ra: &mut FullRegAlloc, f: F, g: G)
 		where
 			F: FnOnce(Register, Register) -> LirInstr,
 			G: FnOnce(DoubleRegister, DoubleRegister) -> LirInstr,
@@ -220,7 +176,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 		}
 	}
 
-	fn do_store<F>(mem: &MemoryImmediate, src: TypedSsaVar, addr: SsaVarOrConst, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F)
+	fn do_store<F>(mem: &MemoryImmediate, src: TypedSsaVar, addr: SsaVarOrConst, block: &mut Vec<LirInstr>, ra: &mut FullRegAlloc, f: F)
 		where
 			F: FnOnce(Register, Register) -> LirInstr
 	{
@@ -244,7 +200,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 		}
 	}
 
-	fn do_load_trunc(mem: &MemoryImmediate, dst: TypedSsaVar, addr: SsaVarOrConst, bits: u32, signed: bool, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc)
+	fn do_load_trunc(mem: &MemoryImmediate, dst: TypedSsaVar, addr: SsaVarOrConst, bits: u32, signed: bool, block: &mut Vec<LirInstr>, ra: &mut FullRegAlloc)
 	{
 		assert_eq!(mem.memory, 0);
 
@@ -293,7 +249,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 		}
 	}
 
-	fn do_signext32<F>(dst: TypedSsaVar, src: TypedSsaVar, block: &mut Vec<LirInstr>, ra: &mut NoopRegAlloc, f: F)
+	fn do_signext32<F>(dst: TypedSsaVar, src: TypedSsaVar, block: &mut Vec<LirInstr>, ra: &mut FullRegAlloc, f: F)
 		where
 			F: FnOnce(Register) -> LirInstr
 	{
@@ -913,7 +869,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 	}
 }
 
-fn emit_copy_to_params(block: &mut Vec<LirInstr>, vars: &[TypedSsaVar], ra: &mut NoopRegAlloc) {
+fn emit_copy_to_params(block: &mut Vec<LirInstr>, vars: &[TypedSsaVar], ra: &mut FullRegAlloc) {
 	for (id, var) in vars.iter().enumerate() {
 		match var.ty() {
 			Type::I32 => {
@@ -932,7 +888,7 @@ fn emit_copy_to_params(block: &mut Vec<LirInstr>, vars: &[TypedSsaVar], ra: &mut
 	}
 }
 
-fn emit_copy_from_returns(block: &mut Vec<LirInstr>, vars: &[TypedSsaVar], ra: &mut NoopRegAlloc) {
+fn emit_copy_from_returns(block: &mut Vec<LirInstr>, vars: &[TypedSsaVar], ra: &mut FullRegAlloc) {
 	for (id, var) in vars.iter().enumerate() {
 		match var.ty() {
 			Type::I32 => {
@@ -951,7 +907,7 @@ fn emit_copy_from_returns(block: &mut Vec<LirInstr>, vars: &[TypedSsaVar], ra: &
 	}
 }
 
-fn get_save_reg_list(to_save: &[TypedSsaVar], ra: &mut NoopRegAlloc) -> Vec<Register> {
+fn get_save_reg_list(to_save: &[TypedSsaVar], ra: &mut FullRegAlloc) -> Vec<Register> {
 	to_save.iter().flat_map(|var| {
 		match var.ty() {
 			Type::I32 => {
@@ -968,15 +924,15 @@ fn get_save_reg_list(to_save: &[TypedSsaVar], ra: &mut NoopRegAlloc) -> Vec<Regi
 	}).collect()
 }
 
-fn emit_save(block: &mut Vec<LirInstr>, to_save: &[TypedSsaVar], ra: &mut NoopRegAlloc) {
+fn emit_save(block: &mut Vec<LirInstr>, to_save: &[TypedSsaVar], ra: &mut FullRegAlloc) {
 	block.push(LirInstr::Push(get_save_reg_list(to_save, ra)));
 }
 
-fn emit_restore(block: &mut Vec<LirInstr>, to_restore: &[TypedSsaVar], ra: &mut NoopRegAlloc) {
+fn emit_restore(block: &mut Vec<LirInstr>, to_restore: &[TypedSsaVar], ra: &mut FullRegAlloc) {
 	block.push(LirInstr::Pop(get_save_reg_list(to_restore, ra)));
 }
 
-fn emit_copy(block: &mut Vec<LirInstr>, in_params: &[TypedSsaVar], out_params: &[TypedSsaVar], ra: &mut NoopRegAlloc, conds: &[Condition]) {
+fn emit_copy(block: &mut Vec<LirInstr>, in_params: &[TypedSsaVar], out_params: &[TypedSsaVar], ra: &mut FullRegAlloc, conds: &[Condition]) {
 	assert_eq!(in_params.len(), out_params.len());
 
 	assert!(out_params.iter().zip(in_params.iter()).all(|(o, i)| o.ty() == i.ty()));
@@ -1028,7 +984,7 @@ fn emit_copy(block: &mut Vec<LirInstr>, in_params: &[TypedSsaVar], out_params: &
 
 const MANUALLY_ZERO_LOCALS: bool = false;
 
-fn gen_prologue(ssa_func: &SsaFunction, ssa_program: &SsaProgram, ra: &mut NoopRegAlloc) -> Vec<LirInstr> {
+fn gen_prologue(ssa_func: &SsaFunction, ssa_program: &SsaProgram, ra: &mut FullRegAlloc) -> Vec<LirInstr> {
 	let mut result = Vec::new();
 
 	let locals = ssa_program.local_types.get(&(ssa_func.func_id() as usize)).unwrap();
@@ -1070,7 +1026,7 @@ fn gen_prologue(ssa_func: &SsaFunction, ssa_program: &SsaProgram, ra: &mut NoopR
 }
 
 fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &CallGraph, constant_pool: &mut HashSet<i32>) -> LirFunction {
-	let mut reg_alloc = NoopRegAlloc::analyze(&ssa_func);
+	let mut reg_alloc = FullRegAlloc::analyze(&ssa_func);
 
 	let mut builder = LirFuncBuilder::new(ssa_func);
 

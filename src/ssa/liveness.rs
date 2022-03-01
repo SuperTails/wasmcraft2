@@ -1,6 +1,99 @@
-use std::collections::{HashSet, HashMap};
+use std::{collections::{HashSet, HashMap}, ops::RangeInclusive};
 
 use super::{TypedSsaVar, SsaFunction, BlockId, SsaBasicBlock};
+
+#[derive(Debug)]
+pub struct BlockLiveRange {
+	pub live_in: bool,
+	/// This *includes* the instruction that creates/kills the variable!
+	pub body: Vec<RangeInclusive<usize>>,
+	pub live_out: bool,
+}
+
+impl BlockLiveRange {
+	pub fn merge(&mut self, other: &BlockLiveRange) {
+		self.live_in |= other.live_in;
+		self.body.extend(other.body.iter().cloned());
+		self.live_out |= other.live_out;
+	}
+
+	pub fn overlap(&self, other: &BlockLiveRange) -> BlockLiveRange {
+		let live_in = self.live_in && other.live_in;
+		let live_out = self.live_out && other.live_out;
+
+		let mut body = Vec::new();
+
+		for r1 in self.body.iter() {
+			for r2 in other.body.iter() {
+				let start = *r1.start().max(r2.start());
+				let end = *r1.end().min(r2.end());
+
+				if start <= end {
+					body.push(start..=end);
+				}
+			}
+		}
+
+		BlockLiveRange { live_in, body, live_out }
+	}
+
+	pub fn is_empty(&self) -> bool {
+		if self.live_in || self.live_out {
+			false
+		} else {
+			self.body.is_empty()
+		}
+	}
+}
+
+#[derive(Debug)]
+pub struct LiveRange(HashMap<BlockId, BlockLiveRange>);
+
+impl LiveRange {
+	pub fn merge(&mut self, other: LiveRange) {
+		for (id, range) in other.0 {
+			if let Some(r1) = self.0.get_mut(&id) {
+				r1.merge(&range);
+			} else {
+				self.0.insert(id, range);
+			}
+		}
+	}
+
+	pub fn get_single_point(&self) -> Option<(BlockId, usize)> {
+		let mut single_points = self.0.iter().filter_map(|(id, b)| {
+			if b.is_empty() || b.live_in || b.live_out || b.body.len() != 1 || b.body[0].clone().count() != 1 {
+				None
+			} else {
+				Some((*id, *b.body[0].start()))
+			}
+		});
+
+		if let Some(result) = single_points.next() {
+			if single_points.next().is_none() {
+				Some(result)
+			} else {
+				None
+			}
+		} else {
+			None
+		}
+	}
+}
+
+impl LiveRange {
+	pub fn overlap(&self, other: &LiveRange) -> LiveRange {
+		let mut result = HashMap::new();
+
+		for (id, r1) in self.0.iter() {
+			if let Some(r2) = other.0.get(id) {
+				result.insert(*id, r1.overlap(r2));
+			}
+		}
+
+		LiveRange(result)
+	}
+}
 
 pub trait LivenessInfo {
 	fn analyze(func: &SsaFunction) -> Self;
@@ -8,10 +101,14 @@ pub trait LivenessInfo {
 	fn live_in_body(&self, block: BlockId, instr: usize) -> HashSet<TypedSsaVar>;
 
 	fn live_out_body(&self, block: BlockId, instr: usize) -> HashSet<TypedSsaVar>;
+
+	fn live_range(&self, _var: TypedSsaVar) -> LiveRange { todo!() }
 }
 
+
+
 pub struct NoopLivenessInfo {
-	vars: HashSet<TypedSsaVar>,
+	pub vars: HashSet<TypedSsaVar>,
 }
 
 impl LivenessInfo for NoopLivenessInfo {
@@ -158,6 +255,32 @@ impl FullBlockLivenessInfo {
 			self.live_in[instr + 1].clone()
 		}
 	}
+
+	pub fn live_range(&self, var: TypedSsaVar) -> BlockLiveRange {
+		let live_in = self.live_in[0].contains(&var);
+		let live_out = self.live_out.contains(&var);
+
+		let mut body = Vec::new();
+
+		let mut start_idx = None;
+
+		for (idx, live_in) in self.live_in.iter().enumerate().skip(1) {
+			if let Some(si) = start_idx {
+				if !live_in.contains(&var) {
+					body.push(si - 1..=idx - 1);
+					start_idx = None;
+				}
+			} else if live_in.contains(&var) {
+				start_idx = Some(idx);
+			}
+		}
+
+		if let Some(start_idx) = start_idx {
+			body.push(start_idx..=self.live_in.len() - 1);
+		}
+
+		BlockLiveRange { live_in, body, live_out }
+	}
 }
 
 pub struct FullLivenessInfo(HashMap<BlockId, FullBlockLivenessInfo>);
@@ -210,6 +333,11 @@ impl LivenessInfo for FullLivenessInfo {
 		};
 
 		block_info.live_out_body(instr)
+	}
+
+	fn live_range(&self, var: TypedSsaVar) -> LiveRange {
+		let blocks = self.0.iter().map(|(id, block)| (*id, block.live_range(var))).collect();
+		LiveRange(blocks)
 	}
 }
 
