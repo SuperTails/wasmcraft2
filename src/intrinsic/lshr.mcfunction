@@ -30,12 +30,28 @@
 # %param1%0 : shift (clobbered)
 
 execute store success score %%templshr_sign reg if score %param0%0 reg matches ..-1
-execute if score %%templshr_sign reg matches 1..1 run scoreboard players remove %param0%0 reg 2147483647
-execute if score %%templshr_sign reg matches 1..1 run scoreboard players remove %param0%0 reg 1
-scoreboard players operation %%templshr_sign reg *= %%1073741824 reg
+execute if score %%templshr_sign reg matches 1 run scoreboard players operation %param0%0 reg -= %%-2147483648 reg
+scoreboard players operation %%templshr_sign reg *= %%-2147483648 reg
 
-execute if score %param1%0 reg matches 0..0 run scoreboard players operation %%templshr_sign reg += %%templshr_sign reg
+execute if score %param1%0 reg matches 16.. run scoreboard players operation %%templshr_sign reg /= %%65536 reg
+execute if score %param1%0 reg matches 16.. run scoreboard players operation %param0%0 reg /= %%65536 reg
+execute if score %param1%0 reg matches 16.. run scoreboard players remove %param1%0 reg 16
 
-execute if score %param1%0 reg matches 1.. run function intrinsic:lshr/inner
+execute if score %param1%0 reg matches 8.. run scoreboard players operation %%templshr_sign reg /= %%256 reg
+execute if score %param1%0 reg matches 8.. run scoreboard players operation %param0%0 reg /= %%256 reg
+execute if score %param1%0 reg matches 8.. run scoreboard players remove %param1%0 reg 8
 
+execute if score %param1%0 reg matches 4.. run scoreboard players operation %%templshr_sign reg /= %%16 reg
+execute if score %param1%0 reg matches 4.. run scoreboard players operation %param0%0 reg /= %%16 reg
+execute if score %param1%0 reg matches 4.. run scoreboard players remove %param1%0 reg 4
+
+execute if score %param1%0 reg matches 2.. run scoreboard players operation %%templshr_sign reg /= %%4 reg
+execute if score %param1%0 reg matches 2.. run scoreboard players operation %param0%0 reg /= %%4 reg
+execute if score %param1%0 reg matches 2.. run scoreboard players remove %param1%0 reg 2
+
+execute if score %param1%0 reg matches 1.. run scoreboard players operation %%templshr_sign reg /= %%2 reg
+execute if score %param1%0 reg matches 1.. run scoreboard players operation %param0%0 reg /= %%2 reg
+#execute if score %param1%0 reg matches 1.. run scoreboard players remove %param1%0 reg 1
+
+scoreboard players operation %%templshr_sign reg *= %%-1 reg
 scoreboard players operation %param0%0 reg += %%templshr_sign reg

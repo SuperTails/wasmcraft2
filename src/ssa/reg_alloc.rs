@@ -150,7 +150,7 @@ impl RegAlloc for FullRegAlloc {
 
 		for (block_id, block) in func.iter() {
 			for (instr_idx, instr) in block.body.iter().enumerate() {
-				if let Some((dst, src)) = instr.coalescable_vars() {
+				for (dst, src) in instr.coalescable_vars() {
 					let uses = instr.uses();
 					let defs = instr.defs();
 					assert!(uses.contains(src));

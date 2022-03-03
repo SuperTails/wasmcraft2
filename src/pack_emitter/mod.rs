@@ -505,21 +505,53 @@ fn unsigned_greater_than_eq(dst: Register, lhs: Register, rhs: Register, code: &
 
 fn signed_div(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>) {
 	assert_ne!(lhs, dst);
-	assert_ne!(rhs, dst);
 
 	// Minecraft division always rounds towards negative infinity, so we need to correct for that
 
-	// TODO: Find a better way to pick what register this is
-	let rem = Register::temp_lo(21);
+	if let Some(r) = rhs.get_const() {
+		assert_ne!(r, 0);
+		if r > 0 {
+			// TODO: Find a better way to pick what register this is
+			let rem = Register::temp_lo(21);
 
-	code.push(format!("scoreboard players operation {rem} = {lhs}"));
-	code.push(format!("scoreboard players operation {rem} %= {rhs}"));
+			code.push(format!("scoreboard players operation {rem} = {lhs}"));
+			code.push(format!("scoreboard players operation {rem} %= {rhs}"));
 
-	code.push(format!("scoreboard players operation {dst} = {lhs}"));
-	code.push(format!("scoreboard players operation {dst} /= {rhs}"));
+			code.push(format!("scoreboard players operation {dst} = {lhs}"));
+			code.push(format!("scoreboard players operation {dst} /= {rhs}"));
 
-	code.push(format!("execute if score {lhs} matches ..-1 if score {rhs} matches 0.. unless score {rem} matches 0..0 run scoreboard players add {dst} 1"));
-	code.push(format!("execute if score {rhs} matches ..-1 if score {lhs} matches 0.. unless score {rem} matches 0..0 run scoreboard players add {dst} 1"));
+			code.push(format!("execute if score {lhs} matches ..-1 unless score {rem} matches 0 run scoreboard players add {dst} 1"));
+		} else {
+			// Minecraft division always rounds towards negative infinity, so we need to correct for that
+
+			// TODO: Find a better way to pick what register this is
+			let rem = Register::temp_lo(21);
+
+			code.push(format!("scoreboard players operation {rem} = {lhs}"));
+			code.push(format!("scoreboard players operation {rem} %= {rhs}"));
+
+			code.push(format!("scoreboard players operation {dst} = {lhs}"));
+			code.push(format!("scoreboard players operation {dst} /= {rhs}"));
+
+			code.push(format!("execute if score {lhs} matches 0.. unless score {rem} matches 0 run scoreboard players add {dst} 1"));
+		}
+	} else {
+		assert_ne!(rhs, dst);
+
+		// Minecraft division always rounds towards negative infinity, so we need to correct for that
+
+		// TODO: Find a better way to pick what register this is
+		let rem = Register::temp_lo(21);
+
+		code.push(format!("scoreboard players operation {rem} = {lhs}"));
+		code.push(format!("scoreboard players operation {rem} %= {rhs}"));
+
+		code.push(format!("scoreboard players operation {dst} = {lhs}"));
+		code.push(format!("scoreboard players operation {dst} /= {rhs}"));
+
+		code.push(format!("execute if score {lhs} matches ..-1 if score {rhs} matches 0.. unless score {rem} matches 0..0 run scoreboard players add {dst} 1"));
+		code.push(format!("execute if score {rhs} matches ..-1 if score {lhs} matches 0.. unless score {rem} matches 0..0 run scoreboard players add {dst} 1"));
+	}
 }
 
 fn unsigned_div(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>) {
@@ -598,15 +630,26 @@ fn unsigned_rem(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<Stri
 
 fn signed_rem(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>) {
 	assert_ne!(lhs, dst);
-	assert_ne!(rhs, dst);
 
-	signed_div(dst, lhs, rhs, code);
+	if let Some(r) = rhs.get_const() {
+		if r > 0 {
+			code.push(format!("scoreboard players operation {dst} = {lhs}"));
+			code.push(format!("scoreboard players operation {dst} %= {rhs}"));
+			code.push(format!("execute if score {lhs} matches ..-1 unless score {dst} matches 0 run scoreboard players remove {dst} {r}"));
+		} else {
+			todo!()
+		}
+	} else {
+		assert_ne!(rhs, dst);
 
-	// lhs - dst * rhs
+		signed_div(dst, lhs, rhs, code);
 
-	code.push(format!("scoreboard players operation {dst} *= {rhs}"));
-	code.push(format!("scoreboard players operation {dst} *= %%-1 reg"));
-	code.push(format!("scoreboard players operation {dst} += {lhs}"));
+		// lhs - dst * rhs
+
+		code.push(format!("scoreboard players operation {dst} *= {rhs}"));
+		code.push(format!("scoreboard players operation {dst} *= %%-1 reg"));
+		code.push(format!("scoreboard players operation {dst} += {lhs}"));
+	}
 }
 
 fn add_i64(dst: DoubleRegister, lhs: DoubleRegister, rhs: DoubleRegister, code: &mut Vec<String>) {

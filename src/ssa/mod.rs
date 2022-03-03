@@ -136,12 +136,12 @@ pub enum SsaInstr {
 	// binop instructions: dst, lhs, rhs
 
 	Add(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
-	Sub(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	Mul(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	DivS(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	DivU(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	RemS(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	RemU(TypedSsaVar, TypedSsaVar, TypedSsaVar),
+	Sub(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
+	Mul(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
+	DivS(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
+	DivU(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
+	RemS(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
+	RemU(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
 	Shl(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
 	ShrS(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
 	ShrU(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
@@ -253,12 +253,12 @@ impl SsaInstr {
 
 			SsaInstr::Add(_, lhs, rhs) => lhs.get_var().into_iter().chain(rhs.get_var()).collect(),
 
-			SsaInstr::Sub(_, lhs, rhs) |
-			SsaInstr::Mul(_, lhs, rhs) |
-			SsaInstr::DivS(_, lhs, rhs) |
-			SsaInstr::DivU(_, lhs, rhs) |
-			SsaInstr::RemS(_, lhs, rhs) |
-			SsaInstr::RemU(_, lhs, rhs) |
+			SsaInstr::Sub(_, lhs, SsaVarOrConst::Var(rhs)) |
+			SsaInstr::Mul(_, lhs, SsaVarOrConst::Var(rhs)) |
+			SsaInstr::DivS(_, lhs, SsaVarOrConst::Var(rhs)) |
+			SsaInstr::DivU(_, lhs, SsaVarOrConst::Var(rhs)) |
+			SsaInstr::RemS(_, lhs, SsaVarOrConst::Var(rhs)) |
+			SsaInstr::RemU(_, lhs, SsaVarOrConst::Var(rhs)) |
 			SsaInstr::Shl(_, lhs, SsaVarOrConst::Var(rhs)) |
 			SsaInstr::ShrS(_, lhs, SsaVarOrConst::Var(rhs)) |
 			SsaInstr::ShrU(_, lhs, SsaVarOrConst::Var(rhs)) |
@@ -278,12 +278,18 @@ impl SsaInstr {
 			SsaInstr::Eq(_, lhs, rhs) |
 			SsaInstr::Ne(_, lhs, rhs) => vec![*lhs, *rhs],
 
+			SsaInstr::Sub(_, lhs, SsaVarOrConst::Const(_)) |
+			SsaInstr::Mul(_, lhs, SsaVarOrConst::Const(_)) |
 			SsaInstr::And(_, lhs, SsaVarOrConst::Const(_)) |
 			SsaInstr::Xor(_, lhs, SsaVarOrConst::Const(_)) |
 			SsaInstr::Or(_, lhs, SsaVarOrConst::Const(_)) |
 			SsaInstr::Shl(_, lhs, SsaVarOrConst::Const(_)) |
 			SsaInstr::ShrS(_, lhs, SsaVarOrConst::Const(_)) |
-			SsaInstr::ShrU(_, lhs, SsaVarOrConst::Const(_)) => vec![*lhs],
+			SsaInstr::ShrU(_, lhs, SsaVarOrConst::Const(_)) |
+			SsaInstr::RemS(_, lhs, SsaVarOrConst::Const(_)) |
+			SsaInstr::RemU(_, lhs, SsaVarOrConst::Const(_)) |
+			SsaInstr::DivS(_, lhs, SsaVarOrConst::Const(_)) |
+			SsaInstr::DivU(_, lhs, SsaVarOrConst::Const(_)) => vec![*lhs],
 
 
 			SsaInstr::Popcnt(_, src) |
@@ -493,7 +499,13 @@ impl SsaInstr {
 			SsaInstr::ShrU(_, _, r) |
 			SsaInstr::And(_, _, r) |
 			SsaInstr::Xor(_, _, r) |
-			SsaInstr::Or(_, _, r) => vec![r],
+			SsaInstr::Or(_, _, r) |
+			SsaInstr::Sub(_, _, r) | 
+			SsaInstr::Mul(_, _, r) | 
+			SsaInstr::RemS(_, _, r) | 
+			SsaInstr::RemU(_, _, r) | 
+			SsaInstr::DivS(_, _, r) | 
+			SsaInstr::DivU(_, _, r) => vec![r],
 
 			SsaInstr::Load64(_, _, addr) | 
 			SsaInstr::Load32S(_, _, addr) |
@@ -512,19 +524,22 @@ impl SsaInstr {
 		}
 	}
 
-	pub fn coalescable_vars(&self) -> Option<(&TypedSsaVar, &TypedSsaVar)> {
+	pub fn coalescable_vars(&self) -> Vec<(&TypedSsaVar, &TypedSsaVar)> {
 		match self {
-			SsaInstr::Add(dst, SsaVarOrConst::Var(lhs), _) if dst.ty() == Type::I32 => Some((dst, lhs)),
-			SsaInstr::Mul(dst, lhs, _) if dst.ty() == Type::I32 => Some((dst, lhs)),
-			SsaInstr::ShrS(dst, lhs, _) if dst.ty() == Type::I32 => Some((dst, lhs)),
-			SsaInstr::ShrU(dst, lhs, _) if dst.ty() == Type::I32 => Some((dst, lhs)),
-			SsaInstr::Shl(dst, lhs, _) if dst.ty() == Type::I32 => Some((dst, lhs)),
-			SsaInstr::Xor(dst, lhs, _) => Some((dst, lhs)),
+			SsaInstr::Add(dst, SsaVarOrConst::Var(lhs), SsaVarOrConst::Var(rhs)) if dst.ty() == Type::I32 => vec![(dst, lhs), (dst, rhs)],
+			SsaInstr::Add(dst, SsaVarOrConst::Var(lhs), _) if dst.ty() == Type::I32 => vec![(dst, lhs)],
+			SsaInstr::Add(dst, _, SsaVarOrConst::Var(rhs)) if dst.ty() == Type::I32 => vec![(dst, rhs)],
+
+			SsaInstr::Mul(dst, lhs, _rhs) if dst.ty() == Type::I32 => vec![(dst, lhs), /*(dst, rhs)*/],
+			SsaInstr::ShrS(dst, lhs, _) if dst.ty() == Type::I32 => vec![(dst, lhs)],
+			SsaInstr::ShrU(dst, lhs, _) if dst.ty() == Type::I32 => vec![(dst, lhs)],
+			SsaInstr::Shl(dst, lhs, _) if dst.ty() == Type::I32 => vec![(dst, lhs)],
+			SsaInstr::Xor(dst, lhs, _) => vec![(dst, lhs)],
 
 			SsaInstr::And(dst, lhs, SsaVarOrConst::Const(c))
-				if dst.ty() == Type::I32 && is_simple_and_mask(c.into_i32().unwrap()) => Some((dst, lhs)),
+				if dst.ty() == Type::I32 && is_simple_and_mask(c.into_i32().unwrap()) => vec![(dst, lhs)],
 
-			_ => None, 
+			_ => Vec::new(), 
 		}
 	}
 }

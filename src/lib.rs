@@ -88,7 +88,7 @@ pub fn run(path: &str, output_path: &str) {
 
 		dbg!(interp.run_to_end());
 
-		let mut traces = interp.traces.into_iter().collect::<Vec<_>>();
+		let mut traces = interp.indiv_time.into_iter().collect::<Vec<_>>();
 		traces.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
 		let total: usize = traces.iter().map(|(_, c)| *c).sum();
 

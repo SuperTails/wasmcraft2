@@ -316,11 +316,14 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 
 			&super::SsaInstr::Add(dst, lhs, rhs) => {
 				let i32_add = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
-					if dst != lhs {
+					if dst == lhs {
+						block.push(LirInstr::Add(dst, rhs));
+					} else if dst == rhs {
+						block.push(LirInstr::Add(dst, lhs));
+					} else {
 						block.push(LirInstr::Assign(dst, lhs));
+						block.push(LirInstr::Add(dst, rhs));
 					}
-
-					block.push(LirInstr::Add(dst, rhs));
 				};
 
 				let i64_add = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
