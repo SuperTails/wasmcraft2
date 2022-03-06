@@ -127,12 +127,6 @@ fn try_merge(sets: &mut RegisterSet, block_id: BlockId, instr_idx: usize, dst: &
 	let dst_set = sets.get(*dst);
 	let src_set = sets.get(*src);
 
-	//println!();
-	//println!("{:?} {:?}", dst, src);
-	//println!("Members: {:?}", dst_set.members);
-	//println!("         {:?}", src_set.members);
-
-	//print_live_ranges(&[dst_set.live_range.clone(), src_set.live_range.clone()], func);
 
 	let overlap = dst_set.live_range.overlap(&src_set.live_range);
 
@@ -141,7 +135,80 @@ fn try_merge(sets: &mut RegisterSet, block_id: BlockId, instr_idx: usize, dst: &
 		//assert_eq!(overlap_instr, instr_idx);
 
 		sets.merge(*dst, *src);
+	} else if block_id.func == 9 && block_id.block == 13 {
+		println!();
+		println!("{:?} {:?}", dst, src);
+		println!("Members: {:?}", dst_set.members);
+		println!("         {:?}", src_set.members);
+
+		println!("DST LIVE RANGE:");
+		for part in dst_set.live_range.0.iter() {
+			if !part.1.is_empty() {
+				println!("{:?}", part);
+			}
+		}
+		println!();
+
+		println!("SRC LIVE RANGE:");
+		for part in src_set.live_range.0.iter() {
+			if !part.1.is_empty() {
+				println!("{:?}", part);
+			}
+		}
+		println!();
+
+		//print_live_ranges(&[dst_set.live_range.clone(), src_set.live_range.clone()], func);
+
+		println!("OVERLAP:");
+		for (block_id, block) in overlap.0.iter() {
+			if !block.is_empty() {
+				println!("{:?} {:?}", block_id, block);
+
+				println!("--- block ----");
+
+				let b = func.get(*block_id);
+
+				println!("    {:?}", b.params);
+				for instr in b.body.iter() {
+					println!("    {:?}", instr);
+				}
+
+				println!("    {:?}", b.term);
+
+				for succ in b.term.successors() {
+					let s = func.get(succ);
+					println!();
+					println!("Succ params: {:?}", s.params);
+				}
+			}
+		}
+		println!();
+
+		println!("===== The source func =====");
+
+		let b = func.get(block_id);
+		println!("--- block ----");
+
+		println!("    {:?}", b.params);
+		for (i, instr) in b.body.iter().enumerate() {
+			if i == instr_idx {
+				println!("+   {:?}", instr);
+			} else {
+				println!("    {:?}", instr);
+			}
+		}
+
+		println!("    {:?}", b.term);
+
+		for succ in b.term.successors() {
+			let s = func.get(succ);
+			println!();
+			println!("Succ params: {:?}", s.params);
+		}
+
+		panic!();
 	}
+
 }
 
 impl RegAlloc for FullRegAlloc {

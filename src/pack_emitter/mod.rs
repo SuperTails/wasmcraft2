@@ -487,14 +487,41 @@ fn unsigned_less_than(dst: Register, lhs: Register, rhs: Register, code: &mut Ve
 	if lhs >= 0 && rhs >= 0 && lhs < rhs { reg = true }
 	*/
 
-	assert_ne!(dst, lhs);
-	assert_ne!(dst, rhs);
+	if let Some(r) = rhs.get_const() {
+		assert_ne!(dst, lhs);
 
-	code.push(format!("scoreboard players set {dst} 0"));
-	code.push(format!("execute if score {lhs} matches ..-1 if score {rhs} matches 0.. run scoreboard players set {dst} 0"));
-	code.push(format!("execute if score {lhs} matches 0.. if score {rhs} matches ..-1 run scoreboard players set {dst} 1"));
-	code.push(format!("execute if score {lhs} matches ..-1 if score {rhs} matches ..-1 if score {lhs} < {rhs} run scoreboard players set {dst} 1"));
-	code.push(format!("execute if score {lhs} matches 0.. if score {rhs} matches 0.. if score {lhs} < {rhs} run scoreboard players set {dst} 1"));
+		if r > 0 {
+			code.push(format!("scoreboard players set {dst} 0"));
+			code.push(format!("execute if score {lhs} matches 0.. if score {lhs} < {rhs} run scoreboard players set {dst} 1"));
+		} else {
+			assert_ne!(r, i32::MIN);
+			let r_incl = r - 1;
+			code.push(format!("execute store success score {dst} if score {lhs} matches 0.."));
+			code.push(format!("execute if score {lhs} matches ..-1 if score {lhs} matches ..{r_incl} run scoreboard players set {dst} 1"));
+		}
+	} else if let Some(l) = lhs.get_const() {
+		assert_ne!(dst, rhs);
+
+		if l == i32::MAX {
+			code.push(format!("execute store success score {dst} if score {rhs} matches ..-1"));
+		} else if l > 0 {
+			let l_incl = l + 1;
+			code.push(format!("execute store success score {dst} if score {rhs} matches ..-1"));
+			code.push(format!("execute if score {rhs} matches 0.. if score {rhs} matches {l_incl}.. run scoreboard players set {dst} 1"));
+		} else {
+			let l_incl = l + 1;
+			code.push(format!("scoreboard players set {dst} 0"));
+			code.push(format!("execute if score {rhs} matches ..-1 if score {rhs} matches {l_incl}.. run scoreboard players set {dst} 1"));
+		}
+	} else {
+		assert_ne!(dst, lhs);
+		assert_ne!(dst, rhs);
+
+		code.push(format!("scoreboard players set {dst} 0"));
+		code.push(format!("execute if score {lhs} matches 0.. if score {rhs} matches ..-1 run scoreboard players set {dst} 1"));
+		code.push(format!("execute if score {lhs} matches ..-1 if score {rhs} matches ..-1 if score {lhs} < {rhs} run scoreboard players set {dst} 1"));
+		code.push(format!("execute if score {lhs} matches 0.. if score {rhs} matches 0.. if score {lhs} < {rhs} run scoreboard players set {dst} 1"));
+	}
 }
 
 fn unsigned_greater_than_eq(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>) {
@@ -1026,11 +1053,8 @@ fn emit_constant_shru(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Str
 		code.push(format!("scoreboard players operation {dst} /= {factor}"));
 
 		let high_bit_factor = 1 << (31 - rhs);
-		const_pool.insert(high_bit_factor);
-		let high_bit_factor = Register::const_val(high_bit_factor);
 
-		code.push(format!("scoreboard players operation {dst_is_neg} *= {high_bit_factor}"));
-		code.push(format!("scoreboard players operation {dst} += {dst_is_neg}"));
+		code.push(format!("execute if score {dst_is_neg} matches 1 run scoreboard players add {dst} {high_bit_factor}"));
 	} else if dst != lhs {
 		code.push(format!("scoreboard players operation {dst} = {lhs}"));
 	}
@@ -1040,7 +1064,7 @@ fn emit_constant_shru(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Str
 
 fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	match instr {
-		&LirInstr::Assign(dst, src) => code.push(format!("scoreboard players operation {dst} = {src}")),
+		&LirInstr::Assign(dst, src) => if dst != src { code.push(format!("scoreboard players operation {dst} = {src}")); },
 		&LirInstr::Set(dst, src) => code.push(format!("scoreboard players set {dst} {src}")),
 		&LirInstr::Add(dst, src) => code.push(format!("scoreboard players operation {dst} += {src}")),
 		&LirInstr::Sub(dst, src) => code.push(format!("scoreboard players operation {dst} -= {src}")),

@@ -138,24 +138,29 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 		}
 	}
 
-	fn do_compareop<F, G>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: TypedSsaVar, block: &mut Vec<LirInstr>, ra: &mut FullRegAlloc, f: F, g: G)
+	fn do_compareop<F, G, L, R>(dst: TypedSsaVar, lhs: L, rhs: R, block: &mut Vec<LirInstr>, ra: &mut FullRegAlloc, f: F, g: G)
 		where
 			F: FnOnce(Register, Register, Register) -> LirInstr,
 			G: FnOnce(Register, DoubleRegister, DoubleRegister) -> LirInstr,
+			L: Into<SsaVarOrConst>,
+			R: Into<SsaVarOrConst>,
 	{
 		assert_eq!(dst.ty(), Type::I32);
 		let dst = ra.get(dst.into_untyped());
 
+		let lhs = lhs.into();
+		let rhs = rhs.into();
+
 		assert_eq!(lhs.ty(), rhs.ty());
 		match lhs.ty() {
 			Type::I32 => {
-				let lhs = ra.get(lhs.into_untyped());
-				let rhs = ra.get(rhs.into_untyped());
+				let lhs = map_ra_i32(lhs, ra);
+				let rhs = map_ra_i32(rhs, ra);
 				block.push(f(dst, lhs, rhs))
 			}
 			Type::I64 => {
-				let lhs = ra.get_double(lhs.into_untyped());
-				let rhs = ra.get_double(rhs.into_untyped());
+				let lhs = map_ra_i64(lhs, ra);
+				let rhs = map_ra_i64(rhs, ra);
 				block.push(g(dst, lhs, rhs));
 			}
 			_ => todo!(),
@@ -990,8 +995,42 @@ fn emit_copy(block: &mut Vec<LirInstr>, in_params: &[TypedSsaVar], out_params: &
 		}
 	});
 
-	// TODO: Optimize
+	let reg_pairs = param_pairs.flat_map(|(i, o)| {
+		match i.ty() {
+			Type::I32 => vec![(ra.get(i.into_untyped()), ra.get(o.into_untyped()))],
+			Type::I64 => vec![
+				(ra.get_double(i.into_untyped()).lo(), ra.get_double(o.into_untyped()).lo()),
+				(ra.get_double(i.into_untyped()).hi(), ra.get_double(o.into_untyped()).hi()),
+			],
+			_ => todo!(),
+		}
+	});
 
+	let need_tmp = reg_pairs.clone().filter(|(_, o)| {
+		reg_pairs.clone().any(|(i2, _)| *o == i2)
+	}).map(|(i, _)| i).collect::<HashSet<Register>>();
+
+	for (in_param, out_param) in reg_pairs.clone() {
+		if !need_tmp.contains(&in_param) {
+			add_instr(LirInstr::Assign(out_param, in_param));
+		}
+	}
+
+	for (idx, (in_param, _)) in reg_pairs.clone().enumerate() {
+		if need_tmp.contains(&in_param) {
+			let tmp = Register::temp_lo(idx as u32);
+			add_instr(LirInstr::Assign(tmp, in_param));
+		}
+	}
+
+	for (idx, (in_param, out_param)) in reg_pairs.clone().enumerate() {
+		if need_tmp.contains(&in_param) {
+			let tmp = Register::temp_lo(idx as u32);
+			add_instr(LirInstr::Assign(out_param, tmp));
+		}
+	}
+
+	/*
 	for (idx, (in_param, _)) in param_pairs.clone().enumerate() {
 		match in_param.ty() {
 			Type::I32 => {
@@ -1025,6 +1064,7 @@ fn emit_copy(block: &mut Vec<LirInstr>, in_params: &[TypedSsaVar], out_params: &
 			_ => todo!(),
 		}
 	}
+	*/
 }
 
 const MANUALLY_ZERO_LOCALS: bool = false;

@@ -2,6 +2,45 @@ use std::{collections::{HashSet, HashMap}, ops::RangeInclusive, fmt};
 
 use super::{TypedSsaVar, SsaFunction, BlockId, SsaBasicBlock};
 
+fn range_overlap(r1: RangeInclusive<usize>, r2: RangeInclusive<usize>) -> Option<RangeInclusive<usize>> {
+	let start = *r1.start().max(r2.start());
+	let end = *r1.end().min(r2.end());
+
+	if start <= end {
+		Some(start..=end)
+	} else {
+		None
+	}
+}
+
+fn merge_ranges(a: RangeInclusive<usize>, b: RangeInclusive<usize>) -> Option<RangeInclusive<usize>> {
+	if range_overlap(a.clone(), b.clone()).is_some() {
+		let start = *a.start().min(b.start());
+		let end = *a.end().max(b.end());
+		Some(start..=end)
+	} else {
+		None
+	}
+}
+
+fn simplify_range_list(list: &mut Vec<RangeInclusive<usize>>) {
+	let mut i = 0;
+	'outer: while i != list.len() {
+		for j in i + 1..list.len() {
+			let r1 = list[i].clone();
+			let r2 = list[j].clone();
+
+			if let Some(merged) = merge_ranges(r1, r2) {
+				list[i] = merged;
+				list.remove(j);
+				continue 'outer;
+			}
+		}
+
+		i += 1;
+	}
+}
+
 #[derive(Debug, Clone)]
 pub struct BlockLiveRange {
 	pub live_in: bool,
@@ -13,7 +52,10 @@ pub struct BlockLiveRange {
 impl BlockLiveRange {
 	pub fn merge(&mut self, other: &BlockLiveRange) {
 		self.live_in |= other.live_in;
+
 		self.body.extend(other.body.iter().cloned());
+		simplify_range_list(&mut self.body);
+
 		self.live_out |= other.live_out;
 	}
 
@@ -25,14 +67,13 @@ impl BlockLiveRange {
 
 		for r1 in self.body.iter() {
 			for r2 in other.body.iter() {
-				let start = *r1.start().max(r2.start());
-				let end = *r1.end().min(r2.end());
-
-				if start <= end {
-					body.push(start..=end);
+				if let Some(overlap) = range_overlap(r1.clone(), r2.clone()) {
+					body.push(overlap);
 				}
 			}
 		}
+
+		simplify_range_list(&mut body);
 
 		BlockLiveRange { live_in, body, live_out }
 	}
@@ -47,7 +88,7 @@ impl BlockLiveRange {
 }
 
 #[derive(Debug, Clone)]
-pub struct LiveRange(HashMap<BlockId, BlockLiveRange>);
+pub struct LiveRange(pub HashMap<BlockId, BlockLiveRange>);
 
 impl LiveRange {
 	pub fn merge(&mut self, other: LiveRange) {

@@ -89,6 +89,14 @@ impl SsaVarOrConst {
 			None
 		}
 	}
+
+	pub fn get_var_mut(&mut self) -> Option<&mut TypedSsaVar> {
+		if let Self::Var(v) = self {
+			Some(v)
+		} else {
+			None
+		}
+	}
 }
 
 impl From<TypedSsaVar> for SsaVarOrConst {
@@ -153,16 +161,16 @@ pub enum SsaInstr {
 
 	// comp instructions: dst, lhs, rhs
 
-	GtS(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	GtU(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	GeS(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	GeU(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	LtS(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	LtU(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	LeS(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	LeU(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	Eq(TypedSsaVar, TypedSsaVar, TypedSsaVar),
-	Ne(TypedSsaVar, TypedSsaVar, TypedSsaVar),
+	GtS(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
+	GtU(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
+	GeS(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
+	GeU(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
+	LtS(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
+	LtU(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
+	LeS(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
+	LeU(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
+	Eq(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
+	Ne(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
 
 	// unary instructions: dst, src
 
@@ -266,7 +274,8 @@ impl SsaInstr {
 			SsaInstr::Rotr(_, lhs, rhs) |
 			SsaInstr::And(_, lhs, SsaVarOrConst::Var(rhs)) |
 			SsaInstr::Xor(_, lhs, SsaVarOrConst::Var(rhs)) |
-			SsaInstr::Or(_, lhs, SsaVarOrConst::Var(rhs)) |
+			SsaInstr::Or(_, lhs, SsaVarOrConst::Var(rhs)) => vec![*lhs, *rhs],
+
 			SsaInstr::GtS(_, lhs, rhs) |
 			SsaInstr::GtU(_, lhs, rhs) |
 			SsaInstr::GeS(_, lhs, rhs) |
@@ -276,7 +285,7 @@ impl SsaInstr {
 			SsaInstr::LeS(_, lhs, rhs) |
 			SsaInstr::LeU(_, lhs, rhs) |
 			SsaInstr::Eq(_, lhs, rhs) |
-			SsaInstr::Ne(_, lhs, rhs) => vec![*lhs, *rhs],
+			SsaInstr::Ne(_, lhs, rhs) => lhs.get_var().into_iter().chain(rhs.get_var()).collect(),
 
 			SsaInstr::Sub(_, lhs, SsaVarOrConst::Const(_)) |
 			SsaInstr::Mul(_, lhs, SsaVarOrConst::Const(_)) |
@@ -507,6 +516,17 @@ impl SsaInstr {
 			SsaInstr::DivS(_, _, r) | 
 			SsaInstr::DivU(_, _, r) => vec![r],
 
+			SsaInstr::GtS(_, lhs, rhs) |
+			SsaInstr::GtU(_, lhs, rhs) |
+			SsaInstr::GeS(_, lhs, rhs) |
+			SsaInstr::GeU(_, lhs, rhs) |
+			SsaInstr::LtS(_, lhs, rhs) |
+			SsaInstr::LtU(_, lhs, rhs) |
+			SsaInstr::LeS(_, lhs, rhs) |
+			SsaInstr::LeU(_, lhs, rhs) |
+			SsaInstr::Eq(_, lhs, rhs) |
+			SsaInstr::Ne(_, lhs, rhs) => vec![lhs, rhs],
+
 			SsaInstr::Load64(_, _, addr) | 
 			SsaInstr::Load32S(_, _, addr) |
 			SsaInstr::Load32U(_, _, addr) |
@@ -529,6 +549,8 @@ impl SsaInstr {
 			SsaInstr::Add(dst, SsaVarOrConst::Var(lhs), SsaVarOrConst::Var(rhs)) if dst.ty() == Type::I32 => vec![(dst, lhs), (dst, rhs)],
 			SsaInstr::Add(dst, SsaVarOrConst::Var(lhs), _) if dst.ty() == Type::I32 => vec![(dst, lhs)],
 			SsaInstr::Add(dst, _, SsaVarOrConst::Var(rhs)) if dst.ty() == Type::I32 => vec![(dst, rhs)],
+
+			SsaInstr::Assign(dst, src) => vec![(dst, src)],
 
 			SsaInstr::Mul(dst, lhs, _rhs) if dst.ty() == Type::I32 => vec![(dst, lhs), /*(dst, rhs)*/],
 			SsaInstr::ShrS(dst, lhs, _) if dst.ty() == Type::I32 => vec![(dst, lhs)],

@@ -518,7 +518,7 @@ impl ValidationState<'_> {
 
 		fn make_i64_comp<F>(f: F, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
 			where
-				F: FnOnce(TypedSsaVar, TypedSsaVar, TypedSsaVar) -> SsaInstr
+				F: FnOnce(TypedSsaVar, SsaVarOrConst, SsaVarOrConst) -> SsaInstr
 		{
 			let rhs = validator.pop_value_ty(Type::I64.into());
 			let lhs = validator.pop_value_ty(Type::I64.into());
@@ -527,7 +527,7 @@ impl ValidationState<'_> {
 			validator.push_value(dst);
 
 			if validator.reachable() {
-				builder.current_block_mut().body.push(f(dst, lhs.unwrap(), rhs.unwrap()));
+				builder.current_block_mut().body.push(f(dst, lhs.unwrap().into(), rhs.unwrap().into()));
 			}
 		}
 

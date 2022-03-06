@@ -2,54 +2,10 @@
 # second argument - %param1%0 reg
 # return value - %return%0 reg
 
-scoreboard players set %return%0 reg 0
+execute if score %param1%0 reg matches 0 run scoreboard players operation %return%0 reg = %param0%0 reg
 
-# First half:
-# 1-4
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
+execute if score %param1%0 reg matches -1 run scoreboard players operation %return%0 reg = %param0%0 reg
+execute if score %param1%0 reg matches -1 run scoreboard players operation %return%0 reg *= %%-1 reg
+execute if score %param1%0 reg matches -1 run scoreboard players remove %return%0 reg 1
 
-# 5-8
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-
-# 9-12
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-
-# 13-16
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-
-# Second half:
-# 1-4
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-
-# 5-8
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-
-# 9-12
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-
-# 13-16
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
-function intrinsic:xor_inner
+execute unless score %param1%0 reg matches -1..0 run function intrinsic:xor_normal

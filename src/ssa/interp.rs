@@ -303,9 +303,9 @@ impl SsaInterpreter {
 		} else {
 			let mut incr_pc = true;
 
-			fn do_compare_op(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: TypedSsaVar, var_context: &mut VarContext, f: impl FnOnce(i32, i32) -> bool, g: impl FnOnce(i64, i64) -> bool) {
-				let l = var_context.get_typed(lhs).expect("lhs was uninit");
-				let r = var_context.get_typed(rhs).expect("rhs was uninit");
+			fn do_compare_op(dst: TypedSsaVar, lhs: SsaVarOrConst, rhs: SsaVarOrConst, var_context: &mut VarContext, f: impl FnOnce(i32, i32) -> bool, g: impl FnOnce(i64, i64) -> bool) {
+				let l = lhs.eval(var_context).expect("lhs was uninit");
+				let r = rhs.eval(var_context).expect("rhs was uninit");
 
 				let result = match (l, r) {
 					(TypedValue::I32(l), TypedValue::I32(r)) => {
