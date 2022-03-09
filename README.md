@@ -6,9 +6,14 @@ Wasmcraft is a compiler from [WebAssembly](https://webassembly.org/) to Minecraf
 Since WebAssembly is a well-supported target for many languages, this means that you can run code
 written in e.g. C in Minecraft.
 
+This was inspired by [Sethbling's Atari 2600 Datapack](https://youtu.be/mq7T5_xH24M) and is the (much, much improved) spiritual successor to [Langcraft](https://github.com/SuperTails/langcraft).
+
 ## Demonstration
 
-TODO:
+Here is a short demonstration of [a port of Minecraft 4k](https://github.com/SuperTails/Minecraft4k-For-Wasmcraft),
+compiled using wasmcraft, running in vanilla Minecraft. (That's right: Minecraft in Minecraft).
+
+Alternatively, [here is a video](https://youtu.be/jrMrde9tQlg) of the CHIP-8 Emulator from [here](https://github.com/JamesGriffin/CHIP-8-Emulator) running Pong.
 
 ## Features
 
@@ -71,3 +76,9 @@ Use fixed point operations instead, e.g. [libfixmath](https://github.com/Petteri
 * Manual calls to `sleep()` have to be inserted in long-running code,
 because Minecraft can only run a limited number of commands per tick.
 * The API is very limited
+
+## License
+
+Licensed under either of
+* MIT License
+* Apache License, Version 2.0
