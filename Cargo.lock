@@ -29,9 +29,9 @@ dependencies = [
 
 [[package]]
 name = "async-global-executor"
-version = "2.0.2"
+version = "2.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9586ec52317f36de58453159d48351bc244bc24ced3effc1fce22f3d48664af6"
+checksum = "c026b7e44f1316b567ee750fea85103f87fcb80792b860e979f221259796ca0a"
 dependencies = [
  "async-channel",
  "async-executor",
@@ -120,9 +120,9 @@ dependencies = [
 
 [[package]]
 name = "async-task"
-version = "4.1.0"
+version = "4.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "677d306121baf53310a3fd342d88dc0824f6bbeace68347593658525565abee8"
+checksum = "30696a84d817107fc028e049980e09d5e140e8da8f1caeb17e8e950658a3cea9"
 
 [[package]]
 name = "atomic-waker"
@@ -249,6 +249,7 @@ dependencies = [
 [[package]]
 name = "datapack_common"
 version = "0.1.0"
+source = "git+https://github.com/SuperTails/datapack_common.git#c43b600f73e96bad49e8530209f80cb247870636"
 dependencies = [
  "command_parser",
  "itertools",
@@ -261,6 +262,7 @@ dependencies = [
 [[package]]
 name = "datapack_vm"
 version = "0.1.0"
+source = "git+https://github.com/SuperTails/datapackvm.git#1965d9546c54b58f41c8f4327474952d7a1a2f4e"
 dependencies = [
  "datapack_common",
  "lazy_static",
@@ -455,9 +457,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.9.0"
+version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da32515d9f6e6e489d7bc9d84c71b060db7247dc035bbe44eac88cf87486d8d5"
+checksum = "87f3e037eac156d1775da914196f0f37741a274155e34a0b7e427c35d2a2ecb9"
 
 [[package]]
 name = "parking"

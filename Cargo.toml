@@ -15,10 +15,10 @@ path = "src/lib.rs"
 
 [dependencies]
 wasmparser = "*"
-#datapack_vm = { git = "https://github.com/SuperTails/datapackvm.git" }
-datapack_vm = { path = "../../datapackvm" }
-#datapack_common = { git = "https://github.com/SuperTails/datapack_common.git" }
-datapack_common = { path = "../../datapack_common" }
+datapack_vm = { git = "https://github.com/SuperTails/datapackvm.git" }
+#datapack_vm = { path = "../../datapackvm" }
+datapack_common = { git = "https://github.com/SuperTails/datapack_common.git" }
+#datapack_common = { path = "../../datapack_common" }
 command_parser = { git = "https://github.com/Inky-developer/command-parser" }
 
 [dev-dependencies]
