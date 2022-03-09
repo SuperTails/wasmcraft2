@@ -826,7 +826,10 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 			}
 
 			assert_eq!(cond.ty(), Type::I32);
-			let cond = ra.get(cond.into_untyped());
+			// TODO: ?????
+			let cond2 = ra.get(cond.into_untyped());
+			let cond = ra.get_temp();
+			block.push(LirInstr::Assign(cond, cond2));
 
 			let true_out_params = &parent_func.get(true_target.label).params;
 			let false_out_params = &parent_func.get(false_target.label).params;

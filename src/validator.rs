@@ -787,21 +787,12 @@ impl ValidationState<'_> {
 				let ty = locals[local_index as usize];
 				let src = validator.pop_value_ty(ty.into());
 				if let UncertainVar::Known(src) = src {
-					//builder.current_block_mut().body.push(SsaInstr::LocalSet(local_index, src));
-
-					let new_local = alloc.new_typed(ty);
-					builder.current_locals[local_index as usize] = new_local;
-					builder.current_block_mut().body.push(SsaInstr::Assign(new_local, src));
+					builder.current_locals[local_index as usize] = src;
 				}
 			}
 			&Operator::LocalGet { local_index } => {
-				let ty = locals[local_index as usize];
-				let dst = alloc.new_typed(ty);
-				validator.push_value(dst);
-				//builder.current_block_mut().body.push(SsaInstr::LocalGet(dst, local_index));
-
 				let local_var = builder.current_locals[local_index as usize];
-				builder.current_block_mut().body.push(SsaInstr::Assign(dst, local_var));
+				validator.push_value(local_var);
 			}
 			&Operator::LocalTee { local_index } => {
 				let ty = locals[local_index as usize];
@@ -810,10 +801,7 @@ impl ValidationState<'_> {
 				validator.push_value(src);
 
 				if let UncertainVar::Known(src) = src {
-					//builder.current_block_mut().body.push(SsaInstr::LocalSet(local_index, src));
-					let new_local = alloc.new_typed(ty);
-					builder.current_locals[local_index as usize] = new_local;
-					builder.current_block_mut().body.push(SsaInstr::Assign(new_local, src));
+					builder.current_locals[local_index as usize] = src;
 				}
 
 				validator.pop_push_values(&[ty], &[src]);

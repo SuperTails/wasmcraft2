@@ -135,7 +135,7 @@ fn try_merge(sets: &mut RegisterSet, block_id: BlockId, instr_idx: usize, dst: &
 		//assert_eq!(overlap_instr, instr_idx);
 
 		sets.merge(*dst, *src);
-	} else if block_id.func == 9 && block_id.block == 13 {
+	} /*else if block_id.func == 9 && block_id.block == 13 {
 		println!();
 		println!("{:?} {:?}", dst, src);
 		println!("Members: {:?}", dst_set.members);
@@ -207,7 +207,7 @@ fn try_merge(sets: &mut RegisterSet, block_id: BlockId, instr_idx: usize, dst: &
 		}
 
 		panic!();
-	}
+	}*/
 
 }
 
