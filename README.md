@@ -10,7 +10,7 @@ This was inspired by [Sethbling's Atari 2600 Datapack](https://youtu.be/mq7T5_xH
 
 ## Demonstration
 
-Here is a short demonstration of [a port of Minecraft 4k](https://github.com/SuperTails/Minecraft4k-For-Wasmcraft),
+[Here](https://youtu.be/5jEyaGQFP0g) is a short demonstration of [a port of Minecraft 4k](https://github.com/SuperTails/Minecraft4k-For-Wasmcraft),
 compiled using wasmcraft, running in vanilla Minecraft. (That's right: Minecraft in Minecraft).
 
 Alternatively, [here is a video](https://youtu.be/jrMrde9tQlg) of the CHIP-8 Emulator from [here](https://github.com/JamesGriffin/CHIP-8-Emulator) running Pong.
