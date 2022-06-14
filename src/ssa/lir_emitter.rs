@@ -187,7 +187,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 	{
 		assert_eq!(mem.memory, 0);
 
-		assert_eq!(src.ty(), Type::I32);
+		//assert_eq!(src.ty(), Type::I32);
 		let src = ra.get(src.into_untyped());
 
 		let addr = map_ra_i32(addr, ra);
@@ -250,7 +250,11 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 
 		if dst.ty() == Type::I64 {
 			let dst = ra.get_double(dst.into_untyped());
-			block.push(LirInstr::SignExtend32(dst));
+			if signed {
+				block.push(LirInstr::SignExtend32(dst));
+			} else {
+				block.push(LirInstr::Set(dst.hi(), 0));
+			}
 		}
 	}
 
@@ -614,7 +618,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 						block.push(LirInstr::Assign(dst.lo(), src.lo()));
 						block.push(LirInstr::Assign(dst.hi(), src.hi()));
 					}
-					_ => todo!(),
+					_ => todo!("{:?}", dst),
 				}
 			}
 
@@ -807,7 +811,11 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 	}
 
 	match &ssa_block.term {
-		crate::ssa::SsaTerminator::Unreachable => todo!(),
+		crate::ssa::SsaTerminator::Unreachable => {
+			// TODO: PRINT A WARNING
+
+			builder.push(block_id, block, LirTerminator::Return);
+		},
 		crate::ssa::SsaTerminator::ScheduleJump(target, delay) => {
 			assert!(target.params.is_empty());
 			assert!(parent_func.get(target.label).params.is_empty());
@@ -860,12 +868,23 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 				builder.push(block_id, block, LirTerminator::Jump(default.label));
 			} else {
 				assert_eq!(cond.ty(), Type::I32);
-				let cond = ra.get(cond.into_untyped());
+				let mut cond = ra.get(cond.into_untyped());
 
 				let default_out_params = &parent_func.get(default.label).params;
-				let other_out_params = arms.iter().map(|arm| &parent_func.get(arm.label).params).flatten();
+				let other_out_params = arms.iter().flat_map(|arm| &parent_func.get(arm.label).params);
+
+				let mut needs_new_cond = false;
 				for out_param in other_out_params.chain(default_out_params.iter()) {
-					assert_ne!(cond, ra.get(out_param.into_untyped()));
+					if cond == ra.get(out_param.into_untyped()) {
+						needs_new_cond = true;
+						break;
+					}
+				}
+
+				if needs_new_cond {
+					let new_cond = ra.get_temp();
+					block.push(LirInstr::Assign(new_cond, cond));
+					cond = new_cond;
 				}
 
 				block.push(LirInstr::Set(Register::cond_taken(), 0));

@@ -1251,7 +1251,7 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 			Type::I64 => {
 				builder.current_block_mut().body.push(SsaInstr::I64Set(*local, 0));
 			}
-			_ => todo!(),
+			_ => todo!("{:?}", local),
 		}
 	}
 
@@ -1290,14 +1290,33 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 		println!("{:?}\n", block.term);
 	}
 
-	let mut i = 0;
+	/*let mut changed = true;
+	while changed {
+		changed = false;
+
+		for idx in 0..blocks.len() {
+			match blocks[idx].term {
+				SsaTerminator::Unreachable => {},
+				SsaTerminator::ScheduleJump(t, _) |
+				SsaTerminator::Jump(t) => {
+					let dest = blocks.iter().find(|(i, _)| *i == t.label).unwrap();
+				}
+				SsaTerminator::BranchIf { cond, true_target, false_target } => todo!(),
+				SsaTerminator::BranchTable { cond, default, arms } => todo!(),
+				SsaTerminator::Return(_) => todo!(),
+			}
+		}
+	}*/
+
+	/*let mut i = 0;
 	while i < blocks.len() {
 		if matches!(blocks[i].1.term, SsaTerminator::Unreachable) {
 			blocks.remove(i);
+			changed = true;
 		} else {
 			i += 1;
 		}
-	}
+	}*/
 
 	SsaFunction { code: blocks, params: func_ty.params.clone(), returns: func_ty.returns.clone() }
 }
@@ -1309,9 +1328,11 @@ pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {
 
 	for func in 0..wasm_file.functions.functions.len() {
 		if wasm_file.func_is_defined(func) {
-			code.push(validate(wasm_file, func));
+			let ssa_func = validate(wasm_file, func);
+			code.push(ssa_func);
 			local_types.insert(func, wasm_file.func_locals(func));
 		}
+
 	}
 
 	let globals = wasm_file.globals().iter().map(|global| {
@@ -1389,6 +1410,7 @@ pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {
 				Some((export.field.to_owned(), id))
 			}
 			ExternalKind::Memory => None,
+			ExternalKind::Global => None, // TODO:
 			_ => todo!("{:?}", export.kind)
 		}
 	}).collect();

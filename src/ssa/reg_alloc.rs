@@ -55,9 +55,69 @@ pub struct FullRegAlloc {
 }
 
 mod register_set {
-	use crate::ssa::liveness::LiveRange;
+	use std::collections::HashMap;
+
+use wasmparser::Type;
+
+use crate::ssa::{liveness::LiveRange, SsaTerminator, SsaInstr};
 
 	use super::*;
+
+	#[derive(Debug)]
+	pub struct InterfGraph(HashMap<TypedSsaVar, Vec<TypedSsaVar>>);
+
+	impl InterfGraph {
+		pub fn new(func: &SsaFunction) -> Self {
+			let mut result = InterfGraph(HashMap::new());
+
+			for (_, block) in func.iter() {
+				for instr in block.body.iter() {
+					match instr {
+						SsaInstr::Add(dst, lhs, rhs) if dst.ty() == Type::I64 => {
+							if let Some(l) = lhs.get_var() {
+								result.add_edge(*dst, l)
+							}
+							if let Some(r) = rhs.get_var() {
+								result.add_edge(*dst, r);
+							}
+							if let (Some(l), Some(r)) = (lhs.get_var(), rhs.get_var()) {
+								result.add_edge(l, r);
+							}
+						}
+						_ => {}
+					}
+				}
+			}
+
+			result
+		}
+
+		pub fn add_edge(&mut self, a: TypedSsaVar, b: TypedSsaVar) {
+			self.add_dir_edge(a, b);
+			self.add_dir_edge(b, a);
+		}
+
+		fn add_dir_edge(&mut self, a: TypedSsaVar, b: TypedSsaVar) {
+			let others = self.0.entry(a).or_insert_with(Vec::new);
+			if !others.contains(&b) {
+				others.push(b);
+			}
+		}
+
+		pub fn interferes(&self, lhs: &MergedRegister, rhs: &MergedRegister) -> bool {
+			for lhs_reg in lhs.members.iter() {
+				if let Some(interf_regs) = self.0.get(lhs_reg) {
+					for rhs_reg in interf_regs.iter() {
+						if rhs.members.contains(rhs_reg) {
+							return true;
+						}
+					}
+				}
+			}
+
+			false
+		}
+	}
 
 	#[derive(Debug)]
 	pub struct MergedRegister {
@@ -119,7 +179,7 @@ mod register_set {
 
 use register_set::*;
 
-fn try_merge(sets: &mut RegisterSet, block_id: BlockId, instr_idx: usize, dst: &TypedSsaVar, src: &TypedSsaVar, func: &SsaFunction) {
+fn try_merge(sets: &mut RegisterSet, block_id: BlockId, instr_idx: usize, dst: &TypedSsaVar, src: &TypedSsaVar, func: &SsaFunction, interf_graph: &InterfGraph) {
 	if sets.get_idx(*dst) == sets.get_idx(*src) {
 		return;
 	}
@@ -127,12 +187,17 @@ fn try_merge(sets: &mut RegisterSet, block_id: BlockId, instr_idx: usize, dst: &
 	let dst_set = sets.get(*dst);
 	let src_set = sets.get(*src);
 
+	if interf_graph.interferes(dst_set, src_set) {
+		return;
+	}
 
 	let overlap = dst_set.live_range.overlap(&src_set.live_range);
 
 	if let Some((_overlap_id, _overlap_instr)) = overlap.get_single_point() {
 		//assert_eq!(overlap_id, block_id);
 		//assert_eq!(overlap_instr, instr_idx);
+
+		println!("merging {:?} {:?}", dst, src);
 
 		sets.merge(*dst, *src);
 	} /*else if block_id.func == 9 && block_id.block == 13 {
@@ -213,6 +278,10 @@ fn try_merge(sets: &mut RegisterSet, block_id: BlockId, instr_idx: usize, dst: &
 
 impl RegAlloc for FullRegAlloc {
 	fn analyze(func: &SsaFunction) -> Self {
+		let interf_graph = InterfGraph::new(func);
+
+		println!("Interference graph: {:?}", interf_graph);
+
 		let mut sets = RegisterSet::new(func);
 
 		for (block_id, block) in func.iter() {
@@ -223,12 +292,12 @@ impl RegAlloc for FullRegAlloc {
 					assert!(uses.contains(src));
 					assert!(defs.contains(dst));
 
-					try_merge(&mut sets, block_id, instr_idx, dst, src, func);
+					try_merge(&mut sets, block_id, instr_idx, dst, src, func, &interf_graph);
 				}
 			}
 
 			for (dst, src) in func.coalescable_term_vars(block_id) {
-				try_merge(&mut sets, block_id, block.body.len(), &dst, &src, func);
+				try_merge(&mut sets, block_id, block.body.len(), &dst, &src, func, &interf_graph);
 			}
 		}
 

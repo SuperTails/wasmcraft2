@@ -6,14 +6,14 @@ use wasmparser::Type;
 
 use crate::{lir::{LirProgram, LirFunction, LirBasicBlock, LirInstr, Register, LirTerminator, Condition, Half, DoubleRegister}, ssa::{BlockId, Memory, interp::TypedValue}, jump_mode, JumpMode};
 
-fn parse_function<'a, C, T>(id: &str, code: C) -> Function
+fn parse_function<C, T>(id: &str, code: C) -> Function
 	where
 		C: IntoIterator<Item=T>,
 		T: AsRef<str>,
 {
 	let id = parse_command::<FunctionIdent>(id).unwrap();
 	let code = code.into_iter();
-	let cmds = code.map(|cmd| cmd.as_ref().parse().unwrap()).collect();
+	let cmds = code.map(|cmd| cmd.as_ref().parse().unwrap_or_else(|err| panic!("{:?} {:?}", err, cmd.as_ref()))).collect();
 	Function { id, cmds }
 }
 
@@ -239,7 +239,38 @@ pub fn get_mc_id(block_id: BlockId) -> String {
 	format!("wasmrunner:wasm_{}_{}", block_id.func, block_id.block)
 }
 
-fn mem_store_32(src: Register, addr: Register, code: &mut Vec<String>) {
+fn mem_store_unaligned_32(src: Register, addr: i32, offset: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+	assert!(offset > 0);
+	assert!(offset < 4);
+
+	let (x0, y0, z0) = get_address_pos(addr - offset);
+	let (x1, y1, z1) = get_address_pos(addr - offset + 4);
+
+	let tmp1 = Register::temp_lo(100_000);
+	let tmp2 = Register::temp_lo(100_001);
+
+	let shift = 1 << (8 * offset);
+
+	const_pool.insert(shift);
+	let shift = Register::const_val(shift);
+
+	code.push(format!("execute store result score {tmp1} run data get block {x0} {y0} {z0} RecordItem.tag.Memory 1"));
+	code.push(format!("scoreboard players operation {tmp1} %= {shift}"));
+	code.push(format!("scoreboard players operation {tmp2} = {src}"));
+	code.push(format!("scoreboard players operation {tmp2} *= {shift}"));
+	code.push(format!("scoreboard players operation {tmp1} += {tmp2}"));
+	code.push(format!("execute store result block {x0} {y0} {z0} RecordItem.tag.Memory int 1 run scoreboard players get {tmp1}"));
+
+	code.push(format!("execute store result score {tmp1} run data get block {x1} {y1} {z1} RecordItem.tag.Memory 1"));
+	code.push(format!("scoreboard players operation {tmp2} = {tmp1}"));
+	code.push(format!("scoreboard players operation {tmp2} %= {shift}"));
+	code.push(format!("scoreboard players operation {tmp1} -= {tmp2}"));
+	emit_constant_shru(tmp2, src, 32 - (8 * offset), code, const_pool);
+	code.push(format!("scoreboard players operation {tmp1} += {tmp2}"));
+	code.push(format!("execute store result block {x1} {y1} {z1} RecordItem.tag.Memory int 1 run scoreboard players get {tmp1}"));
+}
+
+fn mem_store_32(src: Register, addr: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	if INSERT_MEM_PRINTS {
 		code.push(tellraw_mem_store(32, src, addr));
 	}
@@ -250,7 +281,7 @@ fn mem_store_32(src: Register, addr: Register, code: &mut Vec<String>) {
 				let (x, y, z) = get_address_pos(addr);
 				code.push(format!("execute store result block {x} {y} {z} RecordItem.tag.Memory int 1 run scoreboard players get {src}"));
 			}
-			1 | 2 | 3 => todo!(),
+			offset@(1 | 2 | 3) => { mem_store_unaligned_32(src, addr, offset, code, const_pool); }
 			_ => unreachable!(),
 		}
 	} else {
@@ -266,16 +297,20 @@ fn mem_store_16(src: Register, addr: Register, code: &mut Vec<String>) {
 		code.push(tellraw_mem_store(16, src, addr));
 	}
 
-	if let Some(addr) = addr.get_const() {
+	// TODO:
+	/*if let Some(addr) = addr.get_const() {
 		match addr % 4 {
+			0 => {
+				code.push(format!("execute store result score {tmp1} run data get block {x0} {y0} {z0} RecordItem.tag.Memory 1"));
+			}
 			a @ (0 | 1 | 2 | 3) => todo!("{:?}", a),
 			_ => unreachable!(),
 		}
-	} else {
-		code.push(format!("scoreboard players operation %ptr reg = {addr}"));
-		code.push(format!("scoreboard players operation %param2%0 reg = {src}"));
-		code.push("function intrinsic:store_halfword".to_string());
-	}
+	} else {*/
+	code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+	code.push(format!("scoreboard players operation %param2%0 reg = {src}"));
+	code.push("function intrinsic:store_halfword".to_string());
+	//}
 }
 
 fn mem_store_8 (src: Register, addr: Register, code: &mut Vec<String>) {
@@ -403,7 +438,28 @@ fn tellraw_mem_load(size: u32, dst: Register, addr: Register) -> String {
 	s
 }
 
-fn mem_load_32(dst: Register, addr: Register, code: &mut Vec<String>) {
+fn mem_load_unaligned_32(dst: Register, addr: i32, offset: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+	assert!(offset > 0);
+	assert!(offset < 4);
+
+	let (x0, y0, z0) = get_address_pos(addr - offset);
+	let (x1, y1, z1) = get_address_pos(addr - offset + 4);
+
+	let tmp1 = Register::temp_lo(100_000);
+
+	code.push(format!("execute store result score {dst} run data get block {x0} {y0} {z0} RecordItem.tag.Memory 1"));
+	emit_constant_shru(dst, dst, 8 * offset, code, const_pool);
+
+	let shift = 1 << (32 - 8 * offset);
+	const_pool.insert(shift);
+	let shift = Register::const_val(shift);
+
+	code.push(format!("execute store result score {tmp1} run data get block {x1} {y1} {z1} RecordItem.tag.Memory 1"));
+	code.push(format!("scoreboard players operation {tmp1} *= {shift}"));
+	code.push(format!("scoreboard players operation {dst} += {tmp1}"))
+}
+
+fn mem_load_32(dst: Register, addr: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	if let Some(addr) = addr.get_const() {
 		match addr % 4 {
 			0 => {
@@ -411,7 +467,7 @@ fn mem_load_32(dst: Register, addr: Register, code: &mut Vec<String>) {
 
 				code.push(format!("execute store result score {dst} run data get block {x} {y} {z} RecordItem.tag.Memory 1"));
 			}
-			1 | 2 | 3 => todo!(),
+			offset@(1 | 2 | 3) => mem_load_unaligned_32(dst, addr, offset, code, const_pool),
 			_ => unreachable!(),
 		}
 	} else {
@@ -676,6 +732,18 @@ fn signed_rem(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String
 		code.push(format!("scoreboard players operation {dst} *= {rhs}"));
 		code.push(format!("scoreboard players operation {dst} *= %%-1 reg"));
 		code.push(format!("scoreboard players operation {dst} += {lhs}"));
+	}
+}
+
+fn add_i64_copying(dst: DoubleRegister, lhs: DoubleRegister, rhs: DoubleRegister, code: &mut Vec<String>) {
+	if dst == lhs || dst == rhs {
+		// TODO: Better way to alloc this register?
+		let tmp_dst = DoubleRegister::temp(11);
+		add_i64(tmp_dst, lhs, rhs, code);
+		code.push(format!("scoreboard players operation {} = {}", dst.lo(), tmp_dst.lo()));
+		code.push(format!("scoreboard players operation {} = {}", dst.hi(), tmp_dst.hi()));
+	} else {
+		add_i64(dst, lhs, rhs, code);
 	}
 }
 
@@ -1083,12 +1151,12 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 			code.push(format!("scoreboard players operation {dst_hi} = %return%1 reg"));
 		}
 
-		&LirInstr::Add64(dst, lhs, rhs) => add_i64(dst, lhs, rhs, code),
+		&LirInstr::Add64(dst, lhs, rhs) => add_i64_copying(dst, lhs, rhs, code),
 		&LirInstr::Sub64(dst, lhs, rhs) => {
 			// -rhs == ((-rhs_lo - 1), (-rhs_hi - 1)) + 1
 
 			// TODO: Better way to allocate this register?
-			let tmp = DoubleRegister::temp(11);
+			let tmp = DoubleRegister::temp(12);
 			let (tmp_lo, tmp_hi) = tmp.split_lo_hi();
 
 			let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
@@ -1105,7 +1173,7 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 			code.push(format!("execute if score {tmp_lo} matches {all_ones} run scoreboard players add {tmp_hi} 1"));
 			code.push(format!("scoreboard players add {tmp_lo} 1"));
 
-			add_i64(dst, lhs, tmp, code);
+			add_i64_copying(dst, lhs, tmp, code);
 		},
 
 		&LirInstr::DivS64(dst, lhs, rhs) => {
@@ -1471,10 +1539,10 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 			let reg = if half == Half::Hi { Register::global_hi(src) } else { Register::global_lo(src) };
 			code.push(format!("scoreboard players operation {dst} = {reg}"));
 		},
-		&LirInstr::Store32(src, addr) => mem_store_32(src, addr, code),
+		&LirInstr::Store32(src, addr) => mem_store_32(src, addr, code, const_pool),
 		&LirInstr::Store16(src, addr) => mem_store_16(src, addr, code),
 		&LirInstr::Store8 (src, addr) => mem_store_8 (src, addr, code),
-		&LirInstr::Load32(dst, addr) => mem_load_32(dst, addr, code),
+		&LirInstr::Load32(dst, addr) => mem_load_32(dst, addr, code, const_pool),
 		&LirInstr::Load16(dst, addr) => mem_load_16(dst, addr, code),
 		&LirInstr::Load8 (dst, addr) => mem_load_8 (dst, addr, code),
 		&LirInstr::SignExtend(_, _) => todo!(),
@@ -1966,7 +2034,6 @@ mod test {
 		}
 	}
 
-
 	fn test_constant_and<I>(lhs_vals: I, rhs: i32)
 		where I: Iterator<Item=i32>,
 	{
@@ -2020,6 +2087,89 @@ mod test {
 
 		for rhs in test_vals {
 			test_constant_xor(test_vals.into_iter(), rhs);
+		}
+	}
+
+	#[test]
+	fn test_constant_store_32() {
+		let values = [0x00_00_00_00, 0xFF_FF_FF_FF_u32 as i32, 0x87_65_43_21_u32 as i32, 0x12_34_56_78, 0x80_00_00_00_u32 as i32, 0x00_00_00_01];
+
+		for i in 1..4 {
+			constant_store_32(&values, 0x01_02_03_04_05_06_07_08, i);
+		}
+
+		for i in 1..4 {
+			constant_store_32(&values, 0xF1_F2_F3_F4_F5_F6_F7_F8_u64 as i64, i);
+		}
+	}
+
+	fn constant_store_32(values: &[i32], before: i64, offset: i32) {
+		let dst = Register::return_lo(0);
+
+		let src = Register::work_lo(0, 0);
+
+		let mut code = Vec::new();
+		let mut const_pool = HashSet::new();
+
+		mem_store_unaligned_32(src, offset, offset, &mut code, &mut const_pool);
+
+		let func = parse_function("wasmrunner:test_constant_memory_store", &code);
+		let func_id = func.id.clone();
+		let program = vec![func];
+
+		let mut interp = Interpreter::new(program, 0);
+
+		interp.scoreboard.0.insert(Objective::new("reg".to_string()).unwrap(), Default::default());
+
+		for c in const_pool {
+			let (holder, obj) = Register::const_val(c).scoreboard_pair();
+			interp.scoreboard.set(&holder, &obj, c);
+		}
+
+		let (x0, y0, z0) = get_address_pos(0);
+		let (x1, y1, z1) = get_address_pos(4);
+
+		let v0 = before as i32;
+		let v1 = (before >> 32) as i32;
+
+		let c0 = format!("setblock {x0} {y0} {z0} minecraft:jukebox{{RecordItem:{{id:\"minecraft:stone\",Count:1b,tag:{{Memory:{v0}}}}}}}").parse::<Command>().unwrap();
+		let c1 = format!("setblock {x1} {y1} {z1} minecraft:jukebox{{RecordItem:{{id:\"minecraft:stone\",Count:1b,tag:{{Memory:{v1}}}}}}}").parse::<Command>().unwrap();
+
+		interp.execute_cmd(&c0).unwrap();
+		interp.execute_cmd(&c1).unwrap();
+
+		let d0 = format!("execute store result score {dst} run data get block {x0} {y0} {z0} RecordItem.tag.Memory 1").parse::<Command>().unwrap();
+		let d1 = format!("execute store result score {dst} run data get block {x1} {y1} {z1} RecordItem.tag.Memory 1").parse::<Command>().unwrap();
+
+		let (src_holder, src_obj) = src.scoreboard_pair();
+		let (dst_holder, dst_obj) = dst.scoreboard_pair();
+		for src_val in values {
+			interp.scoreboard.set(&src_holder, &src_obj, *src_val);
+
+			let interp_idx = interp.get_func_idx(&func_id);
+			interp.set_pos(interp_idx);
+			interp.run_to_end().unwrap();
+
+			interp.execute_cmd(&d0).unwrap();
+			let m0 = interp.scoreboard.get(&dst_holder, &dst_obj).unwrap();
+			interp.execute_cmd(&d1).unwrap();
+			let m1 = interp.scoreboard.get(&dst_holder, &dst_obj).unwrap();
+			
+			let actual = ((m1 as i64) << 32) | (m0 as u32 as i64);
+
+			let mut expected = before;
+			expected &= !(0xFF_FF_FF_FF_i64 << (offset * 8));
+			expected |= (*src_val as u32 as i64) << (offset * 8);
+
+			if expected != actual {
+				eprintln!("Code:");
+				for c in code.iter() {
+					eprintln!("    {}", c);
+				}
+				eprintln!("Actual: {:#X}", actual);
+				eprintln!("Expected: {:#X}", expected);
+				panic!("actual and expected values differed");
+			}
 		}
 	}
 }

@@ -412,6 +412,8 @@ impl<'a> From<&'a [u8]> for WasmFile<'a> {
             functions.add_function(func);
         }
 
+        println!("{:?}", exports);
+
         WasmFile { functions, memory, globals, exports, imports, types, tables, data, elements, bodies: codes }
     }
 }

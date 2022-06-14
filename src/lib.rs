@@ -17,7 +17,7 @@ enum CodegenStage {
 
 const CODEGEN_STAGE: CodegenStage = CodegenStage::Datapack;
 
-const RUN_PROGRAM: bool = false;
+const RUN_PROGRAM: bool = true;
 
 pub fn run(path: &str, output_path: &str) {
 	let bytes = std::fs::read(path).unwrap();

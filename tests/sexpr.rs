@@ -84,7 +84,7 @@ impl Iterator for SExprLexer<'_> {
 
             let mut value = u64::from_str_radix(&s, radix).unwrap_or_else(|e| panic!("Failed to parse {} because {}", &s, e)) as i64;
             if is_neg {
-                value *= -1;
+                value = value.wrapping_mul(-1);
             }
 
             Some(SExprToken::IntLit(value))
