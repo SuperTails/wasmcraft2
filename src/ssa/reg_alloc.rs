@@ -14,6 +14,8 @@ pub trait RegAlloc {
 	fn get_const(&mut self, val: i32) -> Register;
 
 	fn get_temp(&mut self) -> Register;
+
+	fn get_temp_double(&mut self) -> DoubleRegister;
 }
 
 pub struct NoopRegAlloc {
@@ -42,6 +44,12 @@ impl RegAlloc for NoopRegAlloc {
 
 	fn get_temp(&mut self) -> Register {
 		let reg = Register::temp_lo(self.temp);
+		self.temp += 1;
+		reg
+	}
+
+	fn get_temp_double(&mut self) -> DoubleRegister {
+		let reg = DoubleRegister::temp(self.temp);
 		self.temp += 1;
 		reg
 	}
@@ -321,6 +329,12 @@ impl RegAlloc for FullRegAlloc {
 
 	fn get_temp(&mut self) -> Register {
 		let reg = Register::temp_lo(self.temp);
+		self.temp += 1;
+		reg
+	}
+
+	fn get_temp_double(&mut self) -> DoubleRegister {
+		let reg = DoubleRegister::temp(self.temp);
 		self.temp += 1;
 		reg
 	}

@@ -366,17 +366,32 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 				};
 
 				let t = ra.get_temp();
+				let t2 = ra.get_temp_double();
 
-				let i64_mul = |dst, lhs: DoubleRegister, rhs: DoubleRegister, block: &mut Vec<LirInstr>| {
-					block.push(LirInstr::MulTo64(dst, lhs.lo(), rhs.lo()));
+				let i64_mul = |dst: DoubleRegister, lhs: DoubleRegister, rhs: DoubleRegister, block: &mut Vec<LirInstr>| {
+					let new_dst = if dst == lhs || dst == rhs {
+						t2
+					} else {
+						dst
+					};
+
+					assert_ne!(new_dst, lhs);
+					assert_ne!(new_dst, rhs);
+
+					block.push(LirInstr::MulTo64(new_dst, lhs.lo(), rhs.lo()));
 
 					block.push(LirInstr::Assign(t, lhs.lo()));
 					block.push(LirInstr::Mul(t, rhs.hi()));
-					block.push(LirInstr::Add(dst.hi(), t));
+					block.push(LirInstr::Add(new_dst.hi(), t));
 
 					block.push(LirInstr::Assign(t, lhs.hi()));
 					block.push(LirInstr::Mul(t, rhs.lo()));
-					block.push(LirInstr::Add(dst.hi(), t));
+					block.push(LirInstr::Add(new_dst.hi(), t));
+
+					if dst != new_dst {
+						block.push(LirInstr::Assign(dst.lo(), new_dst.lo()));
+						block.push(LirInstr::Assign(dst.hi(), new_dst.hi()));
+					}
 				};
 
 				do_binop(dst, lhs, rhs, &mut block, ra, i32_mul, i64_mul);
