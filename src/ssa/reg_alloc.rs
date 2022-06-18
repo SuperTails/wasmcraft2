@@ -5,13 +5,15 @@ use crate::{lir::{Register, DoubleRegister}, ssa::liveness::print_live_ranges};
 use super::{SsaFunction, SsaVar, liveness::{NoopLivenessInfo, LivenessInfo, FullLivenessInfo}, TypedSsaVar, BlockId};
 
 pub trait RegAlloc {
-	fn analyze(ssa_func: &SsaFunction) -> Self;
+	//fn analyze(ssa_func: &SsaFunction) -> Self;
 
 	fn get(&self, val: SsaVar) -> Register;
 
 	fn get_double(&self, val: SsaVar) -> DoubleRegister;
 
 	fn get_const(&mut self, val: i32) -> Register;
+
+	fn get_double_const(&mut self, val: i64) -> DoubleRegister;
 
 	fn get_temp(&mut self) -> Register;
 
@@ -24,11 +26,13 @@ pub struct NoopRegAlloc {
 	temp: u32,
 }
 
-impl RegAlloc for NoopRegAlloc {
-	fn analyze(func: &SsaFunction) -> Self {
+impl NoopRegAlloc {
+	pub fn analyze(func: &SsaFunction) -> Self {
 		NoopRegAlloc { const_pool: HashSet::new(), func: func.iter().next().unwrap().0.func as u32, temp: 1000 }
 	}
+}
 
+impl RegAlloc for NoopRegAlloc {
 	fn get(&self, val: SsaVar) -> Register {
 		Register::work_lo(self.func, val.0)
 	}
@@ -40,6 +44,12 @@ impl RegAlloc for NoopRegAlloc {
 	fn get_const(&mut self, val: i32) -> Register {
 		self.const_pool.insert(val);
 		Register::const_val(val)
+	}
+
+	fn get_double_const(&mut self, val: i64) -> DoubleRegister {
+		self.const_pool.insert(val as i32);
+		self.const_pool.insert((val >> 32) as i32);
+		DoubleRegister::const_val(val)
 	}
 
 	fn get_temp(&mut self) -> Register {
@@ -284,8 +294,8 @@ fn try_merge(sets: &mut RegisterSet, block_id: BlockId, instr_idx: usize, dst: &
 
 }
 
-impl RegAlloc for FullRegAlloc {
-	fn analyze(func: &SsaFunction) -> Self {
+impl FullRegAlloc {
+	pub fn analyze(func: &SsaFunction) -> Self {
 		let interf_graph = InterfGraph::new(func);
 
 		println!("Interference graph: {:?}", interf_graph);
@@ -311,7 +321,9 @@ impl RegAlloc for FullRegAlloc {
 
 		FullRegAlloc { const_pool: HashSet::new(), set: sets, func: func.func_id(), temp: 1000 }
 	}
+}
 
+impl RegAlloc for FullRegAlloc {
 	fn get(&self, val: SsaVar) -> Register {
 		let rep = self.set.get_rep(val).0;
 		Register::work_lo(self.func, rep as u32)
@@ -325,6 +337,12 @@ impl RegAlloc for FullRegAlloc {
 	fn get_const(&mut self, val: i32) -> Register {
 		self.const_pool.insert(val);
 		Register::const_val(val)
+	}
+
+	fn get_double_const(&mut self, val: i64) -> DoubleRegister {
+		self.const_pool.insert(val as i32);
+		self.const_pool.insert((val >> 32) as i32);
+		DoubleRegister::const_val(val)
 	}
 
 	fn get_temp(&mut self) -> Register {
