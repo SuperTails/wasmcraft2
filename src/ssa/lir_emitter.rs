@@ -761,9 +761,9 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 
 				match jump_mode() {
 					JumpMode::Direct => {
-						if call_graph.table_is_single_tick(*table_index) {
+						if call_graph.table_is_only_single_tick(*table_index) {
 							block.push(LirInstr::CallIndirect { table_index: *table_index, table_entry })
-						} else {
+						} else if call_graph.table_is_only_multi_tick(*table_index) {
 							let next_block_id = builder.alloc_block_id();
 
 							block.push(LirInstr::PushReturnAddr(next_block_id));
@@ -776,8 +776,33 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 
 							builder.push(block_id, block, LirTerminator::JumpTable { arms, default: None, cond: table_entry });
 
-
 							block_id = next_block_id;
+							block = Vec::new();
+						} else {
+							let continued_block_idx = builder.alloc_block_id();
+
+							block.push(LirInstr::PushReturnAddr(continued_block_idx));
+
+							let arms = parent.tables[*table_index as usize].elements.iter().map(|elem| {
+								elem.map(|func_idx| {
+									if call_graph.is_single_tick(func_idx as u32) {
+										let trampoline_id = builder.alloc_block_id();
+										let trampoline = vec![
+											LirInstr::Call { func: func_idx as u32 },
+											LirInstr::PopReturnAddr, // we can pop it because it's always guaranteed to be continued_block_idx
+										];
+										builder.push(trampoline_id, trampoline, LirTerminator::Jump(continued_block_idx));
+
+										trampoline_id
+									} else {
+										BlockId { func: func_idx, block: 0 }
+									}
+								})
+							}).collect();
+
+							builder.push(block_id, block, LirTerminator::JumpTable { arms, default: None, cond: table_entry });
+
+							block_id = continued_block_idx;
 							block = Vec::new();
 						}
 					}
@@ -1140,7 +1165,7 @@ fn gen_prologue(ssa_func: &SsaFunction, ssa_program: &SsaProgram, ra: &mut dyn R
 }
 
 fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &CallGraph, constant_pool: &mut HashSet<i32>) -> LirFunction {
-	let mut reg_alloc = FullRegAlloc::analyze(&ssa_func);
+	let mut reg_alloc = NoopRegAlloc::analyze(ssa_func);
 
 	let mut builder = LirFuncBuilder::new(ssa_func);
 

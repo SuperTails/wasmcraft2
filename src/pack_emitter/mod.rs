@@ -165,6 +165,10 @@ fn push_return_addr(addr: BlockId, code: &mut Vec<String>) {
 	code.push("data modify storage wasm:returnstack stack set from storage wasm:scratch stack".to_string());
 }
 
+fn pop_return_addr(code: &mut Vec<String>) {
+	code.push("data modify storage wasm:returnstack stack set from storage wasm:returnstack stack.tail".to_string());
+}
+
 fn push_data(regs: &[Register], code: &mut Vec<String>) {
 	let arr = create_array_with_consts(regs);
 	code.push(format!("data modify storage wasm:scratch stack.data set value {arr}"));
@@ -1574,9 +1578,10 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 
 				let table = &parent.tables[table_index as usize];
 				for (idx, arm) in table.elements.iter().enumerate() {
-					let arm = arm.unwrap();
-					let arm_func = get_mc_id(BlockId { func: arm, block: 0 });
-					code.push(format!("execute if score {cond_taken} matches 0 run execute if score {table_entry} matches {idx} run function {arm_func}"));
+					if let Some(arm) = arm {
+						let arm_func = get_mc_id(BlockId { func: *arm, block: 0 });
+						code.push(format!("execute if score {cond_taken} matches 0 run execute if score {table_entry} matches {idx} run function {arm_func}"));
+					}
 				}
 			} else {
 				todo!()
@@ -1609,6 +1614,9 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 
 		&LirInstr::PushReturnAddr(block_id) => {
 			push_return_addr(block_id, code);
+		}
+		&LirInstr::PopReturnAddr => {
+			pop_return_addr(code);
 		}
 
 		LirInstr::TurtleSetX(x) => {
@@ -1695,6 +1703,8 @@ fn emit_block(block_id: BlockId, block: &LirBasicBlock, parent: &LirProgram, con
 					let default_func = get_mc_id(default);
 
 					code.push(format!("execute if score {cond_taken} matches 0 run function {default_func}"));
+				} else {
+					code.push(format!("# !INTERPRETER: ASSERT unless score {cond_taken} matches 0"));
 				}
 			} else {
 				todo!()

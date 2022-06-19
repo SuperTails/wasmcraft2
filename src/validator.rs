@@ -1280,7 +1280,8 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 	println!("{:?}", state.validator.control_stack);
 	println!("{:?}\n", state.validator.value_stack);
 
-	let (_, mut blocks) = state.builder.finish();
+	let (_, blocks) = state.builder.finish();
+
 	for (_block_idx, (block_id, block)) in blocks.iter().enumerate() {
 		println!("==== block {:?} ==== ", block_id);
 		println!("parameters: {:?}", block.params);

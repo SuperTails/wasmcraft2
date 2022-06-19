@@ -305,6 +305,7 @@ pub enum LirInstr {
 	PrintInt(Register),
 
 	PushReturnAddr(BlockId),
+	PopReturnAddr,
 }
 
 impl LirInstr {

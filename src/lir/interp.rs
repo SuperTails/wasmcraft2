@@ -529,6 +529,9 @@ impl LirInterpreter {
 			LirInstr::PushReturnAddr(block_id) => {
 				self.return_stack.push(Some(*block_id));
 			}
+			LirInstr::PopReturnAddr => {
+				self.return_stack.pop().unwrap();
+			}
 
 			LirInstr::TurtleSetX(_) |
 			LirInstr::TurtleSetY(_) |

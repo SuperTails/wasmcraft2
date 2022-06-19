@@ -1,4 +1,5 @@
 use command_parser::CommandParse;
+use datapack_common::functions::command_components::NbtPath;
 
 use crate::{validator::wasm_to_ssa, ssa::lir_emitter, lir::interp::LirInterpreter};
 
@@ -18,6 +19,8 @@ enum CodegenStage {
 const CODEGEN_STAGE: CodegenStage = CodegenStage::Datapack;
 
 const RUN_PROGRAM: bool = true;
+
+const PRINT_OUTPUT: bool = false;
 
 pub fn run(path: &str, output_path: &str) {
 	let bytes = std::fs::read(path).unwrap();
@@ -61,12 +64,14 @@ pub fn run(path: &str, output_path: &str) {
 		}
 	}*/
 
-	for func in datapack.iter() {
-		println!("-------- func {} --------", func.id);
-		for cmd in func.cmds.iter() {
-			println!("\t{}", cmd);
+	if PRINT_OUTPUT {
+		for func in datapack.iter() {
+			println!("-------- func {} --------", func.id);
+			for cmd in func.cmds.iter() {
+				println!("\t{}", cmd);
+			}
+			println!();
 		}
-		println!();
 	}
 
 	pack_emitter::persist_program(std::path::Path::new(output_path), &datapack);
@@ -86,7 +91,33 @@ pub fn run(path: &str, output_path: &str) {
 		let interp_idx = interp.get_func_idx(&func_name);
 		interp.set_pos(interp_idx);
 
-		dbg!(interp.run_to_end());
+		while !interp.halted() {
+			let result = interp.step();
+			if let Err(result) = result {
+				println!("ERR: {:?}", result);
+				break
+			}
+
+			if interp.call_stack_depth() == 0 {
+				let name = "wasm:returnstack".to_string();
+				let path: NbtPath = command_parser::parse_command("stack.data").unwrap();
+				if interp.nbt_storage.contains_path(&name, &path) {
+					println!("return stack was not empty");
+					break;
+				}
+			}
+		}
+
+		println!("Call stack:");
+		for entry in interp.call_stack() {
+			print!("{{ {}, {} }},", entry.0.id, entry.1);
+		}
+		println!();
+
+		println!("NBT Storage:");
+		for (key, value) in interp.nbt_storage.0.iter() {
+			println!("{key}: {value}");
+		}
 
 		let mut traces = interp.indiv_time.into_iter().collect::<Vec<_>>();
 		traces.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
@@ -98,6 +129,8 @@ pub fn run(path: &str, output_path: &str) {
 		}
 	}
 }
+
+// TODO: Test mixed-tick tables
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum JumpMode {
