@@ -313,7 +313,7 @@ use wasmparser::Type;
 				let mc_func_name = format!("wasmrunner:{func_name}");
 				let (_, mc_func_name) = FunctionIdent::parse_from_command(&mc_func_name).unwrap();
 
-				println!("Calling func {mc_func_name} with params {:?}", func_params);
+				println!("Calling func {mc_func_name} ({func_idx}) with params {:?}", func_params);
 
 				let interp_idx = test_state.interp.get_func_idx(&mc_func_name);
 				test_state.interp.set_pos(interp_idx);

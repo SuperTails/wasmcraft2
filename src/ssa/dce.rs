@@ -13,7 +13,7 @@ pub fn do_dead_code_elim(program: &mut SsaProgram) {
 		}
 	}
 
-
+	/*
 	for func in program.code.iter_mut() {
 		// Safe to precalculate it once because DCE doesn't change overall control-flow.
 		let pred_info = super::liveness::PredInfo::new(func);
@@ -47,6 +47,7 @@ pub fn do_dead_code_elim(program: &mut SsaProgram) {
 
 		println!("Did DCE on {}", func.func_id());
 	}
+	*/
 }
 
 fn remove_from_target(block_id: BlockId, child: BlockId, block: &mut SsaBasicBlock, mut indices: &[usize]) {

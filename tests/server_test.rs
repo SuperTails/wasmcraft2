@@ -116,6 +116,8 @@ async fn load_state_async<'a>(wasm_data: &'a [u8]) -> TestState<'a> {
 
 	let resp = server.cmd("reload").await.unwrap();
 	println!("{:?}", resp);
+	let resp = server.cmd("gamerule maxCommandChainLength 10000000").await.unwrap();
+	println!("{:?}", resp);
 	let resp = server.cmd("function wasmrunner:init").await.unwrap();
 	println!("{:?}", resp);
 

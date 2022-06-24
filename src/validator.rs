@@ -1434,7 +1434,7 @@ pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {
 
 	crate::ssa::const_prop::do_const_prop(&mut program);
 
-	//crate::ssa::dce::do_dead_code_elim(&mut program);
+	crate::ssa::dce::do_dead_code_elim(&mut program);
 
 	for func in program.code.iter() {
 		validate_ssa_jump_params(func);
