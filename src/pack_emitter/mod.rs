@@ -116,6 +116,15 @@ fn create_globals_init(globals: &[TypedValue], code: &mut Vec<String>) {
 	}
 }
 
+fn create_return_addrs_init<I>(blocks: I, code: &mut Vec<String>)
+	where I: Iterator<Item=BlockId>
+{
+	for (idx, block) in blocks.enumerate() {
+		let addr_var = get_block_addr_var(block);
+		code.push(format!("scoreboard players set {addr_var} {idx}"))
+	}
+}
+
 // init code:
 // create objectives
 // set up globals
@@ -123,6 +132,7 @@ fn create_globals_init(globals: &[TypedValue], code: &mut Vec<String>) {
 // reset local stack
 // reset data stack
 // initialize constants
+// initialize "return address" constants
 fn create_init_func(program: &LirProgram, constants: &HashSet<i32>) -> Function {
 	let mut code = Vec::new();
 
@@ -132,11 +142,14 @@ fn create_init_func(program: &LirProgram, constants: &HashSet<i32>) -> Function 
 	create_constants_init(constants, &mut code);
 	create_memory_init(&program.memory, &mut code);
 	create_globals_init(&program.globals, &mut code);
+	create_return_addrs_init(program.all_block_ids(), &mut code);
 
 	parse_function("wasmrunner:init", code)
 }
 
-fn create_return_to_saved_func(program: &LirProgram) -> Function {
+fn create_return_to_saved_func(program: &LirProgram) -> Vec<Function> {
+	let num_blocks = program.all_block_ids().count();
+
 	let reg = Register::temp_lo(0);
 	
 	let mut code = Vec::new();
@@ -145,22 +158,74 @@ fn create_return_to_saved_func(program: &LirProgram) -> Function {
 	let cond_taken = Register::cond_taken();
 	code.push(format!("scoreboard players set {cond_taken} 0"));
 	code.push("data modify storage wasm:scratch stack.data set from storage wasm:returnstack stack.data".to_string());
+	code.push(format!("execute store result score {reg} run data get storage wasm:returnstack stack.data.ptr 1"));
 	code.push("data modify storage wasm:returnstack stack set from storage wasm:returnstack stack.tail".to_string());
-	for block_id in program.all_block_ids() {
+
+	/*for block_id in program.all_block_ids() {
 		let addr_str = get_mc_id(block_id);
 		code.push(format!("execute if score {cond_taken} matches 0 if data storage wasm:scratch stack.data.'{addr_str}' run function {addr_str}"));
-	}
+	}*/
 
+	let blocks = program.all_block_ids().enumerate().collect::<Vec<_>>();
+
+	let mut funcs = Vec::new();
+	create_nested_return_func(reg, &blocks, &mut funcs);
+
+	let func_name = format!("wasmrunner:__return_to_saved_{}", funcs.len() - 1);
+
+	code.push(format!("function {func_name}"));
 	code.push(format!("scoreboard players set {cond_taken} 1"));
 
-	parse_function("wasmrunner:__return_to_saved", &code)
+	let func = parse_function("wasmrunner:__return_to_saved", &code);
+	funcs.push(func);
+	return funcs
+}
+
+fn create_nested_return_func(cond: Register, values: &[(usize, BlockId)], funcs: &mut Vec<Function>) {
+	let cond_taken = Register::cond_taken();
+
+	let mut code = Vec::new();
+
+	if values.len() == 0 {
+		panic!("nested return func was empty");
+	} else if values.len() == 1 {
+		let (addr, block_id) = values[0];
+		let func = get_mc_id(block_id);
+		code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {addr} run function {func}"));
+	} else if values.len() == 2 {
+		let (addr0, block_id0) = values[0];
+		let func0 = get_mc_id(block_id0);
+		code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {addr0} run function {func0}"));
+		let (addr1, block_id1) = values[1];
+		let func1 = get_mc_id(block_id1);
+		code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {addr1} run function {func1}"));
+	} else {
+		create_nested_return_func(cond, &values[..values.len() / 2], funcs);
+		let func_name_lesser = format!("wasmrunner:__return_to_saved_{}", funcs.len() - 1);
+
+		create_nested_return_func(cond, &values[values.len() / 2 + 1..], funcs);
+		let func_name_greater = format!("wasmrunner:__return_to_saved_{}", funcs.len() - 1);
+
+		let (addr_mid, block_id_mid) = values[values.len() / 2];
+		let func_mid = get_mc_id(block_id_mid);
+
+		code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches ..{} run function {func_name_lesser}", addr_mid - 1));
+		code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {} run function {func_mid}", addr_mid));
+		code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {}.. run function {func_name_greater}", addr_mid + 1));
+	}
+
+	let func_name = format!("wasmrunner:__return_to_saved_{}", funcs.len());
+	let func = parse_function(&func_name, &code);
+	funcs.push(func);
 }
 
 fn push_return_addr(addr: BlockId, code: &mut Vec<String>) {
 	let addr_str = get_mc_id(addr);
+	let addr_var = get_block_addr_var(addr);
 
 	code.push("data modify storage wasm:scratch stack.data set value {}".to_string());
 	code.push(format!("data modify storage wasm:scratch stack.data.'{addr_str}' set value 1"));
+	code.push(format!("execute store result storage wasm:scratch stack.data.ptr int 1 run scoreboard players get {}", addr_var));
 	code.push("data modify storage wasm:scratch stack.tail set from storage wasm:returnstack stack".to_string());
 	code.push("data modify storage wasm:returnstack stack set from storage wasm:scratch stack".to_string());
 }
@@ -241,6 +306,12 @@ fn local_get(dst: Register, src: u32, half: Half, code: &mut Vec<String>) {
 
 pub fn get_mc_id(block_id: BlockId) -> String {
 	format!("wasmrunner:wasm_{}_{}", block_id.func, block_id.block)
+}
+
+/// To avoid needing to do fixups, each block has its "address"
+/// stored in a variable with a name based on the block_id.
+pub fn get_block_addr_var(block_id: BlockId) -> String {
+	format!("%%returnaddr_wasm_{}_{} reg", block_id.func, block_id.block)
 }
 
 fn mem_store_unaligned_32(src: Register, addr: i32, offset: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
@@ -1821,7 +1892,7 @@ pub fn emit_program(lir_program: &LirProgram) -> Vec<Function> {
 	result.push(init_func);
 
 	let return_to_saved = create_return_to_saved_func(lir_program);
-	result.push(return_to_saved);
+	result.extend(return_to_saved);
 
 	add_export_funcs(&lir_program.exports, &mut result);
 
