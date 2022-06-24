@@ -4,7 +4,7 @@ use super::{SsaProgram, SsaBasicBlock, TypedSsaVar, interp::TypedValue, SsaInstr
 
 pub fn do_const_prop(program: &mut SsaProgram) {
 	for func in program.code.iter_mut() {
-		for (_, block) in func.code.iter_mut() {
+		for (_, block) in func.iter_mut() {
 			do_block_const_prop(block);
 		}
 	}

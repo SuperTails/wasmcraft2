@@ -92,7 +92,7 @@ fn get_direct_calls(program: &SsaProgram) -> HashMap<u32, HashSet<u32>> {
 
 // Returns an iterator over the function IDs that this function can call using call instructions
 fn iter_direct_calls<'a>(func: &'a SsaFunction) -> impl Iterator<Item=u32> + 'a {
-	func.code.iter().flat_map(|(_, block)| {
+	func.iter().flat_map(|(_, block)| {
 		block.body.iter().filter_map(|instr| {
 			if let SsaInstr::Call { function_index, .. } = instr {
 				Some(*function_index)
@@ -105,7 +105,7 @@ fn iter_direct_calls<'a>(func: &'a SsaFunction) -> impl Iterator<Item=u32> + 'a 
 
 // Returns an iterator over the table IDs that this function uses in call_indirect instructions 
 fn iter_indirect_tables<'a>(func: &'a SsaFunction) -> impl Iterator<Item=u32> + 'a {
-	func.code.iter().flat_map(|(_, block)| {
+	func.iter().flat_map(|(_, block)| {
 		block.body.iter().filter_map(|instr| {
 			if let SsaInstr::CallIndirect { table_index, .. } = instr {
 				Some(*table_index)
@@ -129,7 +129,7 @@ fn iter_all_calls<'a>(program: &'a SsaProgram, func: &'a SsaFunction) -> impl It
 }
 
 fn contains_scheduled_jump(func: &SsaFunction) -> bool {
-	func.code.iter().any(|(_, block)| {
+	func.iter().any(|(_, block)| {
 		matches!(block.term, SsaTerminator::ScheduleJump { .. } )
 	})
 }

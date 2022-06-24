@@ -170,7 +170,7 @@ pub struct SsaInterpreter {
 
 impl SsaInterpreter {
 	pub fn new(program: SsaProgram) -> Self {
-		let code = program.code.into_iter().flat_map(|f| f.code.into_iter()).collect();
+		let code = program.code.into_iter().flat_map(|f| f.iter().map(|(i, b)| (i, (*b).clone())).collect::<Vec<_>>()).collect();
 
 		Self {
 			local_types: program.local_types,

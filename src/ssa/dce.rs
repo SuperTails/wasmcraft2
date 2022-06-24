@@ -1,29 +1,33 @@
 use std::collections::HashSet;
 
-use super::{SsaProgram, liveness::{LivenessInfo, FullLivenessInfo, get_predecessors}, BlockId, SsaBasicBlock, SsaFunction, SsaTerminator};
+use super::{SsaProgram, liveness::{LivenessInfo, FullLivenessInfo}, BlockId, SsaBasicBlock, SsaFunction, SsaTerminator};
 
 pub fn do_dead_code_elim(program: &mut SsaProgram) {
 	for func in program.code.iter_mut() {
 		let live_info = FullLivenessInfo::analyze(func);
 		
-		for (block_id, block) in func.code.iter_mut() {
-			let changes = get_dce_changes(*block_id, block, &live_info);
+		for (block_id, block) in func.iter_mut() {
+			let changes = get_dce_changes(block_id, block, &live_info);
 
 			apply_changes(block, &changes);
 		}
 	}
 
+
 	for func in program.code.iter_mut() {
+		// Safe to precalculate it once because DCE doesn't change overall control-flow.
+		let pred_info = super::liveness::PredInfo::new(func);
+
 		let mut changed = true;
 		while changed {
 			changed = false;
 
 			let live_info = FullLivenessInfo::analyze(func);
 
-			let ids = func.code.iter().map(|(i, _)| *i).collect::<Vec<_>>();
+			let ids = func.iter().map(|(i, _)| i).collect::<Vec<_>>();
 
 			for block_id in ids {
-				let block_ids = get_predecessors(func, block_id).into_iter().collect::<HashSet<_>>();
+				let block_ids = pred_info.get_predecessors(block_id).iter().copied().collect::<HashSet<_>>();
 
 				let block = func.get_mut(block_id);
 				let indices_to_remove = get_param_dce_indices(block_id, block, &live_info);
@@ -40,6 +44,8 @@ pub fn do_dead_code_elim(program: &mut SsaProgram) {
 				}
 			}
 		}
+
+		println!("Did DCE on {}", func.func_id());
 	}
 }
 

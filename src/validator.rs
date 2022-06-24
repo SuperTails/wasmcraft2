@@ -1172,13 +1172,16 @@ impl ValidationState<'_> {
 					let mut true_params = builder.current_locals.clone();
 					true_params.extend(label_vals.iter().copied());
 
+					let mut false_params = builder.current_locals.clone();
+					false_params.extend(label_vals.iter().copied());
+
+					assert_eq!(true_params, false_params);
+
 					let true_target = JumpTarget {
 						label: true_label,
 						params: true_params,
 					};
 
-					let mut false_params = builder.current_locals.clone();
-					false_params.extend(label_vals.iter().copied());
 
 					let false_target = JumpTarget {
 						label: next_block,
@@ -1319,7 +1322,7 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 		}
 	}*/
 
-	SsaFunction { code: blocks, params: func_ty.params.clone(), returns: func_ty.returns.clone() }
+	SsaFunction::new(blocks, func_ty.params.clone(), func_ty.returns.clone())
 }
 
 pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {
@@ -1431,7 +1434,7 @@ pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {
 
 	crate::ssa::const_prop::do_const_prop(&mut program);
 
-	crate::ssa::dce::do_dead_code_elim(&mut program);
+	//crate::ssa::dce::do_dead_code_elim(&mut program);
 
 	for func in program.code.iter() {
 		validate_ssa_jump_params(func);

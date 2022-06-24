@@ -1,4 +1,4 @@
-use std::{collections::{HashSet, HashMap}, ops::RangeInclusive, fmt};
+use std::{collections::{HashSet, HashMap}, ops::RangeInclusive};
 
 use super::{TypedSsaVar, SsaFunction, BlockId, SsaBasicBlock};
 
@@ -43,14 +43,22 @@ fn simplify_range_list(list: &mut Vec<RangeInclusive<usize>>) {
 
 #[derive(Debug, Clone)]
 pub struct BlockLiveRange {
+	/// The set of all predecessor blocks from which this variable is used as an input parameter.
+	pub live_in_params: HashSet<BlockId>,
+	/// If true, this variable comes from a predecessor block but is not solely an input parameter.
 	pub live_in: bool,
-	/// This *includes* the instruction that creates/kills the variable!
+	/// The range of instructions for which this variable is in the live_in set.
+	/// Thus, this excludes the instruction that creates the variable.
+	/// Thus, if this includes index 0, it must be either a parameter's output or come from a predecessor block directly.
 	pub body: Vec<RangeInclusive<usize>>,
+	/// True if this variable is used in any successor block. This can mean it is either an input parameter or directly used.
 	pub live_out: bool,
 }
 
 impl BlockLiveRange {
 	pub fn merge(&mut self, other: &BlockLiveRange) {
+		self.live_in_params.extend(other.live_in_params.iter().copied());
+
 		self.live_in |= other.live_in;
 
 		self.body.extend(other.body.iter().cloned());
@@ -59,9 +67,35 @@ impl BlockLiveRange {
 		self.live_out |= other.live_out;
 	}
 
+	/*pub fn is_live_into(&self, instr_idx: usize) -> bool {
+		if instr_idx == 0 {
+			self.live_in
+		} else {
+			for range in self.body.iter() {
+				if range.contains(&(instr_idx - 1)) {
+					return true
+				}
+			}
+			false
+		}
+	}*/
+
 	pub fn overlap(&self, other: &BlockLiveRange) -> BlockLiveRange {
 		let live_in = self.live_in && other.live_in;
 		let live_out = self.live_out && other.live_out;
+
+		let live_in_params;
+		if !live_in {
+			if self.live_in {
+				live_in_params = other.live_in_params.clone();
+			} else if other.live_in {
+				live_in_params = self.live_in_params.clone();
+			} else {
+				live_in_params = HashSet::new();
+			}
+		} else {
+			live_in_params = self.live_in_params.intersection(&other.live_in_params).copied().collect();
+		}
 
 		let mut body = Vec::new();
 
@@ -75,14 +109,14 @@ impl BlockLiveRange {
 
 		simplify_range_list(&mut body);
 
-		BlockLiveRange { live_in, body, live_out }
+		BlockLiveRange { live_in_params, live_in, body, live_out }
 	}
 
 	pub fn is_empty(&self) -> bool {
 		if self.live_in || self.live_out {
 			false
 		} else {
-			self.body.is_empty()
+			self.body.is_empty() && self.live_in_params.is_empty()
 		}
 	}
 }
@@ -91,6 +125,10 @@ impl BlockLiveRange {
 pub struct LiveRange(pub HashMap<BlockId, BlockLiveRange>);
 
 impl LiveRange {
+	pub fn is_empty(&self) -> bool {
+		self.0.values().all(|r| r.is_empty())
+	}
+
 	pub fn merge(&mut self, other: LiveRange) {
 		for (id, range) in other.0 {
 			if let Some(r1) = self.0.get_mut(&id) {
@@ -101,7 +139,7 @@ impl LiveRange {
 		}
 	}
 
-	pub fn get_single_point(&self) -> Option<(BlockId, usize)> {
+	/*pub fn get_single_point(&self) -> Option<(BlockId, usize)> {
 		let mut single_points = self.0.iter().filter_map(|(id, b)| {
 			if b.is_empty() || b.live_in || b.live_out || b.body.len() != 1 || b.body[0].clone().count() != 1 {
 				None
@@ -119,7 +157,7 @@ impl LiveRange {
 		} else {
 			None
 		}
-	}
+	}*/
 }
 
 impl LiveRange {
@@ -139,8 +177,12 @@ impl LiveRange {
 pub trait LivenessInfo {
 	fn analyze(func: &SsaFunction) -> Self;
 
+	/// Returns the set of variables that are live-in to the instruction with index `instr`.
+	/// If `instr` is equal to the length of the block's body, the instruction is assumed to be the terminator.
 	fn live_in_body(&self, block: BlockId, instr: usize) -> HashSet<TypedSsaVar>;
 
+	/// Returns the set of variables that are live-out from the instruction with index `instr`.
+	/// If `instr` is equal to the length of the block's body, the instruction is assumed to be the terminator.
 	fn live_out_body(&self, block: BlockId, instr: usize) -> HashSet<TypedSsaVar>;
 
 	fn live_range(&self, _var: TypedSsaVar) -> LiveRange { todo!() }
@@ -207,7 +249,7 @@ pub struct SimpleLivenessInfo(HashMap<BlockId, SimpleBlockLivenessInfo>);
 impl LivenessInfo for SimpleLivenessInfo {
 	fn analyze(func: &SsaFunction) -> Self {
 		let dom_tree = DomTree::analyze(func);
-
+		
 		let mut result = HashMap::new();
 
 		let entry_id = func.entry_point_id();
@@ -250,20 +292,31 @@ impl LivenessInfo for SimpleLivenessInfo {
 }
 
 // Just a list of the variables that are defined at each instruction
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FullBlockLivenessInfo {
+	/// Each entry is the set of variables used as parameters from the corresponding control-flow edge.
+	/// The key is the predecessor of the edge.
+	pub live_in_params: HashMap<BlockId, HashSet<TypedSsaVar>>,
+
+	/// Variables that are live-in from every control-flow edge,
+	/// i.e. ones that are not solely used as parameter inputs.
+	pub live_in_all: HashSet<TypedSsaVar>,
+
+	/// The last index is the live-in to the terminator.
 	pub live_in: Vec<HashSet<TypedSsaVar>>,
-	live_out: HashSet<TypedSsaVar>,
+
+	/// The union of all variables live-out from all control-flow edges.
+	pub live_out: HashSet<TypedSsaVar>,
 }
 
 impl FullBlockLivenessInfo {
-	pub fn new(block: &SsaBasicBlock, parent: &SsaFunction, mut live_out: HashSet<TypedSsaVar>) -> Self {
+	fn new(block_id: BlockId, block: &SsaBasicBlock, parent: &SsaFunction, mut live_out: HashSet<TypedSsaVar>, preds: &PredInfo) -> Self {
 		let live_out2 = live_out.clone();
 
-		let term_defs = block.term.defs(parent);
-		let mut live_in = live_out.iter().copied().filter(|v| !term_defs.contains(v)).collect::<HashSet<_>>();
-		live_in.extend(block.term.uses());
+		// A terminator will never kill a variable, so this is OK.
+		let mut live_in = live_out.iter().copied().chain(block.term.uses()).collect::<HashSet<_>>();
 
+		// This is the live-in to the terminator.
 		let mut live_in_list = vec![live_in.clone()];
 
 		live_out = live_in.clone();
@@ -282,10 +335,22 @@ impl FullBlockLivenessInfo {
 
 		live_in_list.reverse();
 
-		// TODO:
-		//live_in_list[0].extend(block.params.iter().copied());
+		let live_in_all = live_in_list[0].iter().copied().filter(|v| !block.params.contains(v)).collect();
 
-		FullBlockLivenessInfo { live_in: live_in_list, live_out: live_out2 }
+		// TODO: This is not actually minimal, because we don't check if the resulting parameter outputs are actually used.
+		// At worst this only results in dead code, though.
+		let live_in_params = preds.get_predecessors(block_id).iter().map(|&pred_id| {
+			let pred_block = parent.get(pred_id);
+			(pred_id, pred_block.term.params_on_edge(block_id))
+		}).collect();
+
+		FullBlockLivenessInfo { live_in_params, live_in_all, live_in: live_in_list, live_out: live_out2 }
+	}
+
+	/// Returns the set of all live-in variables when coming from a specific predecessor block.
+	pub fn all_live_in_from(&self, pred_id: BlockId) -> HashSet<TypedSsaVar> {
+		let empty = HashSet::new();
+		self.live_in_all.union(self.live_in_params.get(&pred_id).unwrap_or(&empty)).copied().collect()
 	}
 
 	pub fn live_in_body(&self, instr: usize) -> HashSet<TypedSsaVar> {
@@ -301,32 +366,35 @@ impl FullBlockLivenessInfo {
 	}
 
 	pub fn live_range(&self, var: TypedSsaVar) -> BlockLiveRange {
-		let live_in = self.live_in[0].contains(&var);
+		let live_in_params = self.live_in_params.iter().filter_map(|(pred, vars)| {
+			if vars.contains(&var) {
+				Some(*pred)
+			} else {
+				None
+			}
+		}).collect();
+
+		let live_in = self.live_in_all.contains(&var);
 		let live_out = self.live_out.contains(&var);
 
 		let mut body = Vec::new();
 
 		let mut start_idx = None;
 
-		for (idx, live_in) in self.live_in.iter().enumerate().skip(1) {
-			if let Some(si) = start_idx {
-				if !live_in.contains(&var) {
-					body.push(si - 1..=idx - 1);
-					start_idx = None;
-				}
-			} else if live_in.contains(&var) {
+		for (idx, live_in) in self.live_in.iter().enumerate() {
+			if start_idx.is_none() && live_in.contains(&var) {
 				start_idx = Some(idx);
+			} else if start_idx.is_some() && !live_in.contains(&var) {
+				let start = start_idx.take().unwrap();
+				body.push(start..=idx - 1)
 			}
 		}
 
 		if let Some(start_idx) = start_idx {
-			body.push(start_idx - 1..=self.live_in.len() - 1);
-		} else if live_out {
-			// It must be defined by the terminator
-			body.push(self.live_in.len() - 1..=self.live_in.len() - 1);
+			body.push(start_idx..=self.live_in.len() - 1);
 		}
 
-		BlockLiveRange { live_in, body, live_out }
+		BlockLiveRange { live_in_params, live_in, body, live_out }
 	}
 }
 
@@ -335,35 +403,42 @@ pub struct FullLivenessInfo(pub HashMap<BlockId, FullBlockLivenessInfo>);
 
 impl LivenessInfo for FullLivenessInfo {
 	fn analyze(func: &SsaFunction) -> Self {
+		let dom_tree = DomTree::analyze(func);
+		let postorder = dom_tree.get_postorder();
+
 		let mut result = HashMap::new();
 
+		let pred_info = PredInfo::new(func);
+
 		for (block_id, block) in func.iter() {
-			result.insert(block_id, FullBlockLivenessInfo::new(block, func, HashSet::new()));
+			result.insert(block_id, FullBlockLivenessInfo::new(block_id, block, func, HashSet::new(), &pred_info));
 		}
+
+		println!("Got here! {:?} Num blocks: {:?}", func.func_id(), func.iter().count());
 
 		let mut changed = true;
 		while changed {
 			changed = false;
 
-			for (block_id, block) in func.iter() {
+			for block_id in postorder.iter().copied() {
+				let block = func.get(block_id);
+
 				let mut live_out = HashSet::new();
 				for succ in block.term.successors() {
-					let succ_live_in = result.get(&succ).unwrap();
-					live_out.extend(succ_live_in.live_in[0].iter().copied());
+					let succ_liveness = result.get(&succ).unwrap();
+					live_out.extend(succ_liveness.all_live_in_from(block_id));
 				}
 
 				let block_info = result.get(&block_id).unwrap();
 				if block_info.live_out != live_out {
 					changed = true;
-					let new_info = FullBlockLivenessInfo::new(block, func, live_out);
-					/*println!("New info for block {:?}", block_id);
-					println!("LIVE IN:  {:?}", new_info.live_in[0]);
-					println!("LIVE OUT: {:?}", new_info.live_out);
-					println!();*/
+					let new_info = FullBlockLivenessInfo::new(block_id, block, func, live_out, &pred_info);
 					result.insert(block_id, new_info);
 				}
 			}
 		}
+
+		println!("Got here too!");
 
 		FullLivenessInfo(result)
 	}
@@ -407,6 +482,11 @@ pub fn print_liveness_info(li: &FullLivenessInfo, func: &SsaFunction) {
 pub fn print_live_ranges(lr: &[LiveRange], func: &SsaFunction) {
 	for (block_id, block) in func.iter() {
 		println!("------- block {:?} ------", block_id);
+
+		for r in lr.iter() {
+			print!("{:?}, ", r.0.get(&block_id).unwrap().live_in_params);
+		}
+		println!();
 
 		for r in lr.iter() {
 			let r = r.0.get(&block_id).unwrap();
@@ -457,6 +537,35 @@ pub fn get_postorder_impl(func: &SsaFunction, node: BlockId, visited: &mut HashS
 	result.push(node);
 }
 
+#[derive(Debug)]
+pub struct PredInfo(HashMap<BlockId, Vec<BlockId>>);
+
+impl PredInfo {
+	pub fn new(func: &SsaFunction) -> Self {
+		let mut result = HashMap::new();
+
+		for (block_id, _) in func.iter() {
+			// Make sure all blocks have a default.
+			result.insert(block_id, Vec::new());
+		}
+
+		for (pred_id, block) in func.iter() {
+			for succ_id in block.term.successors() {
+				let v = result.entry(succ_id).or_insert_with(Vec::new);
+				if !v.contains(&pred_id) {
+					v.push(pred_id);
+				}
+			}
+		}
+
+		PredInfo(result)
+	}
+
+	pub fn get_predecessors(&self, block_id: BlockId) -> &[BlockId] {
+		self.0.get(&block_id).unwrap()
+	}
+}
+
 pub fn get_predecessors(func: &SsaFunction, node: BlockId) -> Vec<BlockId> {
 	func.iter()
 		.filter_map(|(block_id, block)| {
@@ -481,6 +590,29 @@ pub struct DomTreeNode {
 pub struct DomTree(HashMap<BlockId, DomTreeNode>);
 
 impl DomTree {
+	/// Gets a postorder traversal of the tree, so it will start at the leaf nodes.
+	pub fn get_postorder(&self) -> Vec<BlockId> {
+		let entry_node = *self.0.keys().find(|b| b.block == 0).unwrap();
+
+		let mut stack = vec![(entry_node, 0)];
+
+		let mut result = Vec::new();
+
+		while let Some((node_id, state)) = stack.last_mut() {
+			let node = self.0.get(node_id).unwrap();
+			if node.children.len() == *state {
+				result.push(*node_id);
+				stack.pop();
+			} else {
+				let next_node = node.children[*state];
+				*state += 1;
+				stack.push((next_node, 0));
+			}
+		}
+
+		result
+	}
+
 	pub fn analyze(func: &SsaFunction) -> Self {
 		let postorder = get_postorder(func);
 		assert_eq!(postorder.last(), Some(&func.entry_point_id()));
@@ -494,17 +626,19 @@ impl DomTree {
 
 		let mut changed = true;
 
+		let pred_info = PredInfo::new(func);
+
 		while changed {
 			changed = false;
 			for (b_idx, b) in postorder.iter().enumerate().rev().skip(1) {
-				let preds = get_predecessors(func, *b);
 				// Make sure we only consider reachable blocks
-				let preds = preds.into_iter().filter(|p| doms.contains_key(p)).collect::<Vec<_>>();
+				let preds = pred_info.get_predecessors(*b).iter().filter(|p| doms.contains_key(p)).copied().collect::<Vec<_>>();
 
 				let mut new_idom = *preds.iter().find(|p| {
 					let other_idx = postorder.iter().enumerate().find(|(_, p2)| p2 == p).unwrap().0;
 					other_idx > b_idx
-				}).unwrap();
+				}).unwrap_or_else(|| panic!("{:?} {:?}", b, preds));
+
 				let idom = new_idom;
 
 				for p in preds.iter() {
@@ -518,7 +652,6 @@ impl DomTree {
 				}
 
 				if *doms.get(b).unwrap() != Some(new_idom) {
-					println!("new_idom is now {:?}", new_idom);
 					doms.insert(*b, Some(new_idom));
 					changed = true;
 				}
@@ -612,9 +745,9 @@ mod test {
 			};
 
 			(block_id, block)
-		}).collect();
+		});
 
-		SsaFunction { code, params: Box::new([]), returns: Box::new([]) }
+		SsaFunction::new(code, Box::new([]), Box::new([]))
 	}
 
 	#[test]

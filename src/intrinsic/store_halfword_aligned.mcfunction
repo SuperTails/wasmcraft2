@@ -1,5 +1,3 @@
-# !INTERPRETER: ASSERT if score %%temp0_store_byte reg matches 0..0
-
 function intrinsic:setptr
 
 execute at @e[tag=memoryptr] store result score %param0%0 reg run data get block ~ ~ ~ RecordItem.tag.Memory 1

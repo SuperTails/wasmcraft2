@@ -106,6 +106,14 @@ pub fn run(path: &str, output_path: &str) {
 					break;
 				}
 			}
+
+			if interp.call_stack_depth() == 1 {
+				let top = interp.call_stack_top().unwrap().0;
+				if top.id.namespace == "wasmrunner" && top.id.path == "wasm_8_3" {
+					println!("Panicked!");
+					break;
+				}
+			}
 		}
 
 		println!("Call stack:");

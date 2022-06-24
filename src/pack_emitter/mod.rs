@@ -1574,8 +1574,6 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 
 				code.push(format!("scoreboard players set {cond_taken} 0"));
 
-				// TODO: Should this print some kind of error if none of the cases are matched?
-
 				let table = &parent.tables[table_index as usize];
 				for (idx, arm) in table.elements.iter().enumerate() {
 					if let Some(arm) = arm {
@@ -1583,6 +1581,9 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 						code.push(format!("execute if score {cond_taken} matches 0 run execute if score {table_entry} matches {idx} run function {arm_func}"));
 					}
 				}
+
+				// TODO: Should this also be a tellraw?
+				code.push(format!("# !INTERPRETER: ASSERT unless score {cond_taken} matches 0"))
 			} else {
 				todo!()
 			}

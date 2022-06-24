@@ -1165,11 +1165,13 @@ fn gen_prologue(ssa_func: &SsaFunction, ssa_program: &SsaProgram, ra: &mut dyn R
 }
 
 fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &CallGraph, constant_pool: &mut HashSet<i32>) -> LirFunction {
-	let mut reg_alloc = NoopRegAlloc::analyze(ssa_func);
+	let mut reg_alloc = FullRegAlloc::analyze(ssa_func);
 
 	let mut builder = LirFuncBuilder::new(ssa_func);
 
 	let liveness_info = SimpleLivenessInfo::analyze(ssa_func);
+
+	println!("Lowering func {} to LIR", ssa_func.func_id());
 
 	for (block_id, block) in ssa_func.iter() {
 		lower_block(ssa_program, ssa_func, block_id, block, &mut reg_alloc, &liveness_info, call_graph, &mut builder);

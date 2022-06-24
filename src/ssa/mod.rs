@@ -6,7 +6,7 @@ pub mod const_prop;
 pub mod dce;
 pub mod reg_alloc;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use wasmparser::{Type, MemoryImmediate};
 
@@ -18,6 +18,7 @@ pub struct BlockId {
 	pub block: usize
 }
 
+#[derive(Clone)]
 pub struct SsaBasicBlock {
 	pub params: Vec<TypedSsaVar>,
 	pub body: Vec<SsaInstr>,
@@ -134,7 +135,34 @@ impl TypedSsaVar {
 	}
 }
 
-#[derive(Debug)]
+fn get_ty_index(ty: Type) -> u32 {
+	match ty {
+		Type::I32 => 0,
+		Type::I64 => 1,
+		Type::F32 => 2,
+		Type::F64 => 3,
+		Type::V128 => 4,
+		Type::FuncRef => 5,
+		Type::ExternRef => 6,
+		Type::ExnRef => 7,
+		Type::Func => 8,
+		Type::EmptyBlockType => 9,
+	}
+}
+
+impl PartialOrd for TypedSsaVar {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+		(self.0, get_ty_index(self.1)).partial_cmp(&(other.0, get_ty_index(self.1)))
+    }
+}
+
+impl Ord for TypedSsaVar {
+	fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+		self.partial_cmp(other).unwrap()
+	}
+}
+
+#[derive(Debug, Clone)]
 pub enum SsaInstr {
 	I32Set(TypedSsaVar, i32),
 	I64Set(TypedSsaVar, i64),
@@ -576,7 +604,7 @@ pub struct JumpTarget {
 	pub params: Vec<TypedSsaVar>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SsaTerminator {
 	Unreachable,
 	ScheduleJump(JumpTarget, u32),
@@ -587,6 +615,48 @@ pub enum SsaTerminator {
 }
 
 impl SsaTerminator {
+	/// Returns a set of the variables that are used as parameters when jumping to the given successor block.
+	pub fn params_on_edge(&self, succ_id: BlockId) -> HashSet<TypedSsaVar> {
+		match self {
+			SsaTerminator::Unreachable | SsaTerminator::Return(_) => panic!("cannot jump to block {succ_id:?}"),
+			SsaTerminator::ScheduleJump(target, _) |
+			SsaTerminator::Jump(target) => {
+				assert_eq!(target.label, succ_id);
+				target.params.iter().copied().collect()
+			}
+			SsaTerminator::BranchIf { cond: _, true_target, false_target } => {
+				let mut result = HashSet::new();
+				let mut is_ok = false;
+				if true_target.label == succ_id {
+					result.extend(true_target.params.iter().copied());
+					is_ok = true;
+				}
+				if false_target.label == succ_id {
+					result.extend(false_target.params.iter().copied());
+					is_ok = true;
+				}
+				assert!(is_ok, "cannot jump to block {succ_id:?}");
+				result
+			}
+			SsaTerminator::BranchTable { cond: _, default, arms } => {
+				let mut result = HashSet::new();
+				let mut is_ok = false;
+				if default.label == succ_id {
+					result.extend(default.params.iter().copied());
+					is_ok = true;
+				}
+				for arm in arms.iter() {
+					if arm.label == succ_id {
+						result.extend(arm.params.iter().copied());
+						is_ok = true;
+					}
+				}
+				assert!(is_ok, "cannot jump to block {succ_id:?}");
+				result
+			}
+		}
+	}
+
 	pub fn uses(&self) -> Vec<TypedSsaVar> {
 		match self {
 			SsaTerminator::Unreachable => vec![],
@@ -645,26 +715,67 @@ impl SsaTerminator {
 }
 
 pub struct SsaFunction {
-	pub code: Vec<(BlockId, SsaBasicBlock)>,
+	pub func_id: usize,
+	/// A sparse array, where each basic block's ID is represented as its index in the list.
+	pub code: Vec<Option<SsaBasicBlock>>,
 	pub params: Box<[Type]>,
 	pub returns: Box<[Type]>,
 }
 
 impl SsaFunction {
+	pub fn new<C>(blocks: C, params: Box<[Type]>, returns: Box<[Type]>) -> Self
+		where C: IntoIterator<Item=(BlockId, SsaBasicBlock)>
+	{
+		let mut code = Vec::new();
+
+		let mut func_id = None;
+
+		for (block_id, block) in blocks.into_iter() {
+			if let Some(func_id) = func_id {
+				assert_eq!(func_id, block_id.func);
+			} else {
+				func_id = Some(block_id.func);
+			}
+
+			if block_id.block >= code.len() {
+				code.resize_with(block_id.block + 1, || None);
+			}
+
+			assert!(code[block_id.block].is_none());
+			code[block_id.block] = Some(block);
+		}
+
+		let func_id = func_id.unwrap();
+
+		SsaFunction { func_id, code, params, returns }
+	}
+
 	pub fn iter<'a>(&'a self) -> impl Iterator<Item=(BlockId, &'a SsaBasicBlock)> + 'a {
-		self.code.iter().map(|(i, b)| (*i, b))
+		self.code.iter().enumerate().filter_map(|(idx, block)| {
+			let block_id = BlockId { func: self.func_id, block: idx };
+			block.as_ref().map(|block| (block_id, block))
+		})
+	}
+
+	pub fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item=(BlockId, &'a mut SsaBasicBlock)> + 'a {
+		self.code.iter_mut().enumerate().filter_map(|(idx, block)| {
+			let block_id = BlockId { func: self.func_id, block: idx };
+			block.as_mut().map(|block| (block_id, block))
+		})
 	}
 
 	pub fn get(&self, block_id: BlockId) -> &SsaBasicBlock {
-		&self.code.iter().find(|(id, _)| *id == block_id).unwrap_or_else(|| panic!("{:?}", block_id)).1
+		assert_eq!(block_id.func, self.func_id);
+		self.code[block_id.block].as_ref().unwrap()
 	}
 
 	pub fn get_mut(&mut self, block_id: BlockId) -> &mut SsaBasicBlock {
-		&mut self.code.iter_mut().find(|(id, _)| *id == block_id).unwrap_or_else(|| panic!("{:?}", block_id)).1
+		assert_eq!(block_id.func, self.func_id);
+		self.code[block_id.block].as_mut().unwrap()
 	}
 
 	pub fn func_id(&self) -> u32 {
-		self.code[0].0.func as u32
+		self.func_id as u32
 	}
 
 	pub fn entry_point_id(&self) -> BlockId {
