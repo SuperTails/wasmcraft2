@@ -571,9 +571,7 @@ fn mem_load_16(dst: Register, addr: Register, code: &mut Vec<String>) {
 		}
 	} else {
 		code.push(format!("scoreboard players operation %ptr reg = {addr}"));
-		code.push("function intrinsic:setptr".to_string());
-		// TODO: Aligned optimizations
-		code.push("function intrinsic:load_halfword_unaligned".to_string());
+		code.push("function intrinsic:load_halfword".to_string());
 		code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
 	}
 

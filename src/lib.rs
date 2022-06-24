@@ -77,7 +77,13 @@ pub fn run(path: &str, output_path: &str) {
 	pack_emitter::persist_program(std::path::Path::new(output_path), &datapack);
 
 	if RUN_PROGRAM {
+		let mut intrin_cum_times = vec![0; datapack.len()];
+		let mut intrin_visited = vec![false; datapack.len()];
+		let intrin_funcs = datapack.iter().map(|func| func.id.namespace == "intrinsic").collect::<Vec<_>>();
+
+
 		let mut interp = datapack_vm::Interpreter::new(datapack, 0);
+
 
 		let (_, func_name) = datapack_common::functions::command_components::FunctionIdent::parse_from_command("wasmrunner:init").unwrap();
 
@@ -92,6 +98,21 @@ pub fn run(path: &str, output_path: &str) {
 		interp.set_pos(interp_idx);
 
 		while !interp.halted() {
+			for v in intrin_visited.iter_mut() {
+				*v = false;
+			}
+
+			for &(func_idx, _) in interp.call_stack_raw().iter().rev() {
+				if !intrin_funcs[func_idx] {
+					break
+				}
+				
+				if !intrin_visited[func_idx] {
+					intrin_visited[func_idx] = true;
+					intrin_cum_times[func_idx] += 1;
+				}
+			}
+
 			let result = interp.step();
 			if let Err(result) = result {
 				println!("ERR: {:?}", result);
@@ -134,6 +155,16 @@ pub fn run(path: &str, output_path: &str) {
 		println!("\nTOTAL: {}", total);
 		for (id, count) in traces {
 			println!("{}: {}", id, count);
+		}
+
+		println!("\nIntrinsic cumulative times:");
+		let mut intrin_cum_times = intrin_cum_times.iter().enumerate().map(|(f, c)| (&interp.program[f], *c)).collect::<Vec<_>>();
+		intrin_cum_times.sort_by_key(|(_, c)| -*c);
+		for (func, count) in intrin_cum_times.iter() {
+			if *count == 0 {
+				break;
+			}
+			println!("{}: {}", func.id, count);
 		}
 	}
 }
