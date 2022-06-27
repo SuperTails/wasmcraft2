@@ -28,6 +28,18 @@ fn do_block_const_prop(block: &mut SsaBasicBlock) {
 			SsaInstr::I32Set(dst, src) => {
 				constants.insert(dst, TypedValue::I32(src));
 			}
+			SsaInstr::Assign(dst, SsaVarOrConst::Const(src)) => {
+				assert_eq!(dst.ty(), src.ty());
+
+				match src {
+					TypedValue::I32(src) => {
+						constants.insert(dst, src.into());
+					}
+					TypedValue::I64(src) => {
+						constants.insert(dst, src.into());
+					}
+				}
+			}
 			SsaInstr::Add(dst, SsaVarOrConst::Const(lhs), SsaVarOrConst::Const(rhs)) => {
 				assert_eq!(lhs.ty(), dst.ty());
 				assert_eq!(rhs.ty(), dst.ty());

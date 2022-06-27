@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use wasmparser::{Type, MemoryImmediate};
 
-use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half}, ssa::{TypedSsaVar, SsaVarOrConst}, jump_mode, JumpMode};
+use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half}, ssa::{TypedSsaVar, SsaVarOrConst, liveness::FullLivenessInfo}, jump_mode, JumpMode};
 
 use super::{SsaProgram, SsaFunction, SsaBasicBlock, BlockId, reg_alloc::*, liveness::{LivenessInfo, SimpleLivenessInfo}, call_graph::CallGraph};
 
@@ -211,6 +211,8 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 
 		let addr_reg = if let Some(addr_c) = addr.get_const() {
 			ra.get_const(addr_c + mem.offset as i32)
+		} else if mem.offset == 0{
+			addr
 		} else {
 			// TODO: Coalescing?
 			let temp = Register::temp_lo(0);
@@ -302,12 +304,12 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 				match lhs.ty() {
 					Type::I32 => {
 						let lhs = ra.get(lhs.into_untyped());
-						let rhs = ra.get(rhs.into_untyped());
+						let rhs = map_ra_i32(rhs, ra);
 						block.push(LirInstr::Assign(lhs, rhs));
 					}
 					Type::I64 => {
 						let lhs = ra.get_double(lhs.into_untyped());
-						let rhs = ra.get_double(rhs.into_untyped());
+						let rhs = map_ra_i64(rhs, ra);
 						block.push(LirInstr::Assign(lhs.lo(), rhs.lo()));
 						block.push(LirInstr::Assign(lhs.hi(), rhs.hi()));
 					}
@@ -1169,7 +1171,7 @@ fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &CallGrap
 
 	let mut builder = LirFuncBuilder::new(ssa_func);
 
-	let liveness_info = SimpleLivenessInfo::analyze(ssa_func);
+	let liveness_info = FullLivenessInfo::analyze(ssa_func);
 
 	println!("Lowering func {} to LIR", ssa_func.func_id());
 

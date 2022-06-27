@@ -167,12 +167,12 @@ pub enum SsaInstr {
 	I32Set(TypedSsaVar, i32),
 	I64Set(TypedSsaVar, i64),
 
-	Assign(TypedSsaVar, TypedSsaVar),
+	Assign(TypedSsaVar, SsaVarOrConst),
 
 	// binop instructions: dst, lhs, rhs
 
 	Add(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
-	Sub(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
+	Sub(TypedSsaVar, SsaVarOrConst, SsaVarOrConst),
 	Mul(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
 	DivS(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
 	DivU(TypedSsaVar, TypedSsaVar, SsaVarOrConst),
@@ -285,11 +285,12 @@ impl SsaInstr {
 			SsaInstr::I32Set(_, _) => vec![],
 			SsaInstr::I64Set(_, _) => vec![],
 
-			SsaInstr::Assign(_, src) => vec![*src],
+			SsaInstr::Assign(_, SsaVarOrConst::Var(src)) => vec![*src],
+			SsaInstr::Assign(_, SsaVarOrConst::Const(_)) => vec![],
 
-			SsaInstr::Add(_, lhs, rhs) => lhs.get_var().into_iter().chain(rhs.get_var()).collect(),
+			SsaInstr::Add(_, lhs, rhs) |
+			SsaInstr::Sub(_, lhs, rhs) => lhs.get_var().into_iter().chain(rhs.get_var()).collect(),
 
-			SsaInstr::Sub(_, lhs, SsaVarOrConst::Var(rhs)) |
 			SsaInstr::Mul(_, lhs, SsaVarOrConst::Var(rhs)) |
 			SsaInstr::DivS(_, lhs, SsaVarOrConst::Var(rhs)) |
 			SsaInstr::DivU(_, lhs, SsaVarOrConst::Var(rhs)) |
@@ -315,7 +316,6 @@ impl SsaInstr {
 			SsaInstr::Eq(_, lhs, rhs) |
 			SsaInstr::Ne(_, lhs, rhs) => lhs.get_var().into_iter().chain(rhs.get_var()).collect(),
 
-			SsaInstr::Sub(_, lhs, SsaVarOrConst::Const(_)) |
 			SsaInstr::Mul(_, lhs, SsaVarOrConst::Const(_)) |
 			SsaInstr::And(_, lhs, SsaVarOrConst::Const(_)) |
 			SsaInstr::Xor(_, lhs, SsaVarOrConst::Const(_)) |
@@ -530,6 +530,9 @@ impl SsaInstr {
 	pub fn constable_vars(&mut self) -> Vec<&mut SsaVarOrConst> {
 		match self {
 			SsaInstr::Add(_, l, r) => vec![l, r],
+			SsaInstr::Sub(_, l, r) => vec![l, r],
+
+			SsaInstr::Assign(_, r) => vec![r],
 
 			SsaInstr::Shl(_, _, r) |
 			SsaInstr::ShrS(_, _, r) |
@@ -578,7 +581,7 @@ impl SsaInstr {
 			SsaInstr::Add(dst, SsaVarOrConst::Var(lhs), _) if dst.ty() == Type::I32 => vec![(dst, lhs)],
 			SsaInstr::Add(dst, _, SsaVarOrConst::Var(rhs)) if dst.ty() == Type::I32 => vec![(dst, rhs)],
 
-			SsaInstr::Assign(dst, src) => vec![(dst, src)],
+			SsaInstr::Assign(dst, SsaVarOrConst::Var(src)) => vec![(dst, src)],
 
 			SsaInstr::Mul(dst, lhs, _rhs) if dst.ty() == Type::I32 => vec![(dst, lhs), /*(dst, rhs)*/],
 			SsaInstr::ShrS(dst, lhs, _) if dst.ty() == Type::I32 => vec![(dst, lhs)],

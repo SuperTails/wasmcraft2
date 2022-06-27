@@ -534,6 +534,17 @@ fn mem_load_unaligned_32(dst: Register, addr: i32, offset: i32, code: &mut Vec<S
 	code.push(format!("scoreboard players operation {dst} += {tmp1}"))
 }
 
+fn mem_load_64(dst: DoubleRegister, addr: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+	if addr.get_const().is_some() {
+		todo!()
+	} else {
+		code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+		code.push("function intrinsic:load_doubleword".to_string());
+		code.push(format!("scoreboard players operation {} = %return%0%lo reg", dst.lo()));
+		code.push(format!("scoreboard players operation {} = %return%0%hi reg", dst.hi()));
+	}
+}
+
 fn mem_load_32(dst: Register, addr: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	if let Some(addr) = addr.get_const() {
 		match addr % 4 {
@@ -565,8 +576,38 @@ fn mem_load_16(dst: Register, addr: Register, code: &mut Vec<String>) {
 
 				code.push(format!("execute store result score {dst} run data get block {x} {y} {z} RecordItem.tag.Memory 1"));
 				code.push(format!("scoreboard players operation {dst} %= %%65536 reg"));
+
 			}
-			a @ (1 | 2 | 3) => todo!("{:?}", a),
+			1 => {
+				let (x, y, z) = get_address_pos(addr - 1);
+
+				code.push(format!("execute store result score {dst} run data get block {x} {y} {z} RecordItem.tag.Memory 1"));
+				code.push(format!("scoreboard players operation {dst} %= %%16777216 reg"));
+				code.push(format!("scoreboard players operation {dst} /= %%256 reg"));
+			}
+			2 => {
+				let (x, y, z) = get_address_pos(addr - 2);
+
+				let tmp1 = Register::temp_lo(100_001);
+
+				code.push(format!("execute store result score {dst} run data get block {x} {y} {z} RecordItem.tag.Memory 1"));
+				code.push(format!("execute store success score {tmp1} if score {dst} matches ..-1"));
+				code.push(format!("execute if score {tmp1} matches 1 run scoreboard players operation {dst} -= %%-2147483648 reg"));
+				code.push(format!("scoreboard players operation {dst} /= %%65536 reg"));
+				code.push(format!("execute if score {tmp1} matches 1 run scoreboard players add {dst} 32768"));
+			}
+			3 => {
+				mem_load_8(dst, Register::const_val(addr), code);
+
+				let (x1, y1, z1) = get_address_pos(addr + 1);
+
+				let tmp1 = Register::temp_lo(100_001);
+
+				code.push(format!("execute store result score {tmp1} run data get block {x1} {y1} {z1} RecordItem.tag.Memory 1"));
+				code.push(format!("scoreboard players operation {tmp1} %= %%256 reg"));
+				code.push(format!("scoreboard players operation {tmp1} *= %%256 reg"));
+				code.push(format!("scoreboard players operation {dst} += {tmp1}"));
+			}
 			_ => unreachable!(),
 		}
 	} else {
@@ -978,7 +1019,7 @@ fn signed_greater_than_eq_64(dst: Register, lhs: DoubleRegister, rhs: DoubleRegi
 	signed_less_than_eq_64(dst, rhs, lhs, code)
 }
 
-static BLOCKS: [&str; 14] = [
+static BLOCKS: [&str; 15] = [
 	"minecraft:air",
 	"minecraft:cobblestone",
 	"minecraft:granite",
@@ -993,6 +1034,7 @@ static BLOCKS: [&str; 14] = [
 	"minecraft:dirt",
 	"minecraft:oak_wood",
 	"minecraft:green_wool", // FIXME: THIS IS LEAVES
+	"minecraft:coal_block",
 ];
 
 fn turtle_set_block(reg: Register, code: &mut Vec<String>) {
@@ -2054,7 +2096,7 @@ pub fn persist_program(folder_path: &Path, funcs: &[Function]) {
 
 #[cfg(test)]
 mod test {
-	use datapack_common::functions::command_components::Objective;
+	use datapack_common::functions::command_components::{Objective, ScoreHolder};
 	use datapack_vm::Interpreter;
 
 	use super::*;
@@ -2074,7 +2116,17 @@ mod test {
 
 		let func = parse_function("wasmrunner:test_constant", &code);
 		let func_id = func.id.clone();
-		let program = vec![func];
+
+		let xor_0_code = std::fs::read_to_string("src/intrinsic/xor.mcfunction").unwrap();
+		let xor_0 = parse_function("intrinsic:xor", xor_0_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let xor_1_code = std::fs::read_to_string("src/intrinsic/xor_normal.mcfunction").unwrap();
+		let xor_1 = parse_function("intrinsic:xor_normal", xor_1_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let xor_2_code = std::fs::read_to_string("src/intrinsic/xor_inner.mcfunction").unwrap();
+		let xor_2 = parse_function("intrinsic:xor_inner", xor_2_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let program = vec![func, xor_0, xor_1, xor_2];
 
 		let mut interp = Interpreter::new(program, 0);
 
@@ -2159,10 +2211,9 @@ mod test {
 	// TODO:
 
 	#[test]
-	#[ignore]
 	fn constant_xor() {
 		let test_vals = [
-			0, -1, 1, 2, 4, i32::MAX, i32::MIN, 17, 39, -58, -107, 0x5555_5555, 1234567, -983253743, 1_000_000_000
+			0, -1, 1, 2, 4, i32::MAX, i32::MIN, 1 << 10, 1 << 11, 1 << 15, 3 << 10, 17, 39, -58, -107, 0x5555_5555, 1234567, -983253743, 1_000_000_000
 		];
 
 		for rhs in test_vals {
@@ -2171,8 +2222,71 @@ mod test {
 	}
 
 	#[test]
+	fn test_constant_load_16() {
+		let values = [
+			0x00_00_00_00, 0x85_86_87_88_u32 as i32, 0x84_83_82_81_u32 as i32, 0x87_65_43_21_u32 as i32, 0x12_34_56_78, 0x80_00_00_00_u32 as i32, 0x00_00_00_01
+		];
+
+		for i in 0..4 * values.len() - 1 {
+			constant_load_16(&values, i as i32);
+		}
+	}
+
+	fn constant_load_16(memory: &[i32], offset: i32) {
+		let memory_bytes = memory.iter().flat_map(|m| m.to_le_bytes()).collect::<Vec<_>>();
+
+		let dst = Register::return_lo(0);
+
+		let mut code = Vec::new();
+
+		let addr = Register::const_val(offset);
+
+		mem_load_16(dst, addr, &mut code);
+
+		let func = parse_function("wasmrunner:test_constant_memory_load", &code);
+		let func_id = func.id.clone();
+		let program = vec![func];
+
+		let mut interp = Interpreter::new(program, 0);
+
+		interp.scoreboard.0.insert(Objective::new("reg".to_string()).unwrap(), Default::default());
+
+		for i in 0..32 {
+			let c: i32 = 1 << i;
+			let holder = ScoreHolder::new(format!("%%{c}")).unwrap();
+			let obj = Objective::new("reg".to_string()).unwrap();
+			interp.scoreboard.set(&holder, &obj, c);
+		}
+
+		for (addr, value) in memory.iter().copied().enumerate() {
+			let (x, y, z) = get_address_pos(addr as i32 * 4);
+			let cmd = format!("setblock {x} {y} {z} minecraft:jukebox{{RecordItem:{{id:\"minecraft:stone\",Count:1b,tag:{{Memory:{value}}}}}}}").parse::<Command>().unwrap();
+			interp.execute_cmd(&cmd).unwrap();
+		}
+
+		let (dst_holder, dst_obj) = dst.scoreboard_pair();
+		let interp_idx = interp.get_func_idx(&func_id);
+		interp.set_pos(interp_idx);
+		interp.run_to_end().unwrap();
+
+		let actual = interp.scoreboard.get(&dst_holder, &dst_obj).unwrap();
+
+		let expected = u16::from_le_bytes(memory_bytes[offset as usize..][..2].try_into().unwrap()) as i32;
+
+		if expected != actual {
+			eprintln!("Code:");
+			for c in code.iter() {
+				eprintln!("    {}", c);
+			}
+			eprintln!("Actual: {:#X}", actual);
+			eprintln!("Expected: {:#X}", expected);
+			panic!("actual and expected values differed");
+		}
+	}
+
+	#[test]
 	fn test_constant_store_32() {
-		let values = [0x00_00_00_00, 0xFF_FF_FF_FF_u32 as i32, 0x87_65_43_21_u32 as i32, 0x12_34_56_78, 0x80_00_00_00_u32 as i32, 0x00_00_00_01];
+		let values = [0x00_00_00_00, 0xFF_FF_FF_FF_u32 as i32, 0xFF_FF_FF_FF_u32 as i32, 0x87_65_43_21_u32 as i32, 0x12_34_56_78, 0x80_00_00_00_u32 as i32, 0x00_00_00_01];
 
 		for i in 1..4 {
 			constant_store_32(&values, 0x01_02_03_04_05_06_07_08, i);

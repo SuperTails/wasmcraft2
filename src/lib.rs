@@ -103,13 +103,13 @@ pub fn run(path: &str, output_path: &str) {
 			}
 
 			for &(func_idx, _) in interp.call_stack_raw().iter().rev() {
-				if !intrin_funcs[func_idx] {
-					break
-				}
-				
 				if !intrin_visited[func_idx] {
 					intrin_visited[func_idx] = true;
 					intrin_cum_times[func_idx] += 1;
+				}
+
+				if !intrin_funcs[func_idx] {
+					break
 				}
 			}
 
@@ -155,17 +155,22 @@ pub fn run(path: &str, output_path: &str) {
 		println!("\nTOTAL: {}", total);
 		for (id, count) in traces {
 			println!("{}: {}", id, count);
+			if count < 1000 {
+				break;
+			}
 		}
 
 		println!("\nIntrinsic cumulative times:");
 		let mut intrin_cum_times = intrin_cum_times.iter().enumerate().map(|(f, c)| (&interp.program[f], *c)).collect::<Vec<_>>();
-		intrin_cum_times.sort_by_key(|(_, c)| -*c);
+		intrin_cum_times.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
 		for (func, count) in intrin_cum_times.iter() {
-			if *count == 0 {
+			if *count < 1000 {
 				break;
 			}
 			println!("{}: {}", func.id, count);
 		}
+
+		println!("Ticks run: {}", interp.tick);
 	}
 }
 

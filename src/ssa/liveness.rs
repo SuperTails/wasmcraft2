@@ -271,7 +271,12 @@ impl LivenessInfo for SimpleLivenessInfo {
 	}
 
 	fn live_in_body(&self, block: BlockId, instr: usize) -> HashSet<TypedSsaVar> {
-		let block_info = self.0.get(&block).unwrap();
+		let block_info = if let Some(bi) = self.0.get(&block) {
+			bi
+		} else {
+			return HashSet::new();
+		};
+
 		block_info.vars[instr].clone()
 	}
 
@@ -444,7 +449,12 @@ impl LivenessInfo for FullLivenessInfo {
 	}
 
 	fn live_in_body(&self, block: BlockId, instr: usize) -> HashSet<TypedSsaVar> {
-		let block_info = self.0.get(&block).unwrap();
+		let block_info = if let Some(bi) = self.0.get(&block) {
+			bi
+		} else {
+			return HashSet::new();
+		};
+
 		block_info.live_in_body(instr)
 	}
 

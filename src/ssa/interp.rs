@@ -433,7 +433,7 @@ impl SsaInterpreter {
 				}
 				&super::SsaInstr::Assign(dst, src) => {
 					assert_eq!(dst.ty(), src.ty());
-					let val = frame.var_context.get(src.into_untyped()).unwrap();
+					let val = src.eval(&frame.var_context).unwrap();
 					frame.var_context.insert(dst.into_untyped(), val);
 				}
 
