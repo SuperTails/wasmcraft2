@@ -1200,6 +1200,24 @@ fn emit_constant_xor(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Stri
 		let neg_one = Register::const_val(-1);
 		code.push(format!("scoreboard players operation {dst} *= {neg_one}"));
 		code.push(format!("scoreboard players remove {dst} 1"));
+	} else if rhs == 1 << 31 {
+		code.push(format!("scoreboard players add {dst} {}", 1 << 31));
+	} else if rhs.count_ones() == 1 && rhs != (1 << 30) {
+		let shift = rhs.trailing_zeros();
+		let thresh = 1 << shift;
+		let mask = 1 << (shift + 1);
+
+		const_pool.insert(mask);
+		let mask = Register::const_val(mask);
+
+		let tmp_dst = Register::temp_lo(1235);
+		let bit_is_set = Register::temp_lo(1236);
+
+		code.push(format!("scoreboard players operation {tmp_dst} = {lhs}"));
+		code.push(format!("scoreboard players operation {tmp_dst} %= {mask}"));
+		code.push(format!("execute store success score {bit_is_set} if score {tmp_dst} matches {thresh}.."));
+		code.push(format!("execute if score {bit_is_set} matches 1 run scoreboard players remove {dst} {thresh}"));
+		code.push(format!("execute if score {bit_is_set} matches 0 run scoreboard players add {dst} {thresh}"));
 	} else if rhs != 0 {
 		// TODO:
 		code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
