@@ -510,6 +510,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 					let addr_lo = ra.get_const(addr + mem.offset as i32);
 					let addr_hi = ra.get_const(addr + mem.offset as i32 + 4);
 					
+					// TODO: Making this a Load64 could get better performance for unaligned loads.
 					block.push(LirInstr::Load32(dst.lo(), addr_lo));
 					block.push(LirInstr::Load32(dst.hi(), addr_hi));
 				} else {
@@ -518,14 +519,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 
 					block.push(LirInstr::Assign(temp, addr));
 					block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
-					block.push(LirInstr::Load32(dst.lo(), temp));
-
-					// TODO: Coalescing?
-					let temp = Register::temp_lo(0);
-
-					block.push(LirInstr::Assign(temp, addr));
-					block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32 + 4)));
-					block.push(LirInstr::Load32(dst.hi(), temp));
+					block.push(LirInstr::Load64(dst, temp));
 				}
 			}
 			super::SsaInstr::Load32S(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 32, true, &mut block, ra),

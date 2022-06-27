@@ -277,6 +277,7 @@ pub enum LirInstr {
 	Store8(Register, Register),
 
 	// dst, addr
+	Load64(DoubleRegister, Register),
 	Load32(Register, Register),
 	Load16(Register, Register),
 	Load8(Register, Register),

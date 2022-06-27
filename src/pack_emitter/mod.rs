@@ -1189,9 +1189,46 @@ fn emit_constant_and(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Stri
 	}
 }
 
-fn emit_constant_xor(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+// Returns the remaining mask that must be handled, if successful.
+fn emit_xor_low_bits(reg: Register, rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) -> Result<i32, ()> {
+	if rhs.trailing_ones() <= 1 || rhs.trailing_ones() >= 31 {
+		return Err(())
+	}
+
+	let lo_bits = Register::temp_lo(1235);
+
+	let lo_bits_mod = 1 << rhs.trailing_ones();
+	const_pool.insert(lo_bits_mod);
+	let lo_bits_mod_reg = Register::const_val(lo_bits_mod);
+
+	// First, zero out the bits we're going to XOR, the low bits.
+	code.push(format!("scoreboard players operation {lo_bits} = {reg}"));
+	code.push(format!("scoreboard players operation {lo_bits} %= {lo_bits_mod_reg}"));
+	code.push(format!("scoreboard players operation {reg} -= {lo_bits}"));
+
+	// Then, bitwise invert (XOR) the low bits, and mask off anything extra.
+	const_pool.insert(-1);
+	let neg_one = Register::const_val(-1);
+	code.push(format!("scoreboard players operation {lo_bits} *= {neg_one}"));
+	code.push(format!("scoreboard players remove {lo_bits} 1"));
+	code.push(format!("scoreboard players operation {lo_bits} %= {lo_bits_mod_reg}"));
+
+	// Then, add the low part and the high part back together.
+	code.push(format!("scoreboard players operation {reg} += {lo_bits}"));
+
+	Ok(rhs & !(lo_bits_mod - 1))
+}
+
+fn emit_constant_xor(dst: Register, lhs: Register, mut rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+	let old_code_len = code.len();
+	let old_rhs = rhs;
+
 	if dst != lhs {
 		code.push(format!("scoreboard players operation {dst} = {lhs}"));
+	}
+
+	if rhs == 0 {
+		return;
 	}
 
 	if rhs == -1 {
@@ -1200,9 +1237,23 @@ fn emit_constant_xor(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Stri
 		let neg_one = Register::const_val(-1);
 		code.push(format!("scoreboard players operation {dst} *= {neg_one}"));
 		code.push(format!("scoreboard players remove {dst} 1"));
-	} else if rhs == 1 << 31 {
+		return;
+	}
+
+	if rhs == 1 << 31 {
 		code.push(format!("scoreboard players add {dst} {}", 1 << 31));
-	} else if rhs.count_ones() == 1 && rhs != (1 << 30) {
+		return;
+	}
+	
+	if let Ok(new_rhs) = emit_xor_low_bits(dst, rhs, code, const_pool) {
+		rhs = new_rhs;
+	}
+
+	if rhs == 0 {
+		return;
+	}
+
+	if rhs.count_ones() == 1 && rhs != (1 << 30) {
 		let shift = rhs.trailing_zeros();
 		let thresh = 1 << shift;
 		let mask = 1 << (shift + 1);
@@ -1218,13 +1269,17 @@ fn emit_constant_xor(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Stri
 		code.push(format!("execute store success score {bit_is_set} if score {tmp_dst} matches {thresh}.."));
 		code.push(format!("execute if score {bit_is_set} matches 1 run scoreboard players remove {dst} {thresh}"));
 		code.push(format!("execute if score {bit_is_set} matches 0 run scoreboard players add {dst} {thresh}"));
-	} else if rhs != 0 {
-		// TODO:
-		code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
-		code.push(format!("scoreboard players set %param1%0 reg {rhs}"));
-		code.push("function intrinsic:xor".to_string());
-		code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
+		return;
 	}
+
+	// We can't optimize this XOR, so get rid of all the parts we tried to do.
+	code.truncate(old_code_len);
+	
+	// TODO:
+	code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
+	code.push(format!("scoreboard players set %param1%0 reg {old_rhs}"));
+	code.push("function intrinsic:xor".to_string());
+	code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
 }
 
 
@@ -1675,6 +1730,7 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 		&LirInstr::Store32(src, addr) => mem_store_32(src, addr, code, const_pool),
 		&LirInstr::Store16(src, addr) => mem_store_16(src, addr, code),
 		&LirInstr::Store8 (src, addr) => mem_store_8 (src, addr, code),
+		&LirInstr::Load64(dst, addr) => mem_load_64(dst, addr, code, const_pool),
 		&LirInstr::Load32(dst, addr) => mem_load_32(dst, addr, code, const_pool),
 		&LirInstr::Load16(dst, addr) => mem_load_16(dst, addr, code),
 		&LirInstr::Load8 (dst, addr) => mem_load_8 (dst, addr, code),
@@ -2231,13 +2287,115 @@ mod test {
 	#[test]
 	fn constant_xor() {
 		let test_vals = [
-			0, -1, 1, 2, 4, i32::MAX, i32::MIN, 1 << 10, 1 << 11, 1 << 15, 3 << 10, 17, 39, -58, -107, 0x5555_5555, 1234567, -983253743, 1_000_000_000
+			0, -1, 1, 2, 4, 7, i32::MAX, i32::MIN, 1 << 10, 1 << 11, 1 << 15, 3 << 10, 17, 39, -58, -107, 0x5555_5555, 1234567, -983253743, 1_000_000_000
 		];
 
 		for rhs in test_vals {
 			test_constant_xor(test_vals.into_iter(), rhs);
 		}
 	}
+
+	#[test]
+	fn test_constant_load_64() {
+		let values = [
+			0x00_00_00_00, 0x85_86_87_88_u32 as i32, 0x84_83_82_81_u32 as i32, 0x87_65_43_21_u32 as i32, 0x12_34_56_78, 0x80_00_00_00_u32 as i32, 0x00_00_00_01
+		];
+
+		for i in 0..4 * values.len() - 7 {
+			constant_load_64(&values, i as i32);
+		}
+	}
+
+	fn constant_load_64(memory: &[i32], offset: i32) {
+		let memory_bytes = memory.iter().flat_map(|m| m.to_le_bytes()).collect::<Vec<_>>();
+
+		let dst = DoubleRegister::return_reg(0);
+
+		let mut code = Vec::new();
+
+		let mut const_pool = HashSet::new();
+
+		let addr = Register::work_lo(0, 0);
+
+		mem_load_64(dst, addr, &mut code, &mut const_pool);
+
+		let func = parse_function("wasmrunner:test_constant_memory_load", &code);
+		let func_id = func.id.clone();
+
+		let ldw_0_code = std::fs::read_to_string("src/intrinsic/load_doubleword.mcfunction").unwrap();
+		let ldw_0 = parse_function("intrinsic:load_doubleword", ldw_0_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_1_code = std::fs::read_to_string("src/intrinsic/doubleword/load_aligned.mcfunction").unwrap();
+		let ldw_1 = parse_function("intrinsic:doubleword/load_aligned", ldw_1_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_2_code = std::fs::read_to_string("src/intrinsic/doubleword/load_unaligned.mcfunction").unwrap();
+		let ldw_2 = parse_function("intrinsic:doubleword/load_unaligned", ldw_2_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_3_code = std::fs::read_to_string("src/intrinsic/load_word.mcfunction").unwrap();
+		let ldw_3 = parse_function("intrinsic:load_word", ldw_3_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_4_code = std::fs::read_to_string("src/intrinsic/load_word_unaligned.mcfunction").unwrap();
+		let ldw_4 = parse_function("intrinsic:load_word_unaligned", ldw_4_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_5_code = std::fs::read_to_string("src/intrinsic/setptr.mcfunction").unwrap();
+		let ldw_5 = parse_function("intrinsic:setptr", ldw_5_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_6_code = std::fs::read_to_string("src/intrinsic/load_byte.mcfunction").unwrap();
+		let ldw_6 = parse_function("intrinsic:load_byte", ldw_6_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let program = vec![func, ldw_0, ldw_1, ldw_2, ldw_3, ldw_4, ldw_5, ldw_6];
+
+		let mut interp = Interpreter::new(program, 0);
+
+		interp.scoreboard.0.insert(Objective::new("reg".to_string()).unwrap(), Default::default());
+
+		for i in 0..32 {
+			let c: i32 = 1 << i;
+			let holder = ScoreHolder::new(format!("%%{c}")).unwrap();
+			let obj = Objective::new("reg".to_string()).unwrap();
+			interp.scoreboard.set(&holder, &obj, c);
+		}
+
+		for c in const_pool {
+			let (holder, obj) = Register::const_val(c).scoreboard_pair();
+			interp.scoreboard.set(&holder, &obj, c);
+		}
+
+		for (addr, value) in memory.iter().copied().enumerate() {
+			let (x, y, z) = get_address_pos(addr as i32 * 4);
+			let cmd = format!("setblock {x} {y} {z} minecraft:jukebox{{RecordItem:{{id:\"minecraft:stone\",Count:1b,tag:{{Memory:{value}}}}}}}").parse::<Command>().unwrap();
+			interp.execute_cmd(&cmd).unwrap();
+		}
+
+		let (addr_holder, addr_obj) = addr.scoreboard_pair();	
+		interp.scoreboard.set(&addr_holder, &addr_obj, offset);
+
+		let (dst_lo_holder, dst_lo_obj) = dst.lo().scoreboard_pair();
+		let (dst_hi_holder, dst_hi_obj) = dst.hi().scoreboard_pair();
+		let interp_idx = interp.get_func_idx(&func_id);
+		interp.set_pos(interp_idx);
+		interp.run_to_end().unwrap();
+
+		let actual_lo = interp.scoreboard.get(&dst_lo_holder, &dst_lo_obj).unwrap();
+		let actual_hi = interp.scoreboard.get(&dst_hi_holder, &dst_hi_obj).unwrap();
+
+		let actual = ((actual_hi as i64) << 32) | (actual_lo as u32 as i64);
+
+		let expected = u64::from_le_bytes(memory_bytes[offset as usize..][..8].try_into().unwrap()) as i64;
+
+		if expected != actual {
+			eprintln!("Code:");
+			for c in code.iter() {
+				eprintln!("    {}", c);
+			}
+			eprintln!("Actual: {:#X}", actual);
+			eprintln!("Expected: {:#X}", expected);
+			eprintln!("Offset: {:#X}", offset);
+			eprintln!("{:?}", interp.scoreboard);
+			panic!("actual and expected values differed");
+		}
+	}
+
 
 	#[test]
 	fn test_constant_load_16() {
@@ -2275,6 +2433,8 @@ mod test {
 			let obj = Objective::new("reg".to_string()).unwrap();
 			interp.scoreboard.set(&holder, &obj, c);
 		}
+
+
 
 		for (addr, value) in memory.iter().copied().enumerate() {
 			let (x, y, z) = get_address_pos(addr as i32 * 4);
