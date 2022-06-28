@@ -814,7 +814,7 @@ impl ValidationState<'_> {
 				let dst = alloc.new_typed(ty).into();
 
 				if let Some((dst, true_var, false_var, cond)) = zip_vars!(dst, true_var, false_var, cond) {
-					builder.current_block_mut().body.push(SsaInstr::Select { dst, true_var, false_var, cond });
+					builder.current_block_mut().body.push(SsaInstr::Select { dst, true_var: true_var.into(), false_var: false_var.into(), cond });
 				}
 
 				validator.push_value(dst);
@@ -833,7 +833,7 @@ impl ValidationState<'_> {
 				};
 
 				if let Some((dst, true_var, false_var, cond)) = zip_vars!(dst, true_var, false_var, cond) {
-					builder.current_block_mut().body.push(SsaInstr::Select { dst, true_var, false_var, cond });
+					builder.current_block_mut().body.push(SsaInstr::Select { dst, true_var: true_var.into(), false_var: false_var.into(), cond });
 				}
 
 				validator.push_value(dst);

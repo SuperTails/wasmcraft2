@@ -674,10 +674,8 @@ fn unsigned_less_than(dst: Register, lhs: Register, rhs: Register, code: &mut Ve
 
 		if l == i32::MAX {
 			code.push(format!("execute store success score {dst} if score {rhs} matches ..-1"));
-		} else if l > 0 {
-			let l_incl = l + 1;
-			code.push(format!("execute store success score {dst} if score {rhs} matches ..-1"));
-			code.push(format!("execute if score {rhs} matches 0.. if score {rhs} matches {l_incl}.. run scoreboard players set {dst} 1"));
+		} else if l >= 0 {
+			code.push(format!("execute store success score {dst} unless score {rhs} matches 0..{l}"));
 		} else {
 			let l_incl = l + 1;
 			code.push(format!("scoreboard players set {dst} 0"));
@@ -694,10 +692,36 @@ fn unsigned_less_than(dst: Register, lhs: Register, rhs: Register, code: &mut Ve
 	}
 }
 
-fn unsigned_greater_than_eq(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>) {
-	unsigned_less_than(dst, rhs, lhs, code); /* swapped */
-	// TODO: This assumes lhs and rhs are not mutated
-	code.push(format!("execute if score {dst} matches 0 run execute store success score {dst} if score {lhs} = {rhs}"));
+fn unsigned_less_than_eq(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+	if let Some(r) = rhs.get_const() {
+		let r_value = r as u32;
+		if r_value == 0 {
+			// n <= 0 for unsigned values is only true if n == 0
+			code.push(format!("execute store success score {dst} if score {lhs} matches 0"));
+		} else {
+			let new_r = (r_value - 1) as i32;
+			const_pool.insert(new_r);
+			unsigned_less_than(dst, lhs, Register::const_val(new_r), code);
+		}
+	} else if let Some(l) = lhs.get_const() {
+		let l_value = l as u32;
+		if l == 0 {
+			// 0 <= n is always true; this should be caught in const prop!
+			panic!("missed optimization in const propogation: 0 <= n");
+		} else {
+			let new_l = (l_value - 1) as i32;
+			const_pool.insert(new_l);
+			unsigned_less_than(dst, Register::const_val(new_l), rhs, code);
+		}
+	} else {
+		unsigned_less_than(dst, lhs, rhs, code);
+		// TODO: This assumes lhs and rhs are not mutated
+		code.push(format!("execute if score {dst} matches 0 run execute store success score {dst} if score {lhs} = {rhs}"));
+	}
+}
+
+fn unsigned_greater_than_eq(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+	unsigned_less_than_eq(dst, rhs, lhs, code, const_pool); /* swapped */
 }
 
 fn signed_div(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>) {
@@ -751,7 +775,7 @@ fn signed_div(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String
 	}
 }
 
-fn unsigned_div(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>) {
+fn unsigned_div(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	// TODO: Find a better way to pick these registers
 	let d1 = Register::temp_lo(30);
 	let r1 = Register::temp_lo(31);
@@ -772,7 +796,7 @@ fn unsigned_div(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<Stri
 	code.push(format!("execute if score {lhs} matches 0.. if score {rhs} matches 0.. run scoreboard players operation {dst} /= {rhs}"));
 
 	// is_gtu = (lhs as u32) >= (rhs as u32)
-	unsigned_greater_than_eq(is_gtu, lhs, rhs, code);
+	unsigned_greater_than_eq(is_gtu, lhs, rhs, code, const_pool);
 
 	// if lhs < 0 && rhs < 0 && is_gtu { dst = 1 }
 	code.push(format!("execute if score {lhs} matches ..-1 if score {rhs} matches ..-1 if score {is_gtu} matches 1..1 run scoreboard players set {dst} 1"));
@@ -812,11 +836,11 @@ fn unsigned_div(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<Stri
 	code.push(format!("execute if score {lhs} matches ..-1 if score {rhs} matches 0.. run scoreboard players operation {dst} = {d1}"));
 }
 
-fn unsigned_rem(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>) {
+fn unsigned_rem(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	assert_ne!(lhs, dst);
 	assert_ne!(rhs, dst);
 
-	unsigned_div(dst, lhs, rhs, code);
+	unsigned_div(dst, lhs, rhs, code, const_pool);
 
 	// lhs - dst * rhs
 
@@ -1326,9 +1350,9 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 		&LirInstr::Sub(dst, src) => code.push(format!("scoreboard players operation {dst} -= {src}")),
 		&LirInstr::Mul(dst, src) => code.push(format!("scoreboard players operation {dst} *= {src}")),
 		&LirInstr::DivS(dst, lhs, rhs) => signed_div(dst, lhs, rhs, code),
-		&LirInstr::DivU(dst, lhs, rhs) => unsigned_div(dst, lhs, rhs, code),
+		&LirInstr::DivU(dst, lhs, rhs) => unsigned_div(dst, lhs, rhs, code, const_pool),
 		&LirInstr::RemS(dst, lhs, rhs) => signed_rem(dst, lhs, rhs, code),
-		&LirInstr::RemU(dst, lhs, rhs) => unsigned_rem(dst, lhs, rhs, code),
+		&LirInstr::RemU(dst, lhs, rhs) => unsigned_rem(dst, lhs, rhs, code, const_pool),
 
 		&LirInstr::MulTo64(dst, lhs, rhs) => {
 			let (dst_lo, dst_hi) = dst.split_lo_hi();
@@ -1655,13 +1679,9 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 		&LirInstr::Ne(dst, lhs, rhs) => code.push(format!("execute store success score {dst} unless score {lhs} = {rhs}")),
 
 		&LirInstr::GtU(dst, lhs, rhs) => unsigned_less_than(dst, rhs, lhs, code) /* swapped */,
-		&LirInstr::GeU(dst, lhs, rhs) => unsigned_greater_than_eq(dst, lhs, rhs, code),
+		&LirInstr::GeU(dst, lhs, rhs) => unsigned_greater_than_eq(dst, lhs, rhs, code, const_pool),
 		&LirInstr::LtU(dst, lhs, rhs) => unsigned_less_than(dst, lhs, rhs, code),
-		&LirInstr::LeU(dst, lhs, rhs) => {
-			unsigned_less_than(dst, lhs, rhs, code);
-			// TODO: This assumes lhs and rhs are not mutated
-			code.push(format!("execute if score {dst} matches 0 run execute store success score {dst} if score {lhs} = {rhs}"));
-		}
+		&LirInstr::LeU(dst, lhs, rhs) => unsigned_less_than_eq(dst, lhs, rhs, code, const_pool),
 
 		&LirInstr::GtU64(dst, lhs, rhs) => unsigned_greater_than_64(dst, lhs, rhs, code),
 		&LirInstr::GeU64(dst, lhs, rhs) => unsigned_greater_than_eq_64(dst, lhs, rhs, code),

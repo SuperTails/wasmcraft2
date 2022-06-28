@@ -681,15 +681,15 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 				match dst.ty() {
 					Type::I32 => {
 						let dst = ra.get(dst.into_untyped());
-						let true_reg = ra.get(true_var.into_untyped());
-						let false_reg = ra.get(false_var.into_untyped());
+						let true_reg = map_ra_i32(*true_var, ra);
+						let false_reg = map_ra_i32(*false_var, ra);
 
 						block.push(LirInstr::Select { dst, true_reg, false_reg, cond });
 					}
 					Type::I64 => {
 						let dst = ra.get_double(dst.into_untyped());
-						let true_reg = ra.get_double(true_var.into_untyped());
-						let false_reg = ra.get_double(false_var.into_untyped());
+						let true_reg = map_ra_i64(*true_var, ra);
+						let false_reg = map_ra_i64(*false_var, ra);
 
 						block.push(LirInstr::Select { dst: dst.lo(), true_reg: true_reg.lo(), false_reg: false_reg.lo(), cond });
 						block.push(LirInstr::Select { dst: dst.hi(), true_reg: true_reg.hi(), false_reg: false_reg.hi(), cond });

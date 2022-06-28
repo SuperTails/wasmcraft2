@@ -252,8 +252,8 @@ pub enum SsaInstr {
 
 	Select {
 		dst: TypedSsaVar,
-		true_var: TypedSsaVar,
-		false_var: TypedSsaVar,
+		true_var: SsaVarOrConst,
+		false_var: SsaVarOrConst,
 		cond: TypedSsaVar,
 	},
 
@@ -364,7 +364,9 @@ impl SsaInstr {
 			SsaInstr::Extend32U(_, src) |
 			SsaInstr::Wrap(_, src) => vec![*src],
 
-			SsaInstr::Select { dst: _, true_var, false_var, cond } => vec![*true_var, *false_var, *cond],
+			SsaInstr::Select { dst: _, true_var, false_var, cond } => {
+				true_var.get_var().into_iter().chain(false_var.get_var()).chain(vec![*cond]).collect()
+			}
 			SsaInstr::Call { function_index: _, params, returns: _ } => params.clone(),
 			SsaInstr::CallIndirect { table_index: _, table_entry, params, returns: _ } => {
 				params.iter().copied().chain(Some(*table_entry)).collect()
@@ -578,6 +580,8 @@ impl SsaInstr {
 			SsaInstr::Store32(_, _, addr) |
 			SsaInstr::Store16(_, _, addr) |
 			SsaInstr::Store8(_, _, addr) => vec![addr],
+
+			SsaInstr::Select { dst: _, true_var, false_var, cond: _ } => vec![true_var, false_var],
 
 			_ => Vec::new(),
 		}

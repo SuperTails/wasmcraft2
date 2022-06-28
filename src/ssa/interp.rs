@@ -536,8 +536,8 @@ impl SsaInterpreter {
 				}
 
 				&super::SsaInstr::Select { dst, true_var, false_var, cond } => {
-					let true_val = frame.var_context.get_typed(true_var).unwrap();
-					let false_val = frame.var_context.get_typed(false_var).unwrap();
+					let true_val = true_var.eval(&frame.var_context).unwrap();
+					let false_val = false_var.eval(&frame.var_context).unwrap();
 					assert_eq!(true_val.ty(), false_val.ty());
 
 					let cond = frame.var_context.get_typed(cond).unwrap();

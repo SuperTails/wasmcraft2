@@ -77,6 +77,7 @@ pub fn run(path: &str, output_path: &str) {
 	pack_emitter::persist_program(std::path::Path::new(output_path), &datapack);
 
 	if RUN_PROGRAM {
+		let mut indiv_time = vec![0; datapack.len()];
 		let mut intrin_cum_times = vec![0; datapack.len()];
 		let mut intrin_visited = vec![false; datapack.len()];
 		let intrin_funcs = datapack.iter().map(|func| func.id.namespace == "intrinsic").collect::<Vec<_>>();
@@ -102,14 +103,20 @@ pub fn run(path: &str, output_path: &str) {
 				*v = false;
 			}
 
-			for &(func_idx, _) in interp.call_stack_raw().iter().rev() {
-				if !intrin_visited[func_idx] {
-					intrin_visited[func_idx] = true;
-					intrin_cum_times[func_idx] += 1;
+			if interp.commands_run > 5_000_000 { // Don't start recording time until we enter the hot loop.
+				if let Some((func_idx, _)) = interp.call_stack_raw().iter().rev().next() {
+					indiv_time[*func_idx] += 1;
 				}
 
-				if !intrin_funcs[func_idx] {
-					break
+				for &(func_idx, _) in interp.call_stack_raw().iter().rev() {
+					if !intrin_visited[func_idx] {
+						intrin_visited[func_idx] = true;
+						intrin_cum_times[func_idx] += 1;
+					}
+
+					if !intrin_funcs[func_idx] {
+						break
+					}
 				}
 			}
 
@@ -148,13 +155,13 @@ pub fn run(path: &str, output_path: &str) {
 			println!("{key}: {value}");
 		}
 
-		let mut traces = interp.indiv_time.into_iter().collect::<Vec<_>>();
+		let mut traces = indiv_time.iter().enumerate().map(|(i, t)| (&interp.program[i], *t)).collect::<Vec<_>>();
 		traces.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
 		let total: usize = traces.iter().map(|(_, c)| *c).sum();
 
 		println!("\nTOTAL: {}", total);
-		for (id, count) in traces {
-			println!("{}: {}", id, count);
+		for (func, count) in traces {
+			println!("{}: {}", func.id, count);
 			if count < 1000 {
 				break;
 			}
