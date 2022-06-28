@@ -551,6 +551,8 @@ impl LirInterpreter {
 			LirInstr::TurtleSetZ(_) |
 			LirInstr::TurtleSetBlock(_) |
 			LirInstr::TurtleGetBlock(_) |
+			LirInstr::TurtleCopy |
+			LirInstr::TurtlePaste |
 			LirInstr::PrintInt(_) => panic!("attempt to use minecraft IO from LIR interpreter"),
 		}
 

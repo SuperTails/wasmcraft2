@@ -609,6 +609,8 @@ impl SsaInterpreter {
 				super::SsaInstr::TurtleSetZ(_) |
 				super::SsaInstr::TurtleSetBlock(_) |
 				super::SsaInstr::TurtleGetBlock(_) |
+				super::SsaInstr::TurtleCopy |
+				super::SsaInstr::TurtlePaste |
 				super::SsaInstr::PrintInt(_) => panic!("trying to use minecraft IO in SSA interpreter")
 			}
 

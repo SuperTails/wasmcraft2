@@ -303,6 +303,8 @@ pub enum LirInstr {
 	TurtleSetZ(Register),
 	TurtleSetBlock(Register),
 	TurtleGetBlock(Register),
+	TurtleCopy,
+	TurtlePaste,
 	PrintInt(Register),
 
 	PushReturnAddr(BlockId),

@@ -1816,6 +1816,12 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 		}
 		LirInstr::TurtleSetBlock(r) => turtle_set_block(*r, code),
 		LirInstr::TurtleGetBlock(r) => turtle_get_block(*r, code),
+		LirInstr::TurtleCopy => {
+			code.push("execute at @e[tag=turtle] run clone ~ ~ ~ ~ ~ ~ -1 -1 -1".to_string());
+		}
+		LirInstr::TurtlePaste => {
+			code.push("execute at @e[tag=turtle] run clone -1 -1 -1 -1 -1 -1 ~ ~ ~".to_string());
+		}
 		LirInstr::PrintInt(i) => {
 			let mut s = String::new();
 			s.push_str(r#"tellraw @a [{"text":"Printed "},{"score":{"name":""#);
