@@ -271,9 +271,9 @@ pub enum SsaInstr {
 
 	// Minecraft IO instructions
 
-	TurtleSetX(TypedSsaVar),
-	TurtleSetY(TypedSsaVar),
-	TurtleSetZ(TypedSsaVar),
+	TurtleSetX(SsaVarOrConst),
+	TurtleSetY(SsaVarOrConst),
+	TurtleSetZ(SsaVarOrConst),
 	TurtleSetBlock(TypedSsaVar),
 	TurtleGetBlock(TypedSsaVar),
 	TurtleCopy,
@@ -372,9 +372,14 @@ impl SsaInstr {
 				params.iter().copied().chain(Some(*table_entry)).collect()
 			},
 
-			SsaInstr::TurtleSetX(x) => vec![*x],
-			SsaInstr::TurtleSetY(y) => vec![*y],
-			SsaInstr::TurtleSetZ(z) => vec![*z],
+			SsaInstr::TurtleSetX(SsaVarOrConst::Var(v)) |
+			SsaInstr::TurtleSetY(SsaVarOrConst::Var(v)) |
+			SsaInstr::TurtleSetZ(SsaVarOrConst::Var(v)) => vec![*v],
+
+			SsaInstr::TurtleSetX(SsaVarOrConst::Const(_)) |
+			SsaInstr::TurtleSetY(SsaVarOrConst::Const(_)) |
+			SsaInstr::TurtleSetZ(SsaVarOrConst::Const(_)) => Vec::new(),
+
 			SsaInstr::TurtleSetBlock(b) => vec![*b],
 			SsaInstr::TurtleGetBlock(_) => Vec::new(),
 			SsaInstr::TurtleCopy => Vec::new(),
@@ -582,6 +587,10 @@ impl SsaInstr {
 			SsaInstr::Store8(_, _, addr) => vec![addr],
 
 			SsaInstr::Select { dst: _, true_var, false_var, cond: _ } => vec![true_var, false_var],
+
+			SsaInstr::TurtleSetX(v) |
+			SsaInstr::TurtleSetY(v) |
+			SsaInstr::TurtleSetZ(v) => vec![v],
 
 			_ => Vec::new(),
 		}

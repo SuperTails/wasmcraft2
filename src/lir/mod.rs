@@ -5,7 +5,7 @@ use std::{ops::RangeInclusive, fmt, collections::{HashSet, HashMap}};
 use datapack_common::functions::command_components::{ScoreHolder, Objective};
 use wasmparser::Type;
 
-use crate::ssa::{BlockId, Memory, interp::TypedValue, Table};
+use crate::ssa::{BlockId, Memory, interp::TypedValue, Table, const_prop::StaticValue};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Half {
@@ -223,7 +223,7 @@ pub enum LirInstr {
 
 	Xor(Register, Register, Register),
 	And(Register, Register, Register),
-	Or(Register, Register, Register),
+	Or(Register, Register, Register, Option<StaticValue>, Option<StaticValue>),
 
 	PopcntAdd(Register, Register),
 	Ctz(Register, Register),

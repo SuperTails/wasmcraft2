@@ -419,8 +419,6 @@ impl LivenessInfo for FullLivenessInfo {
 			result.insert(block_id, FullBlockLivenessInfo::new(block_id, block, func, HashSet::new(), &pred_info));
 		}
 
-		println!("Got here! {:?} Num blocks: {:?}", func.func_id(), func.iter().count());
-
 		let mut changed = true;
 		while changed {
 			changed = false;
@@ -442,8 +440,6 @@ impl LivenessInfo for FullLivenessInfo {
 				}
 			}
 		}
-
-		println!("Got here too!");
 
 		FullLivenessInfo(result)
 	}

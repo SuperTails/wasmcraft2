@@ -387,7 +387,7 @@ impl LirInterpreter {
 			&LirInstr::Rotr64(dst, lhs, rhs) => do_binaryop64(dst, lhs, rhs, &mut self.registers, |a, b| a.rotate_right(b.rem_euclid(64) as u32)),
 			&LirInstr::Xor(dst, lhs, rhs) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| a ^ b),
 			&LirInstr::And(dst, lhs, rhs) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| a & b),
-			&LirInstr::Or (dst, lhs, rhs) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| a | b),
+			&LirInstr::Or (dst, lhs, rhs, _, _) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| a | b),
 			&LirInstr::PopcntAdd(dst, src) => {
 				let src = self.registers.get(src);
 				let old_dst = self.registers.get(dst);

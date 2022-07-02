@@ -77,7 +77,7 @@ mod register_set {
 
 	use wasmparser::Type;
 
-	use crate::ssa::{liveness::LiveRange, SsaTerminator, SsaInstr};
+	use crate::ssa::{liveness::LiveRange, SsaInstr};
 
 	use super::*;
 
@@ -273,8 +273,6 @@ fn try_merge_term(sets: &mut RegisterSet, block_id: BlockId, dst: &TypedSsaVar, 
 	//print_live_ranges(&[dst_set.live_range.clone(), src_set.live_range.clone()], func);
 
 	if overlap.is_empty() {
-		println!("merging {:?} {:?}", dst, src);
-
 		sets.merge(*dst, *src);
 	}
 }
@@ -297,8 +295,6 @@ fn try_merge(sets: &mut RegisterSet, block_id: BlockId, instr_idx: usize, dst: &
 	//print_live_ranges(&[dst_set.live_range.clone(), src_set.live_range.clone()], func);
 
 	if overlap.is_empty() {
-		println!("merging {:?} {:?}", dst, src);
-
 		sets.merge(*dst, *src);
 	}
 }

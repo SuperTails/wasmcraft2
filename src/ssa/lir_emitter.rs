@@ -55,6 +55,9 @@ impl LirFuncBuilder {
 fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasicBlock, ra: &mut dyn RegAlloc, li: &L, call_graph: &CallGraph, builder: &mut LirFuncBuilder)
 	where L: LivenessInfo
 {
+	let mut b = ssa_block.clone();
+	let static_values = crate::ssa::const_prop::do_block_const_prop(block_id, &mut b);
+
 	fn do_binop<'a, F, G, L, R>(dst: TypedSsaVar, lhs: L, rhs: R, block: &'a mut Vec<LirInstr>, ra: &mut dyn RegAlloc, f: F, g: G)
 		where
 			F: FnOnce(Register, Register, Register, &'a mut Vec<LirInstr>),
@@ -445,7 +448,34 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 
 			super::SsaInstr::Xor(dst, lhs, rhs) => do_bitwiseop(*dst, *lhs, *rhs, &mut block, ra, LirInstr::Xor),
 			super::SsaInstr::And(dst, lhs, rhs) => do_bitwiseop(*dst, *lhs, *rhs, &mut block, ra, LirInstr::And),
-			super::SsaInstr::Or(dst, lhs, rhs) => do_bitwiseop(*dst, *lhs, *rhs, &mut block, ra, LirInstr::Or),
+			//super::SsaInstr::Or(dst, lhs, rhs) => do_bitwiseop(*dst, *lhs, *rhs, &mut block, ra, LirInstr::Or),
+
+			super::SsaInstr::Or(dst, lhs, rhs) => {
+				assert_eq!(dst.ty(), lhs.ty());
+				assert_eq!(lhs.ty(), rhs.ty());
+
+				let lhs_info = static_values.get(&lhs).copied();
+				let rhs_info = rhs.get_var().and_then(|v| static_values.get(&v).copied());
+
+				match dst.ty() {
+					Type::I32 => {
+						let dst_reg = ra.get(dst.into_untyped());
+						let lhs_reg = ra.get(lhs.into_untyped());
+						let rhs_reg = map_ra_i32(*rhs, ra);
+
+						block.push(LirInstr::Or(dst_reg, lhs_reg, rhs_reg, lhs_info, rhs_info));
+					}
+					Type::I64 => {
+						let dst = ra.get_double(dst.into_untyped());
+						let lhs = ra.get_double(lhs.into_untyped());
+						let rhs = map_ra_i64(*rhs, ra);
+						block.push(LirInstr::Or(dst.lo(), lhs.lo(), rhs.lo(), None, None));
+						block.push(LirInstr::Or(dst.hi(), lhs.hi(), rhs.hi(), None, None));
+					}
+					_ => todo!(),
+				}
+			}
+
 
 			super::SsaInstr::GtS(dst, lhs, rhs) => do_compareop(*dst, *lhs, *rhs, &mut block, ra, LirInstr::GtS, LirInstr::GtS64),
 			super::SsaInstr::GtU(dst, lhs, rhs) => do_compareop(*dst, *lhs, *rhs, &mut block, ra, LirInstr::GtU, LirInstr::GtU64),
@@ -812,15 +842,15 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 			}
 
 			&super::SsaInstr::TurtleSetX(v) => {
-				let reg = ra.get(v.unwrap_i32());
+				let reg = map_ra_i32(v, ra);
 				block.push(LirInstr::TurtleSetX(reg));
 			}
 			&super::SsaInstr::TurtleSetY(v) => {
-				let reg = ra.get(v.unwrap_i32());
+				let reg = map_ra_i32(v, ra);
 				block.push(LirInstr::TurtleSetY(reg));
 			}
 			&super::SsaInstr::TurtleSetZ(v) => {
-				let reg = ra.get(v.unwrap_i32());
+				let reg = map_ra_i32(v, ra);
 				block.push(LirInstr::TurtleSetZ(reg));
 			}
 			&super::SsaInstr::TurtleSetBlock(v) => {

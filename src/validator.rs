@@ -845,7 +845,7 @@ impl ValidationState<'_> {
 				let called_ty = wasm_file.func_type(function_index as usize);
 
 				let params = validator.pop_values(&called_ty.params);
-				let params = params.into_iter().map(Option::from).collect::<Option<Vec<_>>>();
+				let params: Option<Vec<TypedSsaVar>> = params.into_iter().map(Option::from).collect::<Option<Vec<_>>>();
 				let returns = called_ty.returns.iter().map(|ty| alloc.new_typed(*ty)).collect::<Vec<_>>();
 
 				validator.push_values(&returns);
@@ -857,17 +857,17 @@ impl ValidationState<'_> {
 							("env", "turtle_x") => {
 								assert_eq!(params.len(), 1);
 								assert_eq!(returns.len(), 0);
-								builder.current_block_mut().body.push(SsaInstr::TurtleSetX(params[0]));
+								builder.current_block_mut().body.push(SsaInstr::TurtleSetX(params[0].into()));
 							}
 							("env", "turtle_y") => {
 								assert_eq!(params.len(), 1);
 								assert_eq!(returns.len(), 0);
-								builder.current_block_mut().body.push(SsaInstr::TurtleSetY(params[0]));
+								builder.current_block_mut().body.push(SsaInstr::TurtleSetY(params[0].into()));
 							}
 							("env", "turtle_z") => {
 								assert_eq!(params.len(), 1);
 								assert_eq!(returns.len(), 0);
-								builder.current_block_mut().body.push(SsaInstr::TurtleSetZ(params[0]));
+								builder.current_block_mut().body.push(SsaInstr::TurtleSetZ(params[0].into()));
 							}
 							("env", "turtle_set") => {
 								assert_eq!(params.len(), 1);
