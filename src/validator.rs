@@ -1442,7 +1442,9 @@ pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {
 		exports,
 	};
 
-	crate::ssa::const_prop::do_const_prop(&mut program);
+	for func in program.code.iter_mut() {
+		crate::ssa::const_prop::do_func_const_prop(func);
+	}
 
 	crate::ssa::dce::do_dead_code_elim(&mut program);
 

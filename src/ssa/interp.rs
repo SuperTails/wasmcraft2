@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use wasmparser::{Type, MemoryImmediate};
 
-use crate::ssa::TypedSsaVar;
+use crate::ssa::{TypedSsaVar, const_prop::state_matches};
 
-use super::{BlockId, SsaBasicBlock, SsaVar, SsaProgram, Memory, Table, SsaVarOrConst};
+use super::{BlockId, SsaBasicBlock, SsaVar, SsaProgram, Memory, Table, SsaVarOrConst, const_prop::StaticState};
 
 #[derive(Debug)]
 pub struct Pc {
@@ -69,7 +69,7 @@ impl CallStack {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TypedValue {
 	I32(i32),
 	I64(i64),
@@ -165,12 +165,17 @@ pub struct SsaInterpreter {
 	memory: Vec<Memory>,
 	tables: Vec<Table>,
 	program: HashMap<BlockId, SsaBasicBlock>,
+	//constants: HashMap<usize, StaticState>,
 	call_stack: CallStack,
 }
 
 impl SsaInterpreter {
 	pub fn new(program: SsaProgram) -> Self {
-		let code = program.code.into_iter().flat_map(|f| f.iter().map(|(i, b)| (i, (*b).clone())).collect::<Vec<_>>()).collect();
+		//let constants = program.code.iter().map(|f| (f.func_id, super::const_prop::get_func_constants(f))).collect();
+		
+		//let constants = HashMap::new();
+		
+		let code = program.code.into_iter().flat_map(|f| f.iter().map(|(i, b)| (i, (*b).clone())).collect::<Vec<_>>()).collect::<HashMap<_, _>>();
 
 		Self {
 			local_types: program.local_types,
@@ -179,6 +184,7 @@ impl SsaInterpreter {
 			tables: program.tables,
 			program: code,
 			call_stack: CallStack(Vec::new()),
+			//constants,
 		}
 	}
 
@@ -215,6 +221,8 @@ impl SsaInterpreter {
 		let block = self.program.get(&frame.pc.block).unwrap();
 
 		if frame.pc.instr == block.body.len() {
+			println!("{:?}", block.term);
+
 			match &block.term {
 				super::SsaTerminator::Unreachable => unreachable!(),
 				super::SsaTerminator::Jump(jump) |
@@ -239,6 +247,8 @@ impl SsaInterpreter {
 					let target = if cond != 0 { true_target } else { false_target };
 
 					let target_block = self.program.get(&target.label).unwrap();
+					/*println!("cond was {}", if cond != 0 { "true" } else { "false" });
+					println!("target params: {:?}", target_block.params);*/
 					assert_eq!(target_block.params.len(), target.params.len());
 					for (&dst, &src) in target_block.params.iter().zip(target.params.iter()) {
 						assert_eq!(dst.ty(), src.ty());
@@ -302,6 +312,24 @@ impl SsaInterpreter {
 			}
 		} else {
 			let mut incr_pc = true;
+
+			/*let consts = self.constants.get(&frame.pc.block.func).unwrap_or_else(|| panic!("{:?}", frame.pc));
+
+			println!("{:?}", &block.body[frame.pc.instr]);
+
+			for (var, value) in frame.var_context.0.iter() {
+				let var = TypedSsaVar(var.0, value.ty());
+
+				if let Some(cst) = consts.get(&var) {
+					if !state_matches(*cst, *value) {
+						println!("const: {:X?}", cst);
+						println!("value: {:X?}", value);
+						println!("variable: {:?}", var);
+						println!("pc: {:?}", frame.pc);
+						panic!();
+					}
+				}
+			}*/
 
 			fn do_compare_op(dst: TypedSsaVar, lhs: SsaVarOrConst, rhs: SsaVarOrConst, var_context: &mut VarContext, f: impl FnOnce(i32, i32) -> bool, g: impl FnOnce(i64, i64) -> bool) {
 				let l = lhs.eval(var_context).expect("lhs was uninit");
@@ -552,7 +580,9 @@ impl SsaInterpreter {
 					assert_eq!(dst.ty(), val.ty());
 					frame.var_context.insert(dst.into_untyped(), val);
 				}
-				&super::SsaInstr::ParamGet(dst, src) => todo!(),
+				&super::SsaInstr::ParamGet(dst, src) => {
+					frame.var_context.insert(dst.into_untyped(), frame.locals[src as usize]);
+				},
 				super::SsaInstr::Call { function_index, params, returns } => {
 					incr_pc = false;
 
@@ -608,10 +638,23 @@ impl SsaInterpreter {
 				super::SsaInstr::TurtleSetY(_) |
 				super::SsaInstr::TurtleSetZ(_) |
 				super::SsaInstr::TurtleSetBlock(_) |
+				super::SsaInstr::TurtleCopy |
+				super::SsaInstr::TurtlePaste |
+				super::SsaInstr::PrintInt(_) => {}
+
+				super::SsaInstr::TurtleGetBlock(dst) => {
+					frame.var_context.insert(dst.into_untyped(), 0.into());
+				}
+
+
+				/*super::SsaInstr::TurtleSetX(_) |
+				super::SsaInstr::TurtleSetY(_) |
+				super::SsaInstr::TurtleSetZ(_) |
+				super::SsaInstr::TurtleSetBlock(_) |
 				super::SsaInstr::TurtleGetBlock(_) |
 				super::SsaInstr::TurtleCopy |
 				super::SsaInstr::TurtlePaste |
-				super::SsaInstr::PrintInt(_) => panic!("trying to use minecraft IO in SSA interpreter")
+				super::SsaInstr::PrintInt(_) => panic!("trying to use minecraft IO in SSA interpreter")*/
 			}
 
 			if incr_pc {

@@ -42,6 +42,15 @@ pub fn run(path: &str, output_path: &str) {
 	let ssa_program = wasm_to_ssa(&file);
 
 	if CODEGEN_STAGE == CodegenStage::Ssa {
+		let func = ssa_program.code.iter().find(|f| f.func_id == 9).unwrap();
+		dbg!(func.code.len());
+
+		let mut interp = ssa::interp::SsaInterpreter::new(ssa_program);
+
+		interp.call(9, vec![]);
+
+		interp.run_until_halted();
+
 		return;
 	}
 

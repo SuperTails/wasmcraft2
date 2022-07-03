@@ -1172,7 +1172,11 @@ fn emit_constant_or(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Strin
 	}
 
 	if rhs == -1 || rhs == 0 {
-		todo!("missed optimization in const prop");
+		if rhs == -1 {
+			code.push(format!("scoreboard players set {dst} -1"));
+		} else {
+		}
+		//todo!("missed optimization in const prop");
 	} else if rhs == i32::MIN {
 		code.push(format!("execute if score {dst} matches 0.. run scoreboard players operation {dst} reg += %%{}reg", i32::MIN));
 	} else if rhs.count_ones() == 1 {
@@ -1199,7 +1203,6 @@ fn emit_constant_or(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Strin
 		code.push(format!("scoreboard players operation {tmp_low_bits} %= %%{mask} reg"));
 		code.push(format!("scoreboard players operation {dst} -= {tmp_low_bits}"));
 		code.push(format!("scoreboard players add {dst} {rhs}"));
-		todo!("{:#X}", rhs);
 	} else if rhs.leading_ones() + rhs.trailing_zeros() == 32 {
 		let mask = 1 << rhs.trailing_zeros();
 

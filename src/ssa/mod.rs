@@ -6,7 +6,7 @@ pub mod const_prop;
 pub mod dce;
 pub mod reg_alloc;
 
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, fmt};
 
 use wasmparser::{Type, MemoryImmediate};
 
