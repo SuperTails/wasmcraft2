@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ssa::SsaTerminator;
 
-use super::{SsaProgram, SsaInstr, SsaFunction};
+use super::{SsaProgram, SsaInstr, SsaFunction, TypedSsaVar, lir_emitter::get_compatible_functions};
 
 #[derive(Debug, Clone, Copy)]
 struct TableInfo {
@@ -103,12 +103,12 @@ fn iter_direct_calls<'a>(func: &'a SsaFunction) -> impl Iterator<Item=u32> + 'a 
 	})
 }
 
-// Returns an iterator over the table IDs that this function uses in call_indirect instructions 
-fn iter_indirect_tables<'a>(func: &'a SsaFunction) -> impl Iterator<Item=u32> + 'a {
+// Returns an iterator over the table IDs, params, and returns that this function uses in call_indirect instructions 
+fn iter_indirect_tables<'a>(func: &'a SsaFunction) -> impl Iterator<Item=(u32, &'a [TypedSsaVar], &'a [TypedSsaVar])> + 'a {
 	func.iter().flat_map(|(_, block)| {
 		block.body.iter().filter_map(|instr| {
-			if let SsaInstr::CallIndirect { table_index, .. } = instr {
-				Some(*table_index)
+			if let SsaInstr::CallIndirect { table_index, params, returns, .. } = instr {
+				Some((*table_index, &params[..], &returns[..]))
 			} else {
 				None
 			}
@@ -118,9 +118,10 @@ fn iter_indirect_tables<'a>(func: &'a SsaFunction) -> impl Iterator<Item=u32> + 
 
 // Returns an iterator over the function IDs that this function can call through call_indirect instructions
 fn iter_indirect_calls<'a>(program: &'a SsaProgram, func: &'a SsaFunction) -> impl Iterator<Item=u32> + 'a {
-	iter_indirect_tables(func).flat_map(|table_idx| {
+	iter_indirect_tables(func).flat_map(|(table_idx, params, returns)| {
 		let table = &program.tables[table_idx as usize];
-		table.elements.iter().copied().flatten().map(|e| e as u32)
+		let funcs = get_compatible_functions(program, table, params, returns);
+		funcs.flatten().map(|e| e as u32)
 	})
 }
 

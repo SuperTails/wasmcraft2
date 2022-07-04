@@ -367,7 +367,7 @@ fn mem_store_32(src: Register, addr: Register, code: &mut Vec<String>, const_poo
 	}
 }
 
-fn mem_store_16(src: Register, addr: Register, code: &mut Vec<String>) {
+fn mem_store_16(src: Register, addr: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	if INSERT_MEM_PRINTS {
 		code.push(tellraw_mem_store(16, src, addr));
 	}
@@ -386,6 +386,19 @@ fn mem_store_16(src: Register, addr: Register, code: &mut Vec<String>) {
 
 				code.push("scoreboard players operation %return%0 reg += %param2%0 reg".to_string());
 				code.push(format!("execute store result block {x} {y} {z} RecordItem.tag.Memory int 1 run scoreboard players get %return%0 reg"));
+			}
+			1 => {
+				let (x, y, z) = get_address_pos(addr - 1);
+
+				let tmp1 = Register::temp_lo(4321);
+				let tmp2 = Register::temp_lo(4322);
+
+				code.push(format!("execute store result score {tmp1} run data get block {x} {y} {z} RecordItem.tag.Memory 1"));
+				emit_constant_and(tmp1, tmp1, 0xFF_00_00_FF_u32 as i32, code, const_pool);
+				code.push(format!("scoreboard players operation {tmp2} = {src}"));
+				code.push(format!("scoreboard players operation {tmp2} *= %%256 reg"));
+				code.push(format!("scoreboard players operation {tmp1} += {tmp2}"));
+				code.push(format!("execute store result block {x} {y} {z} RecordItem.tag.Memory int 1 run scoreboard players get {tmp1}"));
 			}
 			2 => {
 				let (x, y, z) = get_address_pos(addr - 2);
@@ -1858,7 +1871,7 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 			code.push(format!("scoreboard players operation {dst} = {reg}"));
 		},
 		&LirInstr::Store32(src, addr) => mem_store_32(src, addr, code, const_pool),
-		&LirInstr::Store16(src, addr) => mem_store_16(src, addr, code),
+		&LirInstr::Store16(src, addr) => mem_store_16(src, addr, code, const_pool),
 		&LirInstr::Store8 (src, addr) => mem_store_8 (src, addr, code),
 		&LirInstr::Load64(dst, addr) => mem_load_64(dst, addr, code, const_pool),
 		&LirInstr::Load32(dst, addr) => mem_load_32(dst, addr, code, const_pool),
@@ -1883,14 +1896,13 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 				todo!()
 			}
 		}
-		&LirInstr::CallIndirect { table_index, table_entry } => {
+		LirInstr::CallIndirect { table, table_entry } => {
 			if jump_mode() == JumpMode::Direct {
 				let cond_taken = Register::cond_taken();
 
 				code.push(format!("scoreboard players set {cond_taken} 0"));
 
-				let table = &parent.tables[table_index as usize];
-				for (idx, arm) in table.elements.iter().enumerate() {
+				for (idx, arm) in table.iter().enumerate() {
 					if let Some(arm) = arm {
 						let arm_func = get_mc_id(BlockId { func: *arm, block: 0 });
 						code.push(format!("execute if score {cond_taken} matches 0 run execute if score {table_entry} matches {idx} run function {arm_func}"));

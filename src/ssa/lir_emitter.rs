@@ -4,7 +4,7 @@ use wasmparser::{Type, MemoryImmediate};
 
 use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half}, ssa::{TypedSsaVar, SsaVarOrConst, liveness::FullLivenessInfo}, jump_mode, JumpMode};
 
-use super::{SsaProgram, SsaFunction, SsaBasicBlock, BlockId, reg_alloc::*, liveness::{LivenessInfo, SimpleLivenessInfo}, call_graph::CallGraph};
+use super::{SsaProgram, SsaFunction, SsaBasicBlock, BlockId, reg_alloc::*, liveness::{LivenessInfo, SimpleLivenessInfo}, call_graph::CallGraph, Table};
 
 
 struct LirFuncBuilder {
@@ -50,6 +50,26 @@ impl LirFuncBuilder {
 			i += 1;
 		}
 	}
+}
+
+/// Filters in only the functions from the table that have types compatible with the given parameters and returns.
+pub fn get_compatible_functions<'a>(parent: &'a SsaProgram, table: &'a Table, params: &'a [TypedSsaVar], returns: &'a [TypedSsaVar]) -> impl Iterator<Item=Option<usize>> + Clone + 'a {
+	table.elements.iter().map(|func_idx| func_idx.filter(|func_idx| {
+		let mut is_compat = true;
+		let func = parent.get_func(*func_idx as u32);
+
+		if func.params.len() != params.len() 
+		|| func.params.iter().zip(params.iter()).any(|(p1, p2)| *p1 != p2.ty()) {
+			is_compat = false;
+		}
+
+		if func.returns.len() != returns.len()
+		|| func.returns.iter().zip(returns.iter()).any(|(p1, p2)| *p1 != p2.ty()) {
+			is_compat = false;
+		}
+
+		is_compat
+	}))
 }
 
 fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasicBlock, ra: &mut dyn RegAlloc, li: &L, call_graph: &CallGraph, builder: &mut LirFuncBuilder)
@@ -776,7 +796,18 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 				}
 				let to_save = to_save.into_iter().collect::<Vec<_>>();
 
-				let needs_save = call_graph.table_may_call(*table_index, block_id.func as u32);
+				let table = &parent.tables[*table_index as usize];
+				let compat_funcs = get_compatible_functions(parent, table, params, returns);
+
+				let mut needs_save = false;
+				for func in compat_funcs.clone().flatten() {
+					if func == parent_func.func_id || call_graph.may_call(func as u32, parent_func.func_id as u32) {
+						needs_save = true;
+						break;
+					}
+				}
+
+				//let needs_save = call_graph.table_may_call(*table_index, block_id.func as u32);
 
 				if needs_save {
 					emit_save(&mut block, &to_save, ra);
@@ -785,16 +816,19 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 				assert_eq!(table_entry.ty(), Type::I32);
 				let table_entry = ra.get(table_entry.into_untyped());
 
+				let is_only_single_tick = compat_funcs.clone().flatten().all(|func_idx| call_graph.is_single_tick(func_idx as u32));
+				let is_only_multi_tick = compat_funcs.clone().flatten().all(|func_idx| !call_graph.is_single_tick(func_idx as u32));
+
 				match jump_mode() {
 					JumpMode::Direct => {
-						if call_graph.table_is_only_single_tick(*table_index) {
-							block.push(LirInstr::CallIndirect { table_index: *table_index, table_entry })
-						} else if call_graph.table_is_only_multi_tick(*table_index) {
+						if is_only_single_tick {
+							block.push(LirInstr::CallIndirect { table: compat_funcs.collect(), table_entry })
+						} else if is_only_multi_tick {
 							let next_block_id = builder.alloc_block_id();
 
 							block.push(LirInstr::PushReturnAddr(next_block_id));
 
-							let arms = parent.tables[*table_index as usize].elements.iter().map(|elem| {
+							let arms = compat_funcs.map(|elem| {
 								elem.map(|func_idx| {
 									BlockId { func: func_idx, block: 0 }
 								})
@@ -809,7 +843,7 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 
 							block.push(LirInstr::PushReturnAddr(continued_block_idx));
 
-							let arms = parent.tables[*table_index as usize].elements.iter().map(|elem| {
+							let arms = compat_funcs.map(|elem| {
 								elem.map(|func_idx| {
 									if call_graph.is_single_tick(func_idx as u32) {
 										let trampoline_id = builder.alloc_block_id();

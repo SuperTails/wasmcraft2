@@ -504,11 +504,11 @@ impl LirInterpreter {
 
 				self.call_stack.0.push(new_pc);
 			}
-			&LirInstr::CallIndirect { table_index, table_entry } => {
-				let table_entry = self.registers.get(table_entry);
+			LirInstr::CallIndirect { table, table_entry } => {
+				let table_entry = self.registers.get(*table_entry);
 				let table_entry = usize::try_from(table_entry).unwrap();
 
-				let function_index = self.tables[table_index as usize].elements[table_entry].unwrap();
+				let function_index = table[table_entry].unwrap();
 
 				let block = BlockId { func: function_index, block: 0 };
 

@@ -288,7 +288,7 @@ pub enum LirInstr {
 	Select { dst: Register, true_reg: Register, false_reg: Register, cond: Register },
 
 	Call { func: u32 },
-	CallIndirect { table_index: u32, table_entry: Register },
+	CallIndirect { table: Vec<Option<usize>>, table_entry: Register },
 
 	Push(Vec<Register>),
 	Pop(Vec<Register>),
