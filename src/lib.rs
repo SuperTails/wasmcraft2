@@ -22,6 +22,8 @@ const RUN_PROGRAM: bool = true;
 
 const PRINT_OUTPUT: bool = false;
 
+const PERSIST_PROGRAM: bool = false;
+
 pub fn run(path: &str, output_path: &str) {
 	let bytes = std::fs::read(path).unwrap();
 
@@ -32,7 +34,7 @@ pub fn run(path: &str, output_path: &str) {
 	println!("{:?}", file.memory);
 	println!("{:?}", file.exports);
 	println!("{:?}", file.imports);
-	println!("{:?}", file.data);
+	//println!("{:?}", file.data);
 	println!("{:?}", file.tables);
 	println!("<elements>");
 	println!("{:?}", file.functions);
@@ -42,12 +44,14 @@ pub fn run(path: &str, output_path: &str) {
 	let ssa_program = wasm_to_ssa(&file);
 
 	if CODEGEN_STAGE == CodegenStage::Ssa {
-		let func = ssa_program.code.iter().find(|f| f.func_id == 9).unwrap();
+		let start_idx = file.exports.find_func("_start").unwrap();
+
+		let func = ssa_program.code.iter().find(|f| f.func_id == start_idx).unwrap();
 		dbg!(func.code.len());
 
 		let mut interp = ssa::interp::SsaInterpreter::new(ssa_program);
 
-		interp.call(9, vec![]);
+		interp.call(start_idx, vec![]);
 
 		interp.run_until_halted();
 
@@ -83,7 +87,9 @@ pub fn run(path: &str, output_path: &str) {
 		}
 	}
 
-	pack_emitter::persist_program(std::path::Path::new(output_path), &datapack);
+	if PERSIST_PROGRAM {
+		pack_emitter::persist_program(std::path::Path::new(output_path), &datapack);
+	}
 
 	if RUN_PROGRAM {
 		let mut indiv_time = vec![0; datapack.len()];
@@ -112,7 +118,7 @@ pub fn run(path: &str, output_path: &str) {
 				*v = false;
 			}
 
-			if interp.commands_run > 5_000_000 { // Don't start recording time until we enter the hot loop.
+			if interp.total_commands_run > 5_000_000 { // Don't start recording time until we enter the hot loop.
 				if let Some((func_idx, _)) = interp.call_stack_raw().iter().rev().next() {
 					indiv_time[*func_idx] += 1;
 				}

@@ -1,60 +1,34 @@
 # i8* dest == %param0%0
 # i8 value == %param1%0
 # i32 len  == %param2%0
-# i1 is_volatile == %param3%0
 
-# !INTERPRETER: ASSERT if score %param2%0 rust matches 0..
+# %return%0 is set to the return value 
 
-scoreboard players operation %ptr rust = %param0%0 rust
-scoreboard players operation %%temp1_memset rust = %param1%0 rust
-scoreboard players operation %%temp2_memset rust = %param2%0 rust
+# tellraw @a [{"score": {"name": "%param0%0", "objective": "reg" }}]
+# tellraw @a [{"score": {"name": "%param1%0", "objective": "reg" }}]
+# tellraw @a [{"score": {"name": "%param2%0", "objective": "reg" }}]
 
-# start_bytes = dest % 4
-scoreboard players operation %%temp3_memset rust = %ptr rust
-scoreboard players operation %%temp3_memset rust %= %%4 rust
+# !INTERPRETER: ASSERT if score %param1%0 reg matches 0..255
+# !INTERPRETER: ASSERT if score %param2%0 reg matches 0..
 
-# if len > 0 && start_bytes == 3 {
-#   *dest = value;
-#   dest += 1;
-#   start_bytes -= 1;
-# }
-scoreboard players operation %param2%0 rust = %%temp1_memset rust
-execute if score %%temp2_memset rust matches 1.. if score %%temp3_memset rust matches 1..1 run function intrinsic:store_byte
-execute if score %%temp2_memset rust matches 1.. if score %%temp3_memset rust matches 1..1 run scoreboard players add %ptr rust 1
-execute if score %%temp2_memset rust matches 1.. if score %%temp3_memset rust matches 1..1 run scoreboard players remove %%temp2_memset rust 1
-execute if score %%temp2_memset rust matches 1.. if score %%temp3_memset rust matches 1..1 run scoreboard players add %%temp3_memset rust 1
+scoreboard players operation %return%0 reg = %param0%0 reg
 
-scoreboard players operation %param2%0 rust = %%temp1_memset rust
-execute if score %%temp2_memset rust matches 1.. if score %%temp3_memset rust matches 2..2 run function intrinsic:store_byte
-execute if score %%temp2_memset rust matches 1.. if score %%temp3_memset rust matches 2..2 run scoreboard players add %ptr rust 1
-execute if score %%temp2_memset rust matches 1.. if score %%temp3_memset rust matches 2..2 run scoreboard players remove %%temp2_memset rust 1
-execute if score %%temp2_memset rust matches 1.. if score %%temp3_memset rust matches 2..2 run scoreboard players add %%temp3_memset rust 1
+scoreboard players operation %mst_byte_offset reg = %param0%0 reg
+scoreboard players operation %mst_byte_offset reg %= %%4 reg
 
-scoreboard players operation %param2%0 rust = %%temp1_memset rust
-execute if score %%temp2_memset rust matches 1.. if score %%temp3_memset rust matches 3..3 run function intrinsic:store_byte
-execute if score %%temp2_memset rust matches 1.. if score %%temp3_memset rust matches 3..3 run scoreboard players add %ptr rust 1
-execute if score %%temp2_memset rust matches 1.. if score %%temp3_memset rust matches 3..3 run scoreboard players remove %%temp2_memset rust 1
-execute if score %%temp2_memset rust matches 1.. if score %%temp3_memset rust matches 3..3 run scoreboard players add %%temp3_memset rust 1
+scoreboard players operation %mst_length reg = %param2%0 reg
 
-scoreboard players operation %%temp4_memset rust = %%temp1_memset rust
-scoreboard players operation %%temp4_memset rust *= %%256 rust
-scoreboard players operation %%temp4_memset rust += %%temp1_memset rust
-scoreboard players operation %%temp4_memset rust *= %%256 rust
-scoreboard players operation %%temp4_memset rust += %%temp1_memset rust
-scoreboard players operation %%temp4_memset rust *= %%256 rust
-scoreboard players operation %%temp4_memset rust += %%temp1_memset rust
+scoreboard players set %mst_bytes_left reg 4
+scoreboard players operation %mst_bytes_left reg -= %mst_byte_offset reg
+scoreboard players operation %mst_bytes_left reg %= %%4 reg
 
-execute if score %%temp2_memset rust matches 4.. run function intrinsic:memset_inner
+scoreboard players operation %ptr reg = %param0%0 reg
+function intrinsic:setptr
 
-scoreboard players operation %param2%0 rust = %%temp1_memset rust
-execute if score %%temp2_memset rust matches 1.. run function intrinsic:store_byte
-execute if score %%temp2_memset rust matches 1.. run scoreboard players add %ptr rust 1
-execute if score %%temp2_memset rust matches 1.. run scoreboard players remove %%temp2_memset rust 1
+# Handle special cases for a memset that occurs within a single word
+execute if score %mst_bytes_left reg matches 2 if score %mst_length reg matches 1 run function intrinsic:memset/mid_hi_byte
+execute if score %mst_bytes_left reg matches 3 if score %mst_length reg matches 1 run function intrinsic:memset/mid_lo_byte
+execute if score %mst_bytes_left reg matches 3 if score %mst_length reg matches 2 run function intrinsic:memset/mid_2_byte
 
-scoreboard players operation %param2%0 rust = %%temp1_memset rust
-execute if score %%temp2_memset rust matches 1.. run function intrinsic:store_byte
-execute if score %%temp2_memset rust matches 1.. run scoreboard players add %ptr rust 1
-execute if score %%temp2_memset rust matches 1.. run scoreboard players remove %%temp2_memset rust 1
-
-scoreboard players operation %param2%0 rust = %%temp1_memset rust
-execute if score %%temp2_memset rust matches 1.. run function intrinsic:store_byte
+# Otherwise, do a normal memset
+execute if score %mst_bytes_left reg <= %mst_length reg run function intrinsic:memset/normal

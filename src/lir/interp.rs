@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use wasmparser::Type;
 
-use crate::{ssa::{interp::TypedValue, BlockId, Memory, Table}, jump_mode, JumpMode, lir::LirInstr};
+use crate::{ssa::{interp::TypedValue, BlockId, Memory, Table, lir_emitter::RegisterWithInfo}, jump_mode, JumpMode, lir::LirInstr};
 
 use super::{Register, LirBasicBlock, DoubleRegister, LirProgram, LirTerminator, Condition, Half};
 
@@ -134,6 +134,12 @@ trait Reg {
 impl Reg for Register {
 	fn eval(&self, ctx: &mut RegContext) -> i32 {
 		ctx.get(*self)
+	}
+}
+
+impl Reg for RegisterWithInfo {
+	fn eval(&self, ctx: &mut RegContext) -> i32 {
+		self.0.eval(ctx)
 	}
 }
 
@@ -296,9 +302,10 @@ impl LirInterpreter {
 			regs.set_64(dst, f(val));
 		}
 
-		fn do_binaryop<F, R>(dst: Register, lhs: Register, rhs: R, regs: &mut RegContext, f: F)
+		fn do_binaryop<F, L, R>(dst: Register, lhs: L, rhs: R, regs: &mut RegContext, f: F)
 			where
 				F: FnOnce(i32, i32) -> i32,
+				L: Reg,
 				R: Reg,
 		{
 			let lhs = lhs.eval(regs);
@@ -322,20 +329,20 @@ impl LirInterpreter {
 			regs.set(dst, f(lhs, rhs) as i32);
 		}
 
-		fn do_store(src: Register, addr: Register, bytes: usize, regs: &mut RegContext, mem: &mut [Memory])
+		fn do_store(src: Register, addr: RegisterWithInfo, bytes: usize, regs: &mut RegContext, mem: &mut [Memory])
 		{
 			let mem = &mut mem[0];
 
-			let src = regs.get(src);
-			let addr = regs.get(addr);
+			let src = src.eval(regs);
+			let addr = addr.eval(regs);
 
 			let data = &src.to_le_bytes()[..bytes];
 
 			mem.data[addr as usize..][..bytes].copy_from_slice(data);
 		}
 
-		fn do_load(dst: Register, addr: Register, bytes: usize, regs: &mut RegContext, mem: &mut [Memory]) {
-			let addr = regs.get(addr);
+		fn do_load(dst: Register, addr: RegisterWithInfo, bytes: usize, regs: &mut RegContext, mem: &mut [Memory]) {
+			let addr = addr.eval(regs);
 
 			let mut data = [0; 4];
 			data[..bytes].copy_from_slice(&mem[0].data[addr as usize..][..bytes]);
@@ -387,7 +394,7 @@ impl LirInterpreter {
 			&LirInstr::Rotr64(dst, lhs, rhs) => do_binaryop64(dst, lhs, rhs, &mut self.registers, |a, b| a.rotate_right(b.rem_euclid(64) as u32)),
 			&LirInstr::Xor(dst, lhs, rhs) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| a ^ b),
 			&LirInstr::And(dst, lhs, rhs) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| a & b),
-			&LirInstr::Or (dst, lhs, rhs, _, _) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| a | b),
+			&LirInstr::Or (dst, lhs, rhs) => do_binaryop(dst, lhs, rhs, &mut self.registers, |a, b| a | b),
 			&LirInstr::PopcntAdd(dst, src) => {
 				let src = self.registers.get(src);
 				let old_dst = self.registers.get(dst);
@@ -469,7 +476,7 @@ impl LirInterpreter {
 			&LirInstr::Store8(src, addr) => do_store(src, addr, 1, &mut self.registers, &mut self.memory),
 
 			&LirInstr::Load64(dst, addr) => {
-				let addr = self.registers.get(addr);
+				let addr = addr.eval(&mut self.registers);
 
 				let mut data_lo = [0; 4];
 				let mut data_hi = [0; 4];
@@ -545,6 +552,8 @@ impl LirInterpreter {
 			LirInstr::PopReturnAddr => {
 				self.return_stack.pop().unwrap();
 			}
+
+			LirInstr::Memset { .. } => todo!(),
 
 			LirInstr::TurtleSetX(_) |
 			LirInstr::TurtleSetY(_) |

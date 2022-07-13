@@ -5,7 +5,7 @@ use std::{ops::RangeInclusive, fmt, collections::{HashSet, HashMap}};
 use datapack_common::functions::command_components::{ScoreHolder, Objective};
 use wasmparser::Type;
 
-use crate::ssa::{BlockId, Memory, interp::TypedValue, Table, const_prop::StaticValue};
+use crate::ssa::{BlockId, Memory, interp::TypedValue, Table, const_prop::StaticValue, lir_emitter::RegisterWithInfo};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Half {
@@ -221,9 +221,9 @@ pub enum LirInstr {
 	Rotl64(DoubleRegister, DoubleRegister, DoubleRegister),
 	Rotr64(DoubleRegister, DoubleRegister, DoubleRegister),
 
-	Xor(Register, Register, Register),
-	And(Register, Register, Register),
-	Or(Register, Register, Register, Option<StaticValue>, Option<StaticValue>),
+	Xor(Register, RegisterWithInfo, RegisterWithInfo),
+	And(Register, RegisterWithInfo, RegisterWithInfo),
+	Or(Register, RegisterWithInfo, RegisterWithInfo),
 
 	PopcntAdd(Register, Register),
 	Ctz(Register, Register),
@@ -272,15 +272,15 @@ pub enum LirInstr {
 	GlobalGet(Register, u32, Half),
 
 	// src, addr
-	Store32(Register, Register),
-	Store16(Register, Register),
-	Store8(Register, Register),
+	Store32(Register, RegisterWithInfo),
+	Store16(Register, RegisterWithInfo),
+	Store8(Register, RegisterWithInfo),
 
 	// dst, addr
-	Load64(DoubleRegister, Register),
-	Load32(Register, Register),
-	Load16(Register, Register),
-	Load8(Register, Register),
+	Load64(DoubleRegister, RegisterWithInfo),
+	Load32(Register, RegisterWithInfo),
+	Load16(Register, RegisterWithInfo),
+	Load8(Register, RegisterWithInfo),
 
 	/// arg, old width (assumes high bits are zero)
 	SignExtend(Register, u32),
@@ -297,6 +297,8 @@ pub enum LirInstr {
 
 	PushLocalFrame(Vec<Type>),
 	PopLocalFrame(Vec<Type>),
+
+	Memset { dest: Register, value: Register, length: Register, result: Register },
 
 	TurtleSetX(Register),
 	TurtleSetY(Register),

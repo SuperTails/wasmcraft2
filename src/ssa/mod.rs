@@ -269,6 +269,10 @@ pub enum SsaInstr {
 		returns: Vec<TypedSsaVar>,
 	},
 
+	// Optimized C stdlib calls
+
+	Memset { dest: TypedSsaVar, value: TypedSsaVar, length: TypedSsaVar, result: TypedSsaVar },
+
 	// Minecraft IO instructions
 
 	TurtleSetX(SsaVarOrConst),
@@ -372,6 +376,10 @@ impl SsaInstr {
 				params.iter().copied().chain(Some(*table_entry)).collect()
 			},
 
+			SsaInstr::Memset { dest, value, length, result: _, } => {
+				vec![*dest, *value, *length]
+			}
+
 			SsaInstr::TurtleSetX(SsaVarOrConst::Var(v)) |
 			SsaInstr::TurtleSetY(SsaVarOrConst::Var(v)) |
 			SsaInstr::TurtleSetZ(SsaVarOrConst::Var(v)) => vec![*v],
@@ -458,6 +466,10 @@ impl SsaInstr {
 			SsaInstr::Call { function_index: _, params: _, returns } => returns.clone(),
 			SsaInstr::CallIndirect { returns, .. } => returns.clone(),
 
+			SsaInstr::Memset { dest: _, value: _, length: _, result, } => {
+				vec![*result]
+			}
+
 			SsaInstr::TurtleSetX(_) => Vec::new(),
 			SsaInstr::TurtleSetY(_) => Vec::new(),
 			SsaInstr::TurtleSetZ(_) => Vec::new(),
@@ -530,6 +542,7 @@ impl SsaInstr {
 
 			SsaInstr::Call { .. } |
 			SsaInstr::CallIndirect { .. } |
+			SsaInstr::Memset { .. } |
 			SsaInstr::TurtleSetX(_) |
 			SsaInstr::TurtleSetY(_) |
 			SsaInstr::TurtleSetZ(_) |
@@ -555,7 +568,6 @@ impl SsaInstr {
 			SsaInstr::And(_, _, r) |
 			SsaInstr::Xor(_, _, r) |
 			SsaInstr::Or(_, _, r) |
-			SsaInstr::Sub(_, _, r) | 
 			SsaInstr::Mul(_, _, r) | 
 			SsaInstr::RemS(_, _, r) | 
 			SsaInstr::RemU(_, _, r) | 

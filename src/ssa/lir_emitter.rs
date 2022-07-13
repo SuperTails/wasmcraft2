@@ -1,10 +1,10 @@
-use std::collections::HashSet;
+use std::{collections::{HashSet, HashMap}, fmt};
 
 use wasmparser::{Type, MemoryImmediate};
 
-use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half}, ssa::{TypedSsaVar, SsaVarOrConst, liveness::FullLivenessInfo}, jump_mode, JumpMode};
+use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half}, ssa::{TypedSsaVar, SsaVarOrConst, liveness::FullLivenessInfo, const_prop::{StaticState, self}}, jump_mode, JumpMode};
 
-use super::{SsaProgram, SsaFunction, SsaBasicBlock, BlockId, reg_alloc::*, liveness::{LivenessInfo, SimpleLivenessInfo}, call_graph::CallGraph, Table};
+use super::{SsaProgram, SsaFunction, SsaBasicBlock, BlockId, reg_alloc::*, liveness::{LivenessInfo, SimpleLivenessInfo}, call_graph::CallGraph, Table, const_prop::StaticValue, interp::TypedValue};
 
 
 struct LirFuncBuilder {
@@ -72,11 +72,51 @@ pub fn get_compatible_functions<'a>(parent: &'a SsaProgram, table: &'a Table, pa
 	}))
 }
 
-fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: BlockId, ssa_block: &SsaBasicBlock, ra: &mut dyn RegAlloc, li: &L, call_graph: &CallGraph, builder: &mut LirFuncBuilder)
+#[derive(Debug, Clone, Copy)]
+pub struct RegisterWithInfo(pub Register, pub StaticValue);
+
+impl RegisterWithInfo {
+	pub fn new(r: Register) -> Self {
+		RegisterWithInfo(r, StaticValue::unknown())
+	}
+
+	pub fn get_const(self) -> Option<i32> {
+		if let Some(c) = self.0.get_const() {
+			Some(c)
+		} else if let StaticValue::Constant(TypedValue::I32(c)) = self.1 {
+			Some(c)
+		} else {
+			None
+		}
+	}
+}
+
+impl From<Register> for RegisterWithInfo {
+    fn from(reg: Register) -> Self {
+		RegisterWithInfo::new(reg)
+    }
+}
+
+impl fmt::Display for RegisterWithInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		self.0.fmt(f)
+    }
+}
+
+fn lower_block<L>(
+	parent: &SsaProgram,
+	parent_func: &SsaFunction,
+	mut block_id: BlockId,
+	ssa_block: &SsaBasicBlock,
+	ra: &mut dyn RegAlloc,
+	li: &L,
+	call_graph: &CallGraph,
+	builder: &mut LirFuncBuilder,
+	static_values: &HashMap<TypedSsaVar, StaticValue>,
+)
 	where L: LivenessInfo
 {
 	let mut b = ssa_block.clone();
-	let static_values = crate::ssa::const_prop::do_block_const_prop(block_id, &mut b);
 
 	fn do_binop<'a, F, G, L, R>(dst: TypedSsaVar, lhs: L, rhs: R, block: &'a mut Vec<LirInstr>, ra: &mut dyn RegAlloc, f: F, g: G)
 		where
@@ -116,24 +156,32 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 		}
 	}
 
-	fn do_bitwiseop<F, R>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: R, block: &mut Vec<LirInstr>, ra: &mut dyn RegAlloc, f: F)
+	fn do_bitwiseop<F, R>(dst: TypedSsaVar, lhs: TypedSsaVar, rhs: R, block: &mut Vec<LirInstr>, ra: &mut dyn RegAlloc, static_values: &StaticState, f: F)
 		where
-			F: Fn(Register, Register, Register) -> LirInstr,
+			F: Fn(Register, RegisterWithInfo, RegisterWithInfo) -> LirInstr,
 			R: Into<SsaVarOrConst>,
 	{
 		let rhs = rhs.into();
+
+		let lhs_info = static_values.get(&lhs).copied().unwrap_or(StaticValue::unknown());
+		let rhs_info = rhs.get_var().and_then(|v| static_values.get(&v).copied()).unwrap_or(StaticValue::unknown());
 
 		assert_eq!(dst.ty(), lhs.ty());
 		assert_eq!(lhs.ty(), rhs.ty());
 
 		match dst.ty() {
-			Type::I32 => block.push(f(ra.get(dst.into_untyped()), ra.get(lhs.into_untyped()), map_ra_i32(rhs, ra))),
+			Type::I32 => {
+				let d = ra.get(dst.into_untyped());
+				let l = ra.get(lhs.into_untyped());
+				let r = map_ra_i32(rhs, ra);
+				block.push(f(d, RegisterWithInfo(l, lhs_info), RegisterWithInfo(r, rhs_info)));
+			}
 			Type::I64 => {
 				let dst = ra.get_double(dst.into_untyped());
 				let lhs = ra.get_double(lhs.into_untyped());
 				let rhs = map_ra_i64(rhs, ra);
-				block.push(f(dst.lo(), lhs.lo(), rhs.lo()));
-				block.push(f(dst.hi(), lhs.hi(), rhs.hi()));
+				block.push(f(dst.lo(), RegisterWithInfo::new(lhs.lo()), RegisterWithInfo::new(rhs.lo())));
+				block.push(f(dst.hi(), RegisterWithInfo::new(lhs.hi()), RegisterWithInfo::new(rhs.hi())));
 			}
 			_ => todo!(),
 		}
@@ -196,31 +244,38 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 		}
 	}
 
-	fn do_store<F>(mem: &MemoryImmediate, src: TypedSsaVar, addr: SsaVarOrConst, block: &mut Vec<LirInstr>, ra: &mut dyn RegAlloc, f: F)
+	fn do_store<F>(mem: &MemoryImmediate, src: TypedSsaVar, addr2: SsaVarOrConst, block: &mut Vec<LirInstr>, ra: &mut dyn RegAlloc, static_values: &StaticState, f: F)
 		where
-			F: FnOnce(Register, Register) -> LirInstr
+			F: FnOnce(Register, RegisterWithInfo) -> LirInstr
 	{
 		assert_eq!(mem.memory, 0);
 
 		//assert_eq!(src.ty(), Type::I32);
 		let src = ra.get(src.into_untyped());
 
-		let addr = map_ra_i32(addr, ra);
+		let addr = map_ra_i32(addr2, ra);
 
 		if let Some(c) = addr.get_const() {
 			let addr = c + mem.offset as i32;
-			block.push(f(src, ra.get_const(addr)));
+			let reg = RegisterWithInfo(ra.get_const(addr), addr.into());
+			block.push(f(src, reg));
 		} else {
 			// TODO: Coalescing?
 			let temp = Register::temp_lo(0);
 
+			let base_info = match addr2 {
+				SsaVarOrConst::Const(c) => c.into(),
+				SsaVarOrConst::Var(v) => static_values.get(&v).copied().unwrap_or(StaticValue::unknown()),
+			};
+			let info = base_info.add((mem.offset as i32).into());
+
 			block.push(LirInstr::Assign(temp, addr));
 			block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
-			block.push(f(src, temp));
+			block.push(f(src, RegisterWithInfo(temp, info)));
 		}
 	}
 
-	fn do_load_trunc(mem: &MemoryImmediate, dst: TypedSsaVar, addr: SsaVarOrConst, bits: u32, signed: bool, block: &mut Vec<LirInstr>, ra: &mut dyn RegAlloc)
+	fn do_load_trunc(mem: &MemoryImmediate, dst: TypedSsaVar, addr: SsaVarOrConst, bits: u32, signed: bool, block: &mut Vec<LirInstr>, ra: &mut dyn RegAlloc, static_values: &StaticState)
 	{
 		assert_eq!(mem.memory, 0);
 
@@ -230,20 +285,30 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 			_ => todo!(),
 		};
 
-		let addr = map_ra_i32(addr, ra);
+		let raw_addr_reg = map_ra_i32(addr, ra);
 
-		let addr_reg = if let Some(addr_c) = addr.get_const() {
-			ra.get_const(addr_c + mem.offset as i32)
-		} else if mem.offset == 0{
-			addr
+		let addr_reg = if let Some(addr_c) = raw_addr_reg.get_const() {
+			RegisterWithInfo(ra.get_const(addr_c + mem.offset as i32), StaticValue::Constant((addr_c + mem.offset as i32).into()))
+		} else if mem.offset == 0 {
+			let value = match addr {
+				SsaVarOrConst::Var(var) => static_values.get(&var).copied().unwrap_or(StaticValue::unknown()),
+				SsaVarOrConst::Const(c) => c.into()
+			};
+			RegisterWithInfo(raw_addr_reg, value)
 		} else {
 			// TODO: Coalescing?
 			let temp = Register::temp_lo(0);
 
-			block.push(LirInstr::Assign(temp, addr));
+			let value = match addr {
+				SsaVarOrConst::Var(var) => static_values.get(&var).copied().unwrap_or(StaticValue::unknown()),
+				SsaVarOrConst::Const(c) => c.into()
+			};
+			let value = value.add((mem.offset as i32).into());
+
+			block.push(LirInstr::Assign(temp, raw_addr_reg));
 			block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
 
-			temp
+			RegisterWithInfo(temp, value)
 		};
 
 		match bits {
@@ -466,36 +531,9 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 			super::SsaInstr::Rotl(dst, lhs, rhs) => do_shiftop(*dst, *lhs, *rhs, &mut block, ra, LirInstr::Rotl, LirInstr::Rotl64),
 			super::SsaInstr::Rotr(dst, lhs, rhs) => do_shiftop(*dst, *lhs, *rhs, &mut block, ra, LirInstr::Rotr, LirInstr::Rotr64),
 
-			super::SsaInstr::Xor(dst, lhs, rhs) => do_bitwiseop(*dst, *lhs, *rhs, &mut block, ra, LirInstr::Xor),
-			super::SsaInstr::And(dst, lhs, rhs) => do_bitwiseop(*dst, *lhs, *rhs, &mut block, ra, LirInstr::And),
-			//super::SsaInstr::Or(dst, lhs, rhs) => do_bitwiseop(*dst, *lhs, *rhs, &mut block, ra, LirInstr::Or),
-
-			super::SsaInstr::Or(dst, lhs, rhs) => {
-				assert_eq!(dst.ty(), lhs.ty());
-				assert_eq!(lhs.ty(), rhs.ty());
-
-				let lhs_info = static_values.get(&lhs).copied();
-				let rhs_info = rhs.get_var().and_then(|v| static_values.get(&v).copied());
-
-				match dst.ty() {
-					Type::I32 => {
-						let dst_reg = ra.get(dst.into_untyped());
-						let lhs_reg = ra.get(lhs.into_untyped());
-						let rhs_reg = map_ra_i32(*rhs, ra);
-
-						block.push(LirInstr::Or(dst_reg, lhs_reg, rhs_reg, lhs_info, rhs_info));
-					}
-					Type::I64 => {
-						let dst = ra.get_double(dst.into_untyped());
-						let lhs = ra.get_double(lhs.into_untyped());
-						let rhs = map_ra_i64(*rhs, ra);
-						block.push(LirInstr::Or(dst.lo(), lhs.lo(), rhs.lo(), None, None));
-						block.push(LirInstr::Or(dst.hi(), lhs.hi(), rhs.hi(), None, None));
-					}
-					_ => todo!(),
-				}
-			}
-
+			super::SsaInstr::Xor(dst, lhs, rhs) => do_bitwiseop(*dst, *lhs, *rhs, &mut block, ra, &static_values, LirInstr::Xor),
+			super::SsaInstr::And(dst, lhs, rhs) => do_bitwiseop(*dst, *lhs, *rhs, &mut block, ra, &static_values, LirInstr::And),
+			super::SsaInstr::Or(dst, lhs, rhs) => do_bitwiseop(*dst, *lhs, *rhs, &mut block, ra, &static_values, LirInstr::Or),
 
 			super::SsaInstr::GtS(dst, lhs, rhs) => do_compareop(*dst, *lhs, *rhs, &mut block, ra, LirInstr::GtS, LirInstr::GtS64),
 			super::SsaInstr::GtU(dst, lhs, rhs) => do_compareop(*dst, *lhs, *rhs, &mut block, ra, LirInstr::GtU, LirInstr::GtU64),
@@ -561,23 +599,24 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 					let addr_hi = ra.get_const(addr + mem.offset as i32 + 4);
 					
 					// TODO: Making this a Load64 could get better performance for unaligned loads.
-					block.push(LirInstr::Load32(dst.lo(), addr_lo));
-					block.push(LirInstr::Load32(dst.hi(), addr_hi));
+					// TODO: Analysis info
+					block.push(LirInstr::Load32(dst.lo(), addr_lo.into()));
+					block.push(LirInstr::Load32(dst.hi(), addr_hi.into()));
 				} else {
 					// TODO: Coalescing?
 					let temp = Register::temp_lo(0);
 
 					block.push(LirInstr::Assign(temp, addr));
 					block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
-					block.push(LirInstr::Load64(dst, temp));
+					block.push(LirInstr::Load64(dst, temp.into())); // TODO: Analysis info
 				}
 			}
-			super::SsaInstr::Load32S(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 32, true, &mut block, ra),
-			super::SsaInstr::Load32U(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 32, false, &mut block, ra),
-			super::SsaInstr::Load16S(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 16, true, &mut block, ra),
-			super::SsaInstr::Load16U(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 16, false, &mut block, ra),
-			super::SsaInstr::Load8S(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 8, true, &mut block, ra),
-			super::SsaInstr::Load8U(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 8, false, &mut block, ra),
+			super::SsaInstr::Load32S(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 32, true, &mut block, ra, &static_values),
+			super::SsaInstr::Load32U(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 32, false, &mut block, ra, &static_values),
+			super::SsaInstr::Load16S(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 16, true, &mut block, ra, &static_values),
+			super::SsaInstr::Load16U(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 16, false, &mut block, ra, &static_values),
+			super::SsaInstr::Load8S(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 8, true, &mut block, ra, &static_values),
+			super::SsaInstr::Load8U(mem, dst, addr) => do_load_trunc(mem, *dst, *addr, 8, false, &mut block, ra, &static_values),
 
 			super::SsaInstr::Store64(mem, src, addr) => {
 				assert_eq!(mem.memory, 0);
@@ -592,24 +631,26 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 					let addr_lo = c + mem.offset as i32;
 					let addr_hi = c + mem.offset as i32 + 4;
 					
-					block.push(LirInstr::Store32(src.lo(), ra.get_const(addr_lo)));
-					block.push(LirInstr::Store32(src.hi(), ra.get_const(addr_hi)));
+					block.push(LirInstr::Store32(src.lo(), ra.get_const(addr_lo).into()));
+					block.push(LirInstr::Store32(src.hi(), ra.get_const(addr_hi).into()));
 				} else {
 					// TODO: Coalescing?
 					let temp = Register::temp_lo(0);
 
 					block.push(LirInstr::Assign(temp, addr));
 					block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32)));
-					block.push(LirInstr::Store32(src.lo(), temp));
+					// TODO: Info
+					block.push(LirInstr::Store32(src.lo(), temp.into()));
 
 					block.push(LirInstr::Assign(temp, addr));
 					block.push(LirInstr::Add(temp, ra.get_const(mem.offset as i32 + 4)));
-					block.push(LirInstr::Store32(src.hi(), temp));
+					// TODO: Info
+					block.push(LirInstr::Store32(src.hi(), temp.into()));
 				}
 			}
-			super::SsaInstr::Store32(mem, src, addr) => do_store(mem, *src, *addr, &mut block, ra, LirInstr::Store32),
-			super::SsaInstr::Store16(mem, src, addr) => do_store(mem, *src, *addr, &mut block, ra, LirInstr::Store16),
-			super::SsaInstr::Store8(mem, src, addr) => do_store(mem, *src, *addr, &mut block, ra, LirInstr::Store8),
+			super::SsaInstr::Store32(mem, src, addr) => do_store(mem, *src, *addr, &mut block, ra, &static_values, LirInstr::Store32),
+			super::SsaInstr::Store16(mem, src, addr) => do_store(mem, *src, *addr, &mut block, ra, &static_values, LirInstr::Store16),
+			super::SsaInstr::Store8(mem, src, addr) => do_store(mem, *src, *addr, &mut block, ra, &static_values, LirInstr::Store8),
 
 			super::SsaInstr::GlobalSet(dst, src) => {
 				match src.ty() {
@@ -873,6 +914,20 @@ fn lower_block<L>(parent: &SsaProgram, parent_func: &SsaFunction, mut block_id: 
 				}
 
 				emit_copy_from_returns(&mut block, returns, ra);
+			}
+
+			&super::SsaInstr::Memset { dest, value, length, result } => {
+				assert_eq!(dest.ty(), Type::I32);
+				assert_eq!(value.ty(), Type::I32);
+				assert_eq!(length.ty(), Type::I32);
+				assert_eq!(result.ty(), Type::I32);
+
+				let dest = ra.get(dest.into_untyped());
+				let value = ra.get(value.into_untyped());
+				let length = ra.get(length.into_untyped());
+				let result = ra.get(result.into_untyped());
+
+				block.push(LirInstr::Memset { dest, value, length, result });
 			}
 
 			&super::SsaInstr::TurtleSetX(v) => {
@@ -1237,10 +1292,15 @@ fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &CallGrap
 
 	let liveness_info = FullLivenessInfo::analyze(ssa_func);
 
+	let func_static_values = const_prop::get_func_constants(ssa_func);
+
+	let empty_static_values = HashMap::new();
+
 	println!("Lowering func {} to LIR", ssa_func.func_id());
 
 	for (block_id, block) in ssa_func.iter() {
-		lower_block(ssa_program, ssa_func, block_id, block, &mut reg_alloc, &liveness_info, call_graph, &mut builder);
+		let static_values = func_static_values.get(&block_id).unwrap_or(&empty_static_values);
+		lower_block(ssa_program, ssa_func, block_id, block, &mut reg_alloc, &liveness_info, call_graph, &mut builder, static_values);
 	}
 
 	let locals = ssa_program.local_types.get(&(ssa_func.func_id() as usize)).unwrap();

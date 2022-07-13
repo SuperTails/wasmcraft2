@@ -167,6 +167,7 @@ pub struct SsaInterpreter {
 	program: HashMap<BlockId, SsaBasicBlock>,
 	//constants: HashMap<usize, StaticState>,
 	call_stack: CallStack,
+	steps: u64,
 }
 
 impl SsaInterpreter {
@@ -185,6 +186,7 @@ impl SsaInterpreter {
 			program: code,
 			call_stack: CallStack(Vec::new()),
 			//constants,
+			steps: 0,
 		}
 	}
 
@@ -220,8 +222,14 @@ impl SsaInterpreter {
 
 		let block = self.program.get(&frame.pc.block).unwrap();
 
+		self.steps += 1;
+
+		if self.steps % 100_000 == 0 {
+			println!("Steps: {}", self.steps);
+		}
+
 		if frame.pc.instr == block.body.len() {
-			println!("{:?}", block.term);
+			//println!("{:?}", block.term);
 
 			match &block.term {
 				super::SsaTerminator::Unreachable => unreachable!(),
@@ -632,6 +640,22 @@ impl SsaInterpreter {
 
 					self.call_stack.0.push(new_frame);
 
+				}
+
+				super::SsaInstr::Memset { dest, value, length, result } => {
+					let dest = dest.eval(&frame.var_context).unwrap().into_i32().unwrap();
+					let value = value.eval(&frame.var_context).unwrap().into_i32().unwrap();
+					let length = length.eval(&frame.var_context).unwrap().into_i32().unwrap();
+
+					if length < 0 {
+						panic!();
+					}
+
+					for i in 0..length {
+						self.memory[0].data[dest as usize + i as usize] = value as u8;
+					}
+
+					frame.var_context.insert(result.into_untyped(), dest.into());
 				}
 
 				super::SsaInstr::TurtleSetX(_) |

@@ -4,7 +4,7 @@ use command_parser::parse_command;
 use datapack_common::functions::{Function, Command, command_components::FunctionIdent};
 use wasmparser::Type;
 
-use crate::{lir::{LirProgram, LirFunction, LirBasicBlock, LirInstr, Register, LirTerminator, Condition, Half, DoubleRegister}, ssa::{BlockId, Memory, interp::TypedValue, const_prop::StaticValue}, jump_mode, JumpMode};
+use crate::{lir::{LirProgram, LirFunction, LirBasicBlock, LirInstr, Register, LirTerminator, Condition, Half, DoubleRegister}, ssa::{BlockId, Memory, interp::TypedValue, const_prop::{StaticValue, BitMask}, lir_emitter::RegisterWithInfo}, jump_mode, JumpMode};
 
 fn parse_function<C, T>(id: &str, code: C) -> Function
 	where
@@ -345,9 +345,9 @@ fn mem_store_unaligned_32(src: Register, addr: i32, offset: i32, code: &mut Vec<
 	code.push(format!("execute store result block {x1} {y1} {z1} RecordItem.tag.Memory int 1 run scoreboard players get {tmp1}"));
 }
 
-fn mem_store_32(src: Register, addr: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+fn mem_store_32(src: Register, addr: RegisterWithInfo, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	if INSERT_MEM_PRINTS {
-		code.push(tellraw_mem_store(32, src, addr));
+		code.push(tellraw_mem_store(32, src, addr.0));
 	}
 
 	if let Some(addr) = addr.get_const() {
@@ -359,6 +359,46 @@ fn mem_store_32(src: Register, addr: Register, code: &mut Vec<String>, const_poo
 			offset@(1 | 2 | 3) => { mem_store_unaligned_32(src, addr, offset, code, const_pool); }
 			_ => unreachable!(),
 		}
+	} else if ENABLE_MEM_OPTS && addr.1 != StaticValue::unknown() && addr.1 != (BitMask { set_bits: 0, clr_bits: 1 }.into()) {
+		let o = known_offset(addr.1);
+		let z = known_z(addr.1);
+		let y = known_y(addr.1);
+		let x = known_x(addr.1);
+
+		if let (Some(0), None, None, None) = (o, z, y, x) {
+			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+			code.push("function intrinsic:setptr".to_string());
+			code.push(format!("execute at @e[tag=memoryptr] store result block ~ ~ ~ RecordItem.tag.Memory int 1 run scoreboard players get {src}"));
+		} else if let (Some(0), None, Some(y), Some(x)) = (o, z, y, x) {
+			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+			code.push("scoreboard players operation %ptr reg /= %%4 reg".to_string());
+			code.push("scoreboard players operation %ptr reg %= %%8 reg".to_string());
+			code.push("execute as @e[tag=memoryptr] store result entity @s Pos[2] double 1 run scoreboard players get %ptr reg".to_string());
+			code.push(format!("execute at @e[tag=memoryptr] store result block {x} {y} ~ RecordItem.tag.Memory int 1 run scoreboard players get {src}"));
+		} else {
+			todo!("{:X?} {:X?} {:X?} {:X?} {:X?}", addr.1, o, z, y, x);
+		}
+
+		/*let o_stride = 1;
+		let z_stride = 4;
+		let y_stride = 4 * 8;
+		let x_stride = 4 * 8 * 256;
+
+		let o_wrap = 4;
+		let z_wrap = 4 * 8;
+		let y_wrap = 4 * 8 * 256;*/
+
+		/*if let (Some(0), None, Some(y), Some(x)) = (o, z, y, x) {
+			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+			code.push("scoreboard players operation %ptr reg /= %%4 reg".to_string());
+			code.push("scoreboard players operation %ptr reg %= %%32 reg".to_string());
+			code.push("execute as @e[tag=memoryptr] store result entity @s Pos[2] double 1 run scoreboard players get %ptr reg".to_string());
+			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block {x} {y} ~ RecordItem.tag.Memory 1"));
+		} else if let (Some(0), None, None, None) = (o, z, y, x) {
+			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+			code.push("function intrinsic:setptr".to_string());
+			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block ~ ~ ~ RecordItem.tag.Memory 1"));
+		} else {*/
 	} else {
 		code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 		code.push(format!("scoreboard players operation %param0%0 reg = {src}"));
@@ -367,9 +407,9 @@ fn mem_store_32(src: Register, addr: Register, code: &mut Vec<String>, const_poo
 	}
 }
 
-fn mem_store_16(src: Register, addr: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+fn mem_store_16(src: Register, addr: RegisterWithInfo, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	if INSERT_MEM_PRINTS {
-		code.push(tellraw_mem_store(16, src, addr));
+		code.push(tellraw_mem_store(16, src, addr.0));
 	}
 	
 	if let Some(addr) = addr.get_const() {
@@ -394,7 +434,7 @@ fn mem_store_16(src: Register, addr: Register, code: &mut Vec<String>, const_poo
 				let tmp2 = Register::temp_lo(4322);
 
 				code.push(format!("execute store result score {tmp1} run data get block {x} {y} {z} RecordItem.tag.Memory 1"));
-				emit_constant_and(tmp1, tmp1, 0xFF_00_00_FF_u32 as i32, code, const_pool);
+				emit_constant_and(tmp1, tmp1.into(), 0xFF_00_00_FF_u32 as i32, code, const_pool);
 				code.push(format!("scoreboard players operation {tmp2} = {src}"));
 				code.push(format!("scoreboard players operation {tmp2} *= %%256 reg"));
 				code.push(format!("scoreboard players operation {tmp1} += {tmp2}"));
@@ -410,9 +450,17 @@ fn mem_store_16(src: Register, addr: Register, code: &mut Vec<String>, const_poo
 				code.push("scoreboard players operation %param0%0 reg += %param2%0 reg".to_string());
 				code.push(format!("execute store result block {x} {y} {z} RecordItem.tag.Memory int 1 run scoreboard players get %param0%0 reg"));
 			}
-			a @ (1 | 3) => todo!("{:?}", a),
+			a @ 3 => todo!("{:?}", a),
 			_ => unreachable!(),
 		}
+		// TODO:
+	} else if ENABLE_MEM_OPTS && addr.1 != StaticValue::unknown() && addr.1.into_mask() != (BitMask { set_bits: 0, clr_bits: 1 }) {
+		let o = known_offset(addr.1);
+		let z = known_z(addr.1);
+		let y = known_y(addr.1);
+		let x = known_x(addr.1);
+
+		todo!("{:X?} {:X?} {:X?} {:X?} {:X?}", addr.1, o, z, y, x);
 	} else {
 		code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 		code.push(format!("scoreboard players operation %param2%0 reg = {src}"));
@@ -420,9 +468,9 @@ fn mem_store_16(src: Register, addr: Register, code: &mut Vec<String>, const_poo
 	}
 }
 
-fn mem_store_8 (src: Register, addr: Register, code: &mut Vec<String>) {
+fn mem_store_8 (src: Register, addr: RegisterWithInfo, code: &mut Vec<String>) {
 	if INSERT_MEM_PRINTS {
-		code.push(tellraw_mem_store(8, src, addr));
+		code.push(tellraw_mem_store(8, src, addr.0));
 	}
 
 	if let Some(addr) = addr.get_const() {
@@ -484,6 +532,30 @@ fn mem_store_8 (src: Register, addr: Register, code: &mut Vec<String>) {
 			}
 			_ => unreachable!(),
 		}
+	} else if ENABLE_MEM_OPTS && addr.1 != StaticValue::unknown() && addr.1.into_mask() != (BitMask { set_bits: 0, clr_bits: 1 }) {
+		let o = known_offset(addr.1);
+		let z = known_z(addr.1);
+		let y = known_y(addr.1);
+		let x = known_x(addr.1);
+		
+		if let (Some(0), None, None, None) = (o, z, y, x) {
+			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+			code.push("function intrinsic:setptr".to_string());
+
+			code.push(format!("scoreboard players operation %param2%0 reg = {src}"));
+			code.push("scoreboard players operation %param2%0 reg %= %%256 reg".to_string());
+			code.push("execute at @e[tag=memoryptr] store result score %param0%0 reg run data get block ~ ~ ~ RecordItem.tag.Memory 1".to_string());
+			code.push("scoreboard players operation %return%0 reg = %param0%0 reg".to_string());
+
+			code.push("scoreboard players operation %param0%0 reg %= %%256 reg".to_string());
+			code.push("scoreboard players operation %return%0 reg -= %param0%0 reg".to_string());
+
+			code.push("scoreboard players operation %return%0 reg += %param2%0 reg".to_string());
+			code.push("execute at @e[tag=memoryptr] store result block ~ ~ ~ RecordItem.tag.Memory int 1 run scoreboard players get %return%0 reg".to_string());
+		} else {
+			todo!("{:X?} {:X?} {:X?} {:X?} {:X?}", addr.1, o, z, y, x);
+		}
+
 	} else {
 		code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 		code.push(format!("scoreboard players operation %param2%0 reg = {src}"));
@@ -566,7 +638,7 @@ fn mem_load_unaligned_32(dst: Register, addr: i32, offset: i32, code: &mut Vec<S
 	code.push(format!("scoreboard players operation {dst} += {tmp1}"))
 }
 
-fn mem_load_64(dst: DoubleRegister, addr: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+fn mem_load_64(dst: DoubleRegister, addr: RegisterWithInfo, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	if addr.get_const().is_some() {
 		todo!()
 	} else {
@@ -577,7 +649,55 @@ fn mem_load_64(dst: DoubleRegister, addr: Register, code: &mut Vec<String>, cons
 	}
 }
 
-fn mem_load_32(dst: Register, addr: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+// _ -> byte
+// 4 -> z
+// 4 * 8 -> y
+// 4 * 8 * 256 -> x
+
+// xxxx_xxxx_xxxx_xxxx xxx_yyyyyyyy_zzz_bb
+
+fn known_offset(value: StaticValue) -> Option<i32> {
+	if known_bits(value) & 0b11 == 0b11 {
+		Some((value.into_mask().set_bits as i32) & 0b11)
+	} else {
+		None
+	}
+}
+
+fn known_z(value: StaticValue) -> Option<i32> {
+	if known_bits(value) & 0b111_00 == 0b111_00 {
+		Some(((value.into_mask().set_bits as i32) & 0b111_00) >> 2)
+	} else {
+		None
+	}
+}
+
+#[allow(clippy::unusual_byte_groupings)]
+fn known_y(value: StaticValue) -> Option<i32> {
+	if known_bits(value) & 0b1111_1111_000_00 == 0b1111_1111_000_00 {
+		Some(((value.into_mask().set_bits as i32) & 0b1111_1111_000_00) >> 5)
+	} else {
+		None
+	}
+}
+
+fn known_x(value: StaticValue) -> Option<i32> {
+	if known_bits(value) & 0xFFFF_FFFF_FFFF_E000 == 0xFFFF_FFFF_FFFF_E000 {
+		let v = (value.into_mask().set_bits as u64) >> 13;
+		Some(v as i32)
+	} else {
+		None
+	}
+}
+
+fn known_bits(value: StaticValue) -> u64 {
+	match value {
+		StaticValue::Mask(msk) => msk.set_bits | msk.clr_bits,
+		StaticValue::Constant(_) => 0xFFFF_FFFF_FFFF_FFFF,
+	}
+}
+
+fn mem_load_32(dst: Register, addr: RegisterWithInfo, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	if let Some(addr) = addr.get_const() {
 		match addr % 4 {
 			0 => {
@@ -588,6 +708,43 @@ fn mem_load_32(dst: Register, addr: Register, code: &mut Vec<String>, const_pool
 			offset@(1 | 2 | 3) => mem_load_unaligned_32(dst, addr, offset, code, const_pool),
 			_ => unreachable!(),
 		}
+	} else if ENABLE_MEM_OPTS && addr.1 != StaticValue::unknown() && addr.1 != (BitMask { set_bits: 0, clr_bits: 1 }.into()) {
+		let o = known_offset(addr.1);
+		let z = known_z(addr.1);
+		let y = known_y(addr.1);
+		let x = known_x(addr.1);
+
+		/*let o_stride = 1;
+		let z_stride = 4;
+		let y_stride = 4 * 8;
+		let x_stride = 4 * 8 * 256;
+
+		let o_wrap = 4;
+		let z_wrap = 4 * 8;
+		let y_wrap = 4 * 8 * 256;*/
+
+		if let (Some(0), None, Some(y), Some(x)) = (o, z, y, x) {
+			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+			code.push("scoreboard players operation %ptr reg /= %%4 reg".to_string());
+			code.push("scoreboard players operation %ptr reg %= %%8 reg".to_string());
+			code.push("execute as @e[tag=memoryptr] store result entity @s Pos[2] double 1 run scoreboard players get %ptr reg".to_string());
+			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block {x} {y} ~ RecordItem.tag.Memory 1"));
+		} else if let (Some(0), Some(z), None, None) = (o, z, y, x) {
+			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+			code.push("scoreboard players operation %ptr reg /= %%32 reg".to_string());
+			code.push("scoreboard players operation %%y reg = %ptr reg".to_string());
+			code.push("scoreboard players operation %%y reg %= %%256 reg".to_string());
+			code.push("scoreboard players operation %ptr reg /= %%256 reg".to_string());
+			code.push("execute as @e[tag=memoryptr] store result entity @s Pos[0] double 1 run scoreboard players get %ptr reg".to_string());
+			code.push("execute as @e[tag=memoryptr] store result entity @s Pos[1] double 1 run scoreboard players get %%y reg".to_string());
+			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block ~ ~ {z} RecordItem.tag.Memory 1"));
+		} else if let (Some(0), None, None, None) = (o, z, y, x) {
+			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+			code.push("function intrinsic:setptr".to_string());
+			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block ~ ~ ~ RecordItem.tag.Memory 1"));
+		} else {
+			todo!("{:X?} {:X?} {:X?} {:X?} {:X?}", addr.1, o, z, y, x);
+		}
 	} else {
 		code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 		code.push("function intrinsic:setptr".to_string());
@@ -596,11 +753,11 @@ fn mem_load_32(dst: Register, addr: Register, code: &mut Vec<String>, const_pool
 	}
 
 	if INSERT_MEM_PRINTS {
-		code.push(tellraw_mem_load(32, dst, addr));
+		code.push(tellraw_mem_load(32, dst, addr.0));
 	}
 }
 
-fn mem_load_16(dst: Register, addr: Register, code: &mut Vec<String>) {
+fn mem_load_16(dst: Register, addr: RegisterWithInfo, code: &mut Vec<String>) {
 	if let Some(addr) = addr.get_const() {
 		match addr % 4 {
 			0 => {
@@ -629,7 +786,7 @@ fn mem_load_16(dst: Register, addr: Register, code: &mut Vec<String>) {
 				code.push(format!("execute if score {tmp1} matches 1 run scoreboard players add {dst} 32768"));
 			}
 			3 => {
-				mem_load_8(dst, Register::const_val(addr), code);
+				mem_load_8(dst, Register::const_val(addr).into(), code);
 
 				let (x1, y1, z1) = get_address_pos(addr + 1);
 
@@ -642,6 +799,37 @@ fn mem_load_16(dst: Register, addr: Register, code: &mut Vec<String>) {
 			}
 			_ => unreachable!(),
 		}
+	} else if ENABLE_MEM_OPTS && addr.1 != StaticValue::unknown() {
+		let o = known_offset(addr.1);
+		let z = known_z(addr.1);
+		let y = known_y(addr.1);
+		let x = known_x(addr.1);
+
+		if let (None, None, None, None) = (o, z, y, x) {
+			if addr.1.into_mask().clr_bits == 1 {
+				code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+				code.push("function intrinsic:load_halfword_aligned".to_string());
+				code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
+			}
+		} else if let (Some(0), None, None, None) = (o, z, y, x) {
+			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+			code.push("function intrinsic:setptr".to_string());
+			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block ~ ~ ~ RecordItem.tag.Memory 1"));
+			code.push(format!("scoreboard players operation {dst} %= %%65536 reg"));
+		} else if let (Some(0), None, None, Some(x)) = (o, z, y, x) {
+			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+			code.push("scoreboard players operation %ptr reg /= %%4 reg".to_string());
+			code.push("scoreboard players operation %%z reg = %ptr reg".to_string());
+			code.push("scoreboard players operation %%z reg %= %%8 reg".to_string());
+			code.push("scoreboard players operation %ptr reg /= %%8 reg".to_string());
+			code.push("scoreboard players operation %ptr reg %= %%256 reg".to_string());
+			code.push("execute as @e[tag=memoryptr] store result entity @s Pos[2] double 1 run scoreboard players get %%z reg".to_string());
+			code.push("execute as @e[tag=memoryptr] store result entity @s Pos[1] double 1 run scoreboard players get %ptr reg".to_string());
+			code.push(format!("execute store result score {dst} run data get block {x} ~ ~ RecordItem.tag.Memory 1"));
+			code.push(format!("scoreboard players operation {dst} %= %%65536 reg"));
+		} else {
+			todo!("{:X?} {:X?} {:X?} {:X?} {:X?}", addr.1, o, z, y, x);
+		}
 	} else {
 		code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 		code.push("function intrinsic:load_halfword".to_string());
@@ -649,11 +837,13 @@ fn mem_load_16(dst: Register, addr: Register, code: &mut Vec<String>) {
 	}
 
 	if INSERT_MEM_PRINTS {
-		code.push(tellraw_mem_load(16, dst, addr));
+		code.push(tellraw_mem_load(16, dst, addr.0));
 	}
 }
 
-fn mem_load_8 (dst: Register, addr: Register, code: &mut Vec<String>) {
+const ENABLE_MEM_OPTS: bool = true;
+
+fn mem_load_8 (dst: Register, addr: RegisterWithInfo, code: &mut Vec<String>) {
 	if let Some(addr) = addr.get_const() {
 		assert!(addr >= 0);
 		let addr_offset = addr % 4;
@@ -667,6 +857,20 @@ fn mem_load_8 (dst: Register, addr: Register, code: &mut Vec<String>) {
 		}
 
 		code.push(format!("scoreboard players operation {dst} %= %%256 reg"));
+	} else if ENABLE_MEM_OPTS && addr.1 != StaticValue::unknown() && addr.1.into_mask() != (BitMask { set_bits: 0, clr_bits: 1 }) {
+		let o = known_offset(addr.1);
+		let z = known_z(addr.1);
+		let y = known_y(addr.1);
+		let x = known_x(addr.1);
+
+		if let (Some(0), None, None, None) = (o, z, y, x) {
+			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+			code.push("function intrinsic:setptr".to_string());
+			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block ~ ~ ~ RecordItem.tag.Memory 1"));
+			code.push(format!("scoreboard players operation {dst} %= %%256 reg"));
+		} else {
+			todo!("{:X?} {:X?} {:X?} {:X?} {:X?}", addr.1, o, z, y, x);
+		}
 	} else {
 		code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 		code.push("function intrinsic:setptr".to_string());
@@ -675,7 +879,7 @@ fn mem_load_8 (dst: Register, addr: Register, code: &mut Vec<String>) {
 	}
 
 	if INSERT_MEM_PRINTS {
-		code.push(tellraw_mem_load(8, dst, addr));
+		code.push(tellraw_mem_load(8, dst, addr.0));
 	}
 }
 
@@ -756,8 +960,14 @@ fn unsigned_greater_than_eq(dst: Register, lhs: Register, rhs: Register, code: &
 	unsigned_less_than_eq(dst, rhs, lhs, code, const_pool); /* swapped */
 }
 
-fn signed_div(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>) {
-	assert_ne!(lhs, dst);
+fn signed_div(dst: Register, mut lhs: Register, mut rhs: Register, code: &mut Vec<String>) {
+	if lhs == dst {
+		let new_lhs = Register::temp_lo(22);
+		code.push(format!("scoreboard players operation {new_lhs} = {lhs}"));
+		lhs = new_lhs;
+	} else {
+		code.push(format!("scoreboard players operation {dst} = {lhs}"));
+	}
 
 	// Minecraft division always rounds towards negative infinity, so we need to correct for that
 
@@ -770,7 +980,6 @@ fn signed_div(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String
 			code.push(format!("scoreboard players operation {rem} = {lhs}"));
 			code.push(format!("scoreboard players operation {rem} %= {rhs}"));
 
-			code.push(format!("scoreboard players operation {dst} = {lhs}"));
 			code.push(format!("scoreboard players operation {dst} /= {rhs}"));
 
 			code.push(format!("execute if score {lhs} matches ..-1 unless score {rem} matches 0 run scoreboard players add {dst} 1"));
@@ -783,13 +992,16 @@ fn signed_div(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String
 			code.push(format!("scoreboard players operation {rem} = {lhs}"));
 			code.push(format!("scoreboard players operation {rem} %= {rhs}"));
 
-			code.push(format!("scoreboard players operation {dst} = {lhs}"));
 			code.push(format!("scoreboard players operation {dst} /= {rhs}"));
 
 			code.push(format!("execute if score {lhs} matches 0.. unless score {rem} matches 0 run scoreboard players add {dst} 1"));
 		}
 	} else {
-		assert_ne!(rhs, dst);
+		if rhs == dst {
+			let new_rhs= Register::temp_lo(23);
+			code.push(format!("scoreboard players operation {new_rhs} = {rhs}"));
+			rhs = new_rhs;
+		}
 
 		// Minecraft division always rounds towards negative infinity, so we need to correct for that
 
@@ -807,7 +1019,7 @@ fn signed_div(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String
 	}
 }
 
-fn unsigned_div(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+fn unsigned_div(dst: Register, mut lhs: Register, mut rhs: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	// TODO: Find a better way to pick these registers
 	let d1 = Register::temp_lo(30);
 	let r1 = Register::temp_lo(31);
@@ -816,6 +1028,18 @@ fn unsigned_div(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<Stri
 	let d3 = Register::temp_lo(34);
 	let is_gtu = Register::temp_lo(35);
 	let lhs_lo = Register::temp_lo(36);
+
+	if lhs == dst {
+		let new_lhs = Register::temp_lo(37);
+		code.push(format!("scoreboard players operation {new_lhs} = {lhs}"));
+		lhs = new_lhs;
+	}
+
+	if rhs == dst {
+		let new_rhs = Register::temp_hi(38);
+		code.push(format!("scoreboard players operation {new_rhs} = {rhs}"));
+		rhs = new_rhs;
+	}
 
 	assert_ne!(lhs, dst);
 	assert_ne!(rhs, dst);
@@ -1160,28 +1384,11 @@ fn bit_run_to_mask(run: Range<u32>) -> i32 {
 	v
 }
 
-fn emit_constant_or(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>, mut lhs_info: Option<StaticValue>, mut rhs_info: Option<StaticValue>) {
-	if let Some(StaticValue::Mask(msk)) = lhs_info {
-		if msk.set_bits == 0 && msk.clr_bits == 0 {
-			lhs_info = None;
-		}
-	}
-
-	if let Some(StaticValue::Mask(msk)) = lhs_info {
-		if msk.set_bits == 0 && msk.clr_bits == 0 {
-			rhs_info = None;
-		}
-	}
+fn emit_constant_or(dst: Register, lhs: RegisterWithInfo, rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+	let RegisterWithInfo(lhs, lhs_info) = lhs;
 
 	if dst != lhs {
 		code.push(format!("scoreboard players operation {dst} = {lhs}"));
-	}
-
-	match (lhs_info, rhs_info) {
-		(None, None) => {}
-		_ => {
-			println!("DISCARDING OPT INFO FOR OR {:X?} {:X?} {:X}", lhs_info, rhs_info, rhs);
-		}
 	}
 
 	if rhs == -1 || rhs == 0 {
@@ -1220,7 +1427,7 @@ fn emit_constant_or(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Strin
 		let mask = 1 << rhs.trailing_zeros();
 
 		code.push(format!("# ({}) = ({}) | ({:#X})", dst, lhs, rhs));
-		code.push(format!("scoreboard players operation {dst} %= {mask}"));
+		code.push(format!("scoreboard players operation {dst} %= %%{mask} reg"));
 		code.push(format!("scoreboard players remove {dst} {}", -rhs));
 	} else {
 		let bit_runs = get_all_bit_runs(rhs).collect::<Vec<_>>();
@@ -1234,22 +1441,27 @@ fn emit_constant_or(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Strin
 			code.push(format!("scoreboard players operation {tmp_dst} %= %%{} reg", 1 << run.start));
 
 			code.push(format!("scoreboard players operation {tmp_dst2} = {dst}"));
-			code.push(format!("scoreboard players operation {tmp_dst2} %= %%{} reg", 1 << run.end));
+			code.push(format!("scoreboard players operation {tmp_dst2} %= %%{} reg", 1 << (run.end + 1)));
 			code.push(format!("scoreboard players operation {tmp_dst2} -= {tmp_dst}"));
 
 			code.push(format!("scoreboard players operation {dst} -= {tmp_dst}"));
 			code.push(format!("scoreboard players add {dst} {rhs}"));
 		} else {
-			todo!("{:X?} {:X?} {:#X}", lhs_info, rhs_info, rhs);
+			//todo!("{:X?} {:#X}", lhs_info, rhs);
+			// TODO:
+			code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
+			code.push(format!("scoreboard players set %param1%0 reg {rhs}"));
+			code.push("function intrinsic:or".to_string());
+			code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
 		}
 	}
 }
 
-fn emit_constant_and(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+fn emit_constant_and(dst: Register, lhs: RegisterWithInfo, rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	if rhs == 0 {
 		code.push(format!("scoreboard players set {dst} 0"));
 	} else if rhs == -1 {
-		if dst != lhs {
+		if dst != lhs.0 {
 			code.push(format!("scoreboard players operation {dst} = {lhs}"));
 		}
 	} else if rhs.leading_zeros() + rhs.trailing_ones() == 32 {
@@ -1257,7 +1469,7 @@ fn emit_constant_and(dst: Register, lhs: Register, rhs: i32, code: &mut Vec<Stri
 		
 		assert_eq!(bit_run.start, 0);
 
-		if dst != lhs {
+		if dst != lhs.0 {
 			code.push(format!("scoreboard players operation {dst} = {lhs}"));
 		}
 
@@ -1362,11 +1574,11 @@ fn emit_xor_low_bits(reg: Register, rhs: i32, code: &mut Vec<String>, const_pool
 	Ok(rhs & !(lo_bits_mod - 1))
 }
 
-fn emit_constant_xor(dst: Register, lhs: Register, mut rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+fn emit_constant_xor(dst: Register, lhs: RegisterWithInfo, mut rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	let old_code_len = code.len();
 	let old_rhs = rhs;
 
-	if dst != lhs {
+	if dst != lhs.0 {
 		code.push(format!("scoreboard players operation {dst} = {lhs}"));
 	}
 
@@ -1733,9 +1945,9 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 				code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
 			}
 		} 
-		&LirInstr::Or(dst, lhs, rhs, lhs_info, rhs_info) => {
+		&LirInstr::Or(dst, lhs, rhs) => {
 			if let Some(c) = rhs.get_const() {
-				emit_constant_or(dst, lhs, c, code, const_pool, lhs_info, rhs_info)
+				emit_constant_or(dst, lhs, c, code, const_pool)
 			} else {
 				code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
 				code.push(format!("scoreboard players operation %param1%0 reg = {rhs}"));
@@ -1945,6 +2157,14 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 		}
 		&LirInstr::PopReturnAddr => {
 			pop_return_addr(code);
+		}
+
+		LirInstr::Memset { dest, value, length, result } => {
+			code.push(format!("scoreboard players operation %param0%0 reg = {dest}"));
+			code.push(format!("scoreboard players operation %param1%0 reg = {value}"));
+			code.push(format!("scoreboard players operation %param2%0 reg = {length}"));
+			code.push("function intrinsic:memset".to_string());
+			code.push(format!("scoreboard players operation {result} = %return%0 reg"));
 		}
 
 		LirInstr::TurtleSetX(x) => {
@@ -2323,18 +2543,19 @@ mod test {
 
 	use super::*;
 
-	fn test_constant_func<I, E, F>(lhs_vals: I, rhs: i32, emitter: E, ex: F) 
+	fn test_constant_func<I, E, R, F>(lhs_vals: I, rhs: i32, emitter: E, ex: F) 
 		where
 			I: Iterator<Item=i32>,
-			E: FnOnce(Register, Register, i32, &mut Vec<String>, &mut HashSet<i32>),
+			E: FnOnce(Register, R, i32, &mut Vec<String>, &mut HashSet<i32>),
 			F: Fn(i32, i32) -> i32,
+			R: From<Register>,
 	{
 		let dst = Register::return_lo(0);
 		let lhs = Register::param_lo(0);
 
 		let mut code = Vec::new();
 		let mut const_pool = HashSet::new();
-		emitter(dst, lhs, rhs, &mut code, &mut const_pool);
+		emitter(dst, lhs.into(), rhs, &mut code, &mut const_pool);
 
 		let func = parse_function("wasmrunner:test_constant", &code);
 		let func_id = func.id.clone();
@@ -2465,7 +2686,7 @@ mod test {
 
 		let addr = Register::work_lo(0, 0);
 
-		mem_load_64(dst, addr, &mut code, &mut const_pool);
+		mem_load_64(dst, addr.into(), &mut code, &mut const_pool);
 
 		let func = parse_function("wasmrunner:test_constant_memory_load", &code);
 		let func_id = func.id.clone();
@@ -2565,7 +2786,7 @@ mod test {
 
 		let addr = Register::const_val(offset);
 
-		mem_load_16(dst, addr, &mut code);
+		mem_load_16(dst, addr.into(), &mut code);
 
 		let func = parse_function("wasmrunner:test_constant_memory_load", &code);
 		let func_id = func.id.clone();
@@ -2691,5 +2912,143 @@ mod test {
 				panic!("actual and expected values differed");
 			}
 		}
+	}
+
+	#[test]
+	fn test_memset() {
+		const PAGE_SIZE: i32 = 8 * 256 * 8;
+
+		for start_addr in [0, 4, 5, 6, 7] {
+			for length in [0, 1, 2, 3, 4, 5, 6, 7, 62] {
+				memset_tester(start_addr, 0x88, length);
+			}
+		}
+
+		memset_tester(0, 0x88, PAGE_SIZE);
+
+		memset_tester(3, 0x88, PAGE_SIZE * 2 + 47);
+	}
+
+	fn memset_tester(addr: i32, value: u8, num_bytes: i32) {
+		let code = vec![
+			format!("scoreboard players set %param0%0 reg {addr}"),
+			format!("scoreboard players set %param1%0 reg {value}"),
+			format!("scoreboard players set %param2%0 reg {num_bytes}"),
+			"function intrinsic:memset".to_string(),
+		];
+
+		let func = parse_function("wasmrunner:test_memset", &code);
+		let func_id = func.id.clone();
+
+		let ldw_0_code = std::fs::read_to_string("src/intrinsic/memset.mcfunction").unwrap();
+		let ldw_0 = parse_function("intrinsic:memset", ldw_0_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_1_code = std::fs::read_to_string("src/intrinsic/memset/body_words.mcfunction").unwrap();
+		let ldw_1 = parse_function("intrinsic:memset/body_words", ldw_1_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_2_code = std::fs::read_to_string("src/intrinsic/memset/tail_1_byte.mcfunction").unwrap();
+		let ldw_2 = parse_function("intrinsic:memset/tail_1_byte", ldw_2_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_3_code = std::fs::read_to_string("src/intrinsic/memset/tail_2_byte.mcfunction").unwrap();
+		let ldw_3 = parse_function("intrinsic:memset/tail_2_byte", ldw_3_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_4_code = std::fs::read_to_string("src/intrinsic/memset/tail_3_byte.mcfunction").unwrap();
+		let ldw_4 = parse_function("intrinsic:memset/tail_3_byte", ldw_4_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_5_code = std::fs::read_to_string("src/intrinsic/setptr.mcfunction").unwrap();
+		let ldw_5 = parse_function("intrinsic:setptr", ldw_5_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_6_code = std::fs::read_to_string("src/intrinsic/memset/head_1_byte.mcfunction").unwrap();
+		let ldw_6 = parse_function("intrinsic:memset/head_1_byte", ldw_6_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_7_code = std::fs::read_to_string("src/intrinsic/memset/head_2_byte.mcfunction").unwrap();
+		let ldw_7 = parse_function("intrinsic:memset/head_2_byte", ldw_7_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_8_code = std::fs::read_to_string("src/intrinsic/memset/head_3_byte.mcfunction").unwrap();
+		let ldw_8 = parse_function("intrinsic:memset/head_3_byte", ldw_8_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_9_code = std::fs::read_to_string("src/intrinsic/memset/mid_hi_byte.mcfunction").unwrap();
+		let ldw_9 = parse_function("intrinsic:memset/mid_hi_byte", ldw_9_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_10_code = std::fs::read_to_string("src/intrinsic/memset/mid_lo_byte.mcfunction").unwrap();
+		let ldw_10 = parse_function("intrinsic:memset/mid_lo_byte", ldw_10_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_11_code = std::fs::read_to_string("src/intrinsic/memset/mid_2_byte.mcfunction").unwrap();
+		let ldw_11 = parse_function("intrinsic:memset/mid_2_byte", ldw_11_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let ldw_12_code = std::fs::read_to_string("src/intrinsic/memset/normal.mcfunction").unwrap();
+		let ldw_12 = parse_function("intrinsic:memset/normal", ldw_12_code.lines().map(str::trim).filter(|l| !l.is_empty()));
+
+		let program = vec![func, ldw_0, ldw_1, ldw_2, ldw_3, ldw_4, ldw_5, ldw_6, ldw_7, ldw_8, ldw_9, ldw_10, ldw_11, ldw_12];
+
+		let mut interp = Interpreter::new(program, 0);
+
+		for i in 0..32 {
+			let c: i32 = 1 << i;
+			let holder = ScoreHolder::new(format!("%%{c}")).unwrap();
+			let obj = Objective::new("reg".to_string()).unwrap();
+			interp.set_named_score(&holder, &obj, c);
+		}
+
+		//interp.scoreboard.0.insert(Objective::new("reg".to_string()).unwrap(), Default::default());
+
+		for i in 0..8 * 256 * 8 * 3 {
+			let pos = get_address_pos(i * 4);
+			let v0 = 0x55_55_55_55;
+			interp.set_block_raw(pos, datapack_vm::interpreter::Block::Jukebox(v0));
+		}
+
+		let interp_idx = interp.get_func_idx(&func_id);
+		interp.set_pos(interp_idx);
+		interp.run_to_end().unwrap();
+
+		let mut bytes = Vec::new();
+
+		for i in 0..8 * 256 * 8 * 3 {
+			let pos = get_address_pos(i * 4);
+			let block = interp.get_block(pos);
+
+			if let Some(datapack_vm::interpreter::Block::Jukebox(m0)) = block {
+				bytes.extend(m0.to_le_bytes());
+			} else {
+				panic!();
+			}
+		}
+
+		let modified_range = addr..(addr + num_bytes);
+
+		for (i, byte) in bytes.iter().copied().enumerate() {
+			if modified_range.contains(&(i as i32)) {
+				if byte != value {
+					eprintln!("Byte wasn't written to but should have been!");
+					eprintln!("Start: {:#X}", addr);
+					eprintln!("Value: {:#X}", value);
+					eprintln!("Length: {:#X}", num_bytes);
+					eprintln!();
+					eprintln!("Address: {:#X}", i);
+					eprintln!("Actual value: {:#X}", byte);
+					eprintln!("Actual word: {:X?}", &bytes[(i / 4) * 4..][..4]);
+					panic!()
+				}
+			} else if byte != 0x55 {
+				eprintln!("Byte should not have been written to!");
+				eprintln!("Start: {:#X}", addr);
+				eprintln!("Value: {:#X}", value);
+				eprintln!("Length: {:#X}", num_bytes);
+
+				eprintln!("Actual value: {:#X}", byte);
+				panic!();
+			}
+		}
+
+		/*if expected != actual {
+			eprintln!("Code:");
+			for c in code.iter() {
+				eprintln!("    {}", c);
+			}
+			eprintln!("Actual: {:#X}", actual);
+			eprintln!("Expected: {:#X}", expected);
+			panic!("actual and expected values differed");
+		}*/
 	}
 }

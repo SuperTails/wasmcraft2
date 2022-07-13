@@ -889,7 +889,13 @@ impl ValidationState<'_> {
 								assert_eq!(returns.len(), 0);
 								builder.current_block_mut().body.push(SsaInstr::TurtlePaste);
 							}
-							("env", "sleep") => {
+							("env", "memset") => {
+								assert_eq!(params.len(), 3);
+								assert_eq!(returns.len(), 1);
+								let instr = SsaInstr::Memset { dest: params[0], value: params[1], length: params[2], result: returns[0] };
+								builder.current_block_mut().body.push(instr);
+							}
+							("env", "sleep" | "mc_sleep") => {
 								assert_eq!(params.len(), 0);
 								assert_eq!(returns.len(), 0);
 
@@ -905,6 +911,10 @@ impl ValidationState<'_> {
 								assert_eq!(returns.len(), 0);
 
 								builder.current_block_mut().body.push(SsaInstr::PrintInt(params[0]));
+							}
+							("env", "mc_putc") => {
+								// TODO:
+								println!("ignoring putc");
 							}
 							_ => todo!("{:?}", import),
 						}

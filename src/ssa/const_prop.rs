@@ -30,9 +30,70 @@ pub enum StaticValue {
 	Constant(TypedValue),
 }
 
+impl Default for StaticValue {
+	fn default() -> Self {
+		StaticValue::unknown()
+	}
+}
+
 impl StaticValue {
-	const fn unknown() -> Self {
+	pub const fn unknown() -> Self {
 		StaticValue::Mask(BitMask { set_bits: 0, clr_bits: 0 })
+	}
+
+	pub fn into_mask(self) -> BitMask {
+		match self {
+			StaticValue::Mask(msk) => msk,
+			StaticValue::Constant(TypedValue::I32(c)) => BitMask { set_bits: c as u32 as u64, clr_bits: !(c as u32 as u64) },
+			StaticValue::Constant(TypedValue::I64(c)) => BitMask { set_bits: c as u64, clr_bits: c as u64 },
+		}
+	}
+
+	pub fn add(self, other: Self) -> Self {
+		match (self, other) {
+			(StaticValue::Constant(l), StaticValue::Constant(r)) => {
+				match (l, r) {
+					(TypedValue::I32(l), TypedValue::I32(r)) => {
+						l.wrapping_add(r).into()
+					}
+					(TypedValue::I64(l), TypedValue::I64(r)) => {
+						l.wrapping_add(r).into()
+					}
+					_ => panic!(),
+				}
+			}
+			(StaticValue::Constant(cst), StaticValue::Mask(msk)) |
+			(StaticValue::Mask(msk), StaticValue::Constant(cst)) => {
+				let c = match cst {
+					TypedValue::I32(c) => c as u32 as u64,
+					TypedValue::I64(c) => c as u64,
+				};
+
+				if !msk.clr_bits & c == 0 {
+					BitMask { set_bits: msk.set_bits | c, clr_bits: msk.clr_bits & !c }.into()
+				} else {
+					let ok_bits1 = msk.clr_bits.trailing_ones();
+					let ok_bits2 = c.trailing_zeros();
+					let ok_bits = ok_bits1.min(ok_bits2);
+					let clr_bits = (1 << ok_bits) - 1;
+					BitMask { set_bits: 0, clr_bits }.into()
+				}
+			}
+			(StaticValue::Mask(msk1), StaticValue::Mask(msk2)) => {
+				if !msk1.clr_bits & !msk2.clr_bits == 0 {
+					BitMask { set_bits: msk1.set_bits | msk2.set_bits, clr_bits: msk1.clr_bits & msk2.clr_bits }.into()
+				} else {
+					let ok_bits1 = msk1.clr_bits.trailing_ones();
+					let ok_bits2 = msk2.clr_bits.trailing_ones();
+					let ok_bits = ok_bits1.min(ok_bits2);
+					if ok_bits >= 29 {
+						todo!()
+					}
+					let clr_bits = (1 << ok_bits) - 1;
+					BitMask { set_bits: 0, clr_bits }.into()
+				}
+			}
+		}
 	}
 }
 
@@ -124,6 +185,8 @@ fn merge_var(state: &mut StaticState, rhs_var: TypedSsaVar, rhs_value: StaticVal
 
 		*lhs_value = new_lhs;
 	} else {
+		//println!("{:?} has no value, setting const", rhs_var);
+
 		state.insert(rhs_var, rhs_value);
 	}
 }
@@ -195,6 +258,8 @@ pub fn get_func_constants(func: &SsaFunction) -> HashMap<BlockId, StaticState> {
 	while changed {
 		changed = false;
 
+		//println!("\nNew iteration");
+
 		for node in reverse_postorder.iter() {
 			let mut entry_state = states.entry(*node).or_insert_with(StaticState::new).clone();
 
@@ -206,7 +271,11 @@ pub fn get_func_constants(func: &SsaFunction) -> HashMap<BlockId, StaticState> {
 
 				let pred_state = states.get(pred).unwrap_or(&empty_state);
 
-				match &pred_block.term {
+				for (var, val) in pred_state.iter() {
+					merge_var(&mut entry_state, *var, *val);
+				}
+
+				/*match &pred_block.term {
 					super::SsaTerminator::ScheduleJump(t, _) |
 					super::SsaTerminator::Jump(t) => {
 						for (dst, src) in this_block.params.iter().zip(t.params.iter()) {
@@ -252,7 +321,7 @@ pub fn get_func_constants(func: &SsaFunction) -> HashMap<BlockId, StaticState> {
 					},
 					super::SsaTerminator::Return(_) |
 					super::SsaTerminator::Unreachable => unreachable!(),
-				}
+				}*/
 			}
 
 			let block = func.get(*node);
@@ -260,10 +329,15 @@ pub fn get_func_constants(func: &SsaFunction) -> HashMap<BlockId, StaticState> {
 			do_block_const_prop_from(*node, block, &mut entry_state);
 			let new_exit_state = entry_state;
 
+
 			let old_exit_state = states.get(node).unwrap();
 			if old_exit_state != &new_exit_state {
 				changed = true;
+				//println!("Block {:?} changed", node);
+				//print_state_diff(old_exit_state, &new_exit_state);
 				states.insert(*node, new_exit_state);
+			} else {
+				//println!("Block {:?} did not change", node);
 			}
 		}
 	}
@@ -317,6 +391,11 @@ pub fn do_block_const_prop_from(_id: BlockId, block: &SsaBasicBlock, constants: 
 
 	for instr in block.body.iter() {
 		match *instr {
+			SsaInstr::GlobalGet(dst, _) => {
+				// TODO: FIXME: HACK:
+				// THIS IS AN AWFUL HACK
+				constants.insert(dst, BitMask { set_bits: 0, clr_bits: 0b1111 }.into());
+			}
 			SsaInstr::Load32U(_, dst, _) => {
 				constants.insert(dst, BitMask { set_bits: 0, clr_bits: 0xFFFF_FFFF_0000_0000 }.into());
 			}
@@ -589,6 +668,9 @@ pub fn do_block_const_prop_from(_id: BlockId, block: &SsaBasicBlock, constants: 
 								let ok_bits1 = msk.clr_bits.trailing_ones();
 								let ok_bits2 = c.trailing_zeros();
 								let ok_bits = ok_bits1.min(ok_bits2);
+								if ok_bits >= 30 {
+									todo!()
+								}
 								let clr_bits = (1 << ok_bits) - 1;
 								constants.insert(dst, BitMask { set_bits: 0, clr_bits }.into());
 							}
@@ -600,7 +682,7 @@ pub fn do_block_const_prop_from(_id: BlockId, block: &SsaBasicBlock, constants: 
 								let ok_bits1 = msk1.clr_bits.trailing_ones();
 								let ok_bits2 = msk2.clr_bits.trailing_ones();
 								let ok_bits = ok_bits1.min(ok_bits2);
-								if ok_bits >= 29 {
+								if ok_bits >= 30 {
 									todo!()
 								}
 								let clr_bits = (1 << ok_bits) - 1;
