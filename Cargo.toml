@@ -5,6 +5,9 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+servertests = []
+
 [[bin]]
 name = "wasm_runner"
 path = "src/bin/main.rs"
@@ -15,11 +18,13 @@ path = "src/lib.rs"
 
 [dependencies]
 wasmparser = "*"
-datapack_vm = { git = "https://github.com/SuperTails/datapackvm.git" }
+datapack_vm = { git = "https://github.com/SuperTails/datapackvm.git", branch = "interning" }
 #datapack_vm = { path = "../../datapackvm" }
 datapack_common = { git = "https://github.com/SuperTails/datapack_common.git" }
 #datapack_common = { path = "../../datapack_common" }
 command_parser = { git = "https://github.com/Inky-developer/command-parser" }
+hashers = "*"
+clap = { version = "3.2.11", features = ["derive"] }
 
 [dev-dependencies]
 rcon = { version = "0", features = ["rt-async-std"] }

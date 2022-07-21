@@ -743,7 +743,12 @@ fn mem_load_32(dst: Register, addr: RegisterWithInfo, code: &mut Vec<String>, co
 			code.push("function intrinsic:setptr".to_string());
 			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block ~ ~ ~ RecordItem.tag.Memory 1"));
 		} else {
-			todo!("{:X?} {:X?} {:X?} {:X?} {:X?}", addr.1, o, z, y, x);
+			println!("TODO: {:X?} {:X?} {:X?} {:X?} {:X?}", addr.1, o, z, y, x);
+
+			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
+			code.push("function intrinsic:setptr".to_string());
+			code.push("function intrinsic:load_word".to_string());
+			code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
 		}
 	} else {
 		code.push(format!("scoreboard players operation %ptr reg = {addr}"));
@@ -841,7 +846,7 @@ fn mem_load_16(dst: Register, addr: RegisterWithInfo, code: &mut Vec<String>) {
 	}
 }
 
-const ENABLE_MEM_OPTS: bool = true;
+const ENABLE_MEM_OPTS: bool = false;
 
 fn mem_load_8 (dst: Register, addr: RegisterWithInfo, code: &mut Vec<String>) {
 	if let Some(addr) = addr.get_const() {
@@ -1323,9 +1328,11 @@ fn turtle_set_block(reg: Register, code: &mut Vec<String>) {
 		code.push(format!("execute at @e[tag=turtle] if score {reg} matches {idx} run setblock ~ ~ ~ {block} replace"));
 	}
 
+	let reg_name = reg.scoreboard_pair().0;
+
 	let mut s = format!("execute unless score {reg} matches 0..{} run ", BLOCKS.len() - 1);
 	s.push_str(r#"tellraw @a [{"text":"Attempt to set invalid block"},{"score":{"name":""#);
-	s.push_str(&reg.to_string());
+	s.push_str(reg_name.as_ref());
 	s.push_str(r#"","objective":"reg"}}]"#);
 	code.push(s);
 
@@ -2121,8 +2128,8 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 					}
 				}
 
-				// TODO: Should this also be a tellraw?
-				code.push(format!("# !INTERPRETER: ASSERT unless score {cond_taken} matches 0"))
+				code.push(format!("# !INTERPRETER: ASSERT unless score {cond_taken} matches 0"));
+				code.push(format!("execute if score {cond_taken} matches 0 run tellraw @a [{{\"text\":\"BAD CALL INDIRECT\"}}]"));
 			} else {
 				todo!()
 			}
@@ -2259,6 +2266,7 @@ fn emit_block(block_id: BlockId, block: &LirBasicBlock, parent: &LirProgram, con
 					code.push(format!("execute if score {cond_taken} matches 0 run function {default_func}"));
 				} else {
 					code.push(format!("# !INTERPRETER: ASSERT unless score {cond_taken} matches 0"));
+					code.push(format!("execute if score {cond_taken} matches 0 run tellraw @a [{{\"text\":\"BAD JUMP TABLE\"}}]"));
 				}
 			} else {
 				todo!()

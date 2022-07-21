@@ -2,7 +2,7 @@ use std::{collections::{HashSet, HashMap}, fmt};
 
 use wasmparser::{Type, MemoryImmediate};
 
-use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half}, ssa::{TypedSsaVar, SsaVarOrConst, liveness::FullLivenessInfo, const_prop::{StaticState, self}}, jump_mode, JumpMode};
+use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half}, ssa::{TypedSsaVar, SsaVarOrConst, liveness::FullLivenessInfo, const_prop::{StaticState, self}}, jump_mode, JumpMode, CompileContext};
 
 use super::{SsaProgram, SsaFunction, SsaBasicBlock, BlockId, reg_alloc::*, liveness::{LivenessInfo, SimpleLivenessInfo}, call_graph::CallGraph, Table, const_prop::StaticValue, interp::TypedValue};
 
@@ -1285,14 +1285,21 @@ fn gen_prologue(ssa_func: &SsaFunction, ssa_program: &SsaProgram, ra: &mut dyn R
 	result
 }
 
-fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &CallGraph, constant_pool: &mut HashSet<i32>) -> LirFunction {
-	let mut reg_alloc = FullRegAlloc::analyze(ssa_func);
+fn lower(ctx: &CompileContext, ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &CallGraph, constant_pool: &mut HashSet<i32>) -> LirFunction {
+	let mut reg_alloc: Box<dyn RegAlloc> = match ctx.regalloc {
+		crate::RegAllocMode::Noop => Box::new(NoopRegAlloc::analyze(ssa_func)),
+		crate::RegAllocMode::Full => Box::new(FullRegAlloc::analyze(ssa_func)),
+	};
 
 	let mut builder = LirFuncBuilder::new(ssa_func);
 
 	let liveness_info = FullLivenessInfo::analyze(ssa_func);
 
-	let func_static_values = const_prop::get_func_constants(ssa_func);
+	let func_static_values = if ctx.do_const_prop {
+		const_prop::get_func_constants(ssa_func)
+	} else {
+		HashMap::new()
+	};
 
 	let empty_static_values = HashMap::new();
 
@@ -1300,13 +1307,13 @@ fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &CallGrap
 
 	for (block_id, block) in ssa_func.iter() {
 		let static_values = func_static_values.get(&block_id).unwrap_or(&empty_static_values);
-		lower_block(ssa_program, ssa_func, block_id, block, &mut reg_alloc, &liveness_info, call_graph, &mut builder, static_values);
+		lower_block(ssa_program, ssa_func, block_id, block, &mut *reg_alloc, &liveness_info, call_graph, &mut builder, static_values);
 	}
 
 	let locals = ssa_program.local_types.get(&(ssa_func.func_id() as usize)).unwrap();
 
 	let start_block = &mut builder.body.iter_mut().find(|(block_id, _block)| block_id.block == 0).unwrap().1;
-	let prologue = gen_prologue(ssa_func, ssa_program, &mut reg_alloc);
+	let prologue = gen_prologue(ssa_func, ssa_program, &mut *reg_alloc);
 	start_block.body.splice(0..0, prologue);
 
 	let end_block = &mut builder.body.iter_mut().find(|(block_id, _block)| block_id.block == 1).unwrap().1;
@@ -1314,26 +1321,28 @@ fn lower(ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &CallGrap
 
 	let blocks = builder.body;
 
-	constant_pool.extend(reg_alloc.const_pool);
+	constant_pool.extend(reg_alloc.const_pool().clone());
 
 	LirFunction { code: blocks, returns: ssa_func.returns.clone() }
 }
 
-pub fn convert(ssa_program: SsaProgram) -> LirProgram {
+pub fn convert(ctx: &CompileContext, ssa_program: SsaProgram) -> LirProgram {
 	let call_graph = CallGraph::new(&ssa_program);
 
 	let mut constants = HashSet::new();
 
-	let code = ssa_program.code.iter().map(|block| lower(block, &ssa_program, &call_graph, &mut constants)).collect::<Vec<_>>();
+	let code = ssa_program.code.iter().map(|block| lower(ctx, block, &ssa_program, &call_graph, &mut constants)).collect::<Vec<_>>();
 
-	for (func_id, func) in code.iter().enumerate() {
-		println!("==== func {:?} ==== ", func_id);
-		for (block_id, block) in func.code.iter() {
-			println!("-- block {:?} --", block_id);
-			for instr in block.body.iter() {
-				println!("{:?}", instr);
+	if ctx.dump_lir {
+		for (func_id, func) in code.iter().enumerate() {
+			println!("==== func {:?} ==== ", func_id);
+			for (block_id, block) in func.code.iter() {
+				println!("-- block {:?} --", block_id);
+				for instr in block.body.iter() {
+					println!("{:?}", instr);
+				}
+				println!("{:?}", block.term);
 			}
-			println!("{:?}", block.term);
 		}
 	}
 

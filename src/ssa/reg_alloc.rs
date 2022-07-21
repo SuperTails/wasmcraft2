@@ -18,6 +18,8 @@ pub trait RegAlloc {
 	fn get_temp(&mut self) -> Register;
 
 	fn get_temp_double(&mut self) -> DoubleRegister;
+
+	fn const_pool(&self) -> &HashSet<i32>;
 }
 
 pub struct NoopRegAlloc {
@@ -62,6 +64,10 @@ impl RegAlloc for NoopRegAlloc {
 		let reg = DoubleRegister::temp(self.temp);
 		self.temp += 1;
 		reg
+	}
+
+	fn const_pool(&self) -> &HashSet<i32> {
+		&self.const_pool
 	}
 }
 
@@ -366,6 +372,10 @@ impl RegAlloc for FullRegAlloc {
 		let reg = DoubleRegister::temp(self.temp);
 		self.temp += 1;
 		reg
+	}
+
+	fn const_pool(&self) -> &HashSet<i32> {
+		&self.const_pool
 	}
 }
 

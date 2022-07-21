@@ -725,25 +725,38 @@ pub fn do_strength_reduction(block: &mut SsaBasicBlock, constants: &StaticState)
 				let lhs_val = constants.get(&lhs).copied();
 				let rhs_val = get_sv(rhs, constants);
 
-				if let (Some(lhs_val), Some(rhs_val)) = (lhs_val, rhs_val) {
-					let lhs_is_pos = match lhs_val {
-						StaticValue::Mask(msk) if lhs.ty() == Type::I32 => msk.clr_bits & (1 << 31) != 0,
-						StaticValue::Mask(msk) if lhs.ty() == Type::I64 => msk.clr_bits & (1 << 63) != 0,
-						StaticValue::Constant(TypedValue::I32(c)) => c >= 0,
-						StaticValue::Constant(TypedValue::I64(c)) => c >= 0,
-						_ => panic!(),
-					};
+				let mut ok = false;
 
-					let rhs_is_pos = match rhs_val {
-						StaticValue::Mask(msk) if rhs.ty() == Type::I32 => msk.clr_bits & (1 << 31) != 0,
-						StaticValue::Mask(msk) if rhs.ty() == Type::I64 => msk.clr_bits & (1 << 63) != 0,
-						StaticValue::Constant(TypedValue::I32(c)) => c >= 0,
-						StaticValue::Constant(TypedValue::I64(c)) => c >= 0,
-						_ => panic!(),
-					};
+				if let Some(StaticValue::Constant(TypedValue::I64(cst_rhs))) = rhs_val {
+					if cst_rhs.count_ones() == 1 {
+						let new_rhs = SsaVarOrConst::Const(TypedValue::I64(cst_rhs.trailing_zeros() as i64));
 
-					if lhs_is_pos && rhs_is_pos {
-						*instr = SsaInstr::DivS(dst, lhs, rhs);
+						*instr = SsaInstr::ShrU(dst, lhs, new_rhs);
+						ok = true;
+					}
+				}
+
+				if !ok {
+					if let (Some(lhs_val), Some(rhs_val)) = (lhs_val, rhs_val) {
+						let lhs_is_pos = match lhs_val {
+							StaticValue::Mask(msk) if lhs.ty() == Type::I32 => msk.clr_bits & (1 << 31) != 0,
+							StaticValue::Mask(msk) if lhs.ty() == Type::I64 => msk.clr_bits & (1 << 63) != 0,
+							StaticValue::Constant(TypedValue::I32(c)) => c >= 0,
+							StaticValue::Constant(TypedValue::I64(c)) => c >= 0,
+							_ => panic!(),
+						};
+
+						let rhs_is_pos = match rhs_val {
+							StaticValue::Mask(msk) if rhs.ty() == Type::I32 => msk.clr_bits & (1 << 31) != 0,
+							StaticValue::Mask(msk) if rhs.ty() == Type::I64 => msk.clr_bits & (1 << 63) != 0,
+							StaticValue::Constant(TypedValue::I32(c)) => c >= 0,
+							StaticValue::Constant(TypedValue::I64(c)) => c >= 0,
+							_ => panic!(),
+						};
+
+						if lhs_is_pos && rhs_is_pos {
+							*instr = SsaInstr::DivS(dst, lhs, rhs);
+						}
 					}
 				}
 			}

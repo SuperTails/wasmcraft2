@@ -2,7 +2,7 @@ use std::{ops::{Index, IndexMut}, collections::HashMap};
 
 use wasmparser::{Type, Operator, MemoryImmediate, DataKind, ElementKind, ElementItem, ExternalKind};
 
-use crate::{wasm_file::{WasmFile, eval_init_expr_single}, ssa::{SsaBasicBlock, BlockId, SsaTerminator, TypedSsaVar, SsaInstr, SsaVarAlloc, JumpTarget, SsaProgram, SsaFunction, Memory, Table, SsaVarOrConst}};
+use crate::{wasm_file::{WasmFile, eval_init_expr_single}, ssa::{SsaBasicBlock, BlockId, SsaTerminator, TypedSsaVar, SsaInstr, SsaVarAlloc, JumpTarget, SsaProgram, SsaFunction, Memory, Table, SsaVarOrConst}, CompileContext};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UncertainVar {
@@ -1345,7 +1345,7 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 	SsaFunction::new(blocks, func_ty.params.clone(), func_ty.returns.clone())
 }
 
-pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {
+pub fn wasm_to_ssa(ctx: &CompileContext, wasm_file: &WasmFile) -> SsaProgram {
 	let mut code = Vec::new();
 
 	let mut local_types = HashMap::new();
@@ -1452,11 +1452,15 @@ pub fn wasm_to_ssa(wasm_file: &WasmFile) -> SsaProgram {
 		exports,
 	};
 
-	for func in program.code.iter_mut() {
-		crate::ssa::const_prop::do_func_const_prop(func);
+	if ctx.do_const_prop {
+		for func in program.code.iter_mut() {
+			crate::ssa::const_prop::do_func_const_prop(func);
+		}
 	}
 
-	crate::ssa::dce::do_dead_code_elim(&mut program);
+	if ctx.do_dead_code_elim {
+		crate::ssa::dce::do_dead_code_elim(&mut program);
+	}
 
 	for func in program.code.iter() {
 		validate_ssa_jump_params(func);
