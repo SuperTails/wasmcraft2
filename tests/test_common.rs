@@ -234,7 +234,7 @@ pub mod wasm_suite_prelude {
 	use command_parser::CommandParse;
 use datapack_common::functions::command_components::{FunctionIdent, ScoreHolder, Objective};
 use datapack_vm::Interpreter;
-	use wasm_runner::{wasm_file::WasmFile, ssa::{interp::{SsaInterpreter, TypedValue}, lir_emitter, BlockId}, validator::wasm_to_ssa, lir::{interp::LirInterpreter, Register}, pack_emitter::{self, get_mc_id}};
+	use wasm_runner::{wasm_file::WasmFile, ssa::{interp::{SsaInterpreter, TypedValue}, lir_emitter, BlockId}, validator::wasm_to_ssa, lir::{interp::LirInterpreter, Register}, pack_emitter::{self, get_mc_id}, CompileContext};
 use wasmparser::Type;
 
 	use super::sexpr::SExpr;
@@ -250,36 +250,36 @@ use wasmparser::Type;
 			match *param {
 				TypedValue::I32(v) => {
 					let (holder, obj) = Register::param_lo(param_idx as u32).scoreboard_pair();
-					interp.scoreboard.set(&holder, &obj, v);
+					interp.set_named_score(&holder, &obj, v);
 				}
 				TypedValue::I64(v) => {
 					let v_lo = v as i32;
 					let v_hi = (v >> 32) as i32;
 
 					let (holder_lo, obj_lo) = Register::param_lo(param_idx as u32).scoreboard_pair();
-					interp.scoreboard.set(&holder_lo, &obj_lo, v_lo);
+					interp.set_named_score(&holder_lo, &obj_lo, v_lo);
 
 					let (holder_hi, obj_hi) = Register::param_hi(param_idx as u32).scoreboard_pair();
-					interp.scoreboard.set(&holder_hi, &obj_hi, v_hi);
+					interp.set_named_score(&holder_hi, &obj_hi, v_hi);
 				}
 			}
 		}
 	}
 
-	pub fn get_returns(interp: &Interpreter, return_tys: &[Type]) -> Vec<TypedValue> {
+	pub fn get_returns(interp: &mut Interpreter, return_tys: &[Type]) -> Vec<TypedValue> {
 		return_tys.iter().enumerate().map(|(idx, ty)| {
 			match ty {
 				Type::I32 => {
 					let (holder, obj) = Register::return_lo(idx as u32).scoreboard_pair();
-					let v = interp.scoreboard.get(&holder, &obj).unwrap();
+					let v = interp.get_named_score(&holder, &obj).unwrap();
 					TypedValue::I32(v)
 				}
 				Type::I64 => {
 					let (holder_lo, obj_lo) = Register::return_lo(idx as u32).scoreboard_pair();
-					let v_lo = interp.scoreboard.get(&holder_lo, &obj_lo).unwrap();
+					let v_lo = interp.get_named_score(&holder_lo, &obj_lo).unwrap();
 
 					let (holder_hi, obj_hi) = Register::return_hi(idx as u32).scoreboard_pair();
-					let v_hi = interp.scoreboard.get(&holder_hi, &obj_hi).unwrap();
+					let v_hi = interp.get_named_score(&holder_hi, &obj_hi).unwrap();
 
 					let v = (v_lo as u32 as i64) | ((v_hi as i64) << 32);
 					TypedValue::I64(v)
@@ -320,7 +320,7 @@ use wasmparser::Type;
 
 				test_state.interp.run_to_end().unwrap();
 
-				get_returns(&test_state.interp, return_tys)
+				get_returns(&mut test_state.interp, return_tys)
 			}
 			SExpr::Node { name, params } if name == "i32.const" => {
 				if let [SExpr::Int(i)] = &params[..] {
@@ -388,13 +388,12 @@ use wasmparser::Type;
 	}
 
 	pub fn load_state(wasm_data: &[u8]) -> TestState {
-		let wasm_file = WasmFile::from(wasm_data);
+		let ctx = CompileContext::new_from_opt(1);
 
-		let program = wasm_to_ssa(&wasm_file);
-
-		let program = lir_emitter::convert(program);
-
-		let program = pack_emitter::emit_program(&program);
+		let wasm_file = ctx.compute_wasm_file(wasm_data);
+		let program = ctx.compute_ssa(&wasm_file);
+		let program = ctx.compute_lir(program);
+		let program = ctx.compute_datapack(&program);
 
 		let mut interp = Interpreter::new(program, 0);
 

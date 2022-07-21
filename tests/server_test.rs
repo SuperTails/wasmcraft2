@@ -2,7 +2,7 @@
 mod sexpr;
 
 use rcon::{Connection, AsyncStdStream};
-use wasm_runner::{ssa::{interp::TypedValue, lir_emitter, BlockId}, lir::Register, wasm_file::WasmFile, validator::wasm_to_ssa, pack_emitter::{self, get_mc_id}};
+use wasm_runner::{ssa::{interp::TypedValue, lir_emitter, BlockId}, lir::Register, wasm_file::WasmFile, validator::wasm_to_ssa, pack_emitter::{self, get_mc_id}, CompileContext};
 use wasmparser::Type;
 
 type Server = Connection<AsyncStdStream>;
@@ -101,14 +101,13 @@ pub fn load_state(wasm_data: &[u8]) -> TestState {
 	async_std::task::block_on(load_state_async(wasm_data))
 }
 
-async fn load_state_async<'a>(wasm_data: &'a [u8]) -> TestState<'a> {
-	let wasm_file = WasmFile::from(wasm_data);
+async fn load_state_async(wasm_data: &[u8]) -> TestState {
+	let ctx = CompileContext::new_from_opt(1);
 
-	let program = wasm_to_ssa(&wasm_file);
-
-	let program = lir_emitter::convert(program);
-
-	let program = pack_emitter::emit_program(&program);
+	let wasm_file = ctx.compute_wasm_file(wasm_data);
+	let program = ctx.compute_ssa(&wasm_file);
+	let program = ctx.compute_lir(program);
+	let program = ctx.compute_datapack(&program);
 
 	pack_emitter::persist_program(std::path::Path::new("./tests/server_test/world/datapacks/out"), &program);
 
