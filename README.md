@@ -47,12 +47,15 @@ First, compile it to WebAssembly:
 Ensure you have Rust version >= 1.58 installed, which is very recent. To update Rust, run `rustup update`.
 Then, simply navigate to the wasmcraft2 directory and run:
 
-`cargo run --release -- ../foo.wasm ../nameofdatapack`
+`cargo run --release -- ../foo.wasm -o ../nameofdatapack`
 
 This will create a datapack in the folder `nameofdatapack`, which can be directly placed in the datapacks folder
-of any Minecraft Java Edition world (this has only been tested on 1.18, but should work on older versions as well).
+of any Minecraft Java Edition world (this has only been tested on 1.18/1.19, but should work on older and newer versions as well).
 
-*Note that due to limitations with Minecraft commands, this needs to fill a few chunks near 0, 0 with jukeboxes,
+*Warning: all of the contents of the folder `../nameofdatapack` will be deleted.
+Do **NOT** point it to a folder with important files!*
+
+*Warning: due to limitations with Minecraft commands, this needs to fill a few chunks near 0, 0 with jukeboxes,
 so do **NOT** run this in a world with builds you don't want destroyed!*
 
 Run these commands:
@@ -73,7 +76,7 @@ And you should see the numbers 0 to 9 printed out in the chat.
 Use fixed point operations instead, e.g. [libfixmath](https://github.com/PetteriAimonen/libfixmath)
 * Bitwise operations and 64-bit divisions are *absurdly* slow.
 * 8-bit and 16-bit accesses are fairly slow, and all memory accesses have not-insignificant overhead.
-* Manual calls to `sleep()` have to be inserted in long-running code,
+* Manual calls to `mc_sleep()` have to be inserted in long-running code,
 because Minecraft can only run a limited number of commands per tick.
 * The API is very limited
 
