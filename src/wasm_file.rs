@@ -1,15 +1,15 @@
-use wasmparser::{Data, Element, Export, FuncType, Global, Import, ImportSectionEntryType, MemoryType, Operator, Parser, Payload, TableType, Type, TypeDef, TypeOrFuncType, ExternalKind, GlobalType, InitExpr};
+use wasmparser::{Data, Element, Export, FuncType, Global, Import, MemoryType, Operator, Parser, Payload, TableType, BlockType, ExternalKind, GlobalType, InitExpr, ValType, Type, TypeRef};
 
 use crate::ssa::interp::TypedValue;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DataList<'a> {
     pub data: Vec<Data<'a>>,
 }
 
 impl<'a> DataList<'a> {
     pub fn new() -> Self {
-        DataList { data: Vec::new() }
+        Self::default()
     }
 
     pub fn add_data(&mut self, d: Data<'a>) {
@@ -66,15 +66,15 @@ impl<'a> GlobalList<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct FuncImport<'a> {
     pub module: &'a str,
-    pub field: Option<&'a str>,
+    pub field: &'a str,
     pub ty: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct GlobalImport<'a> {
     pub module: &'a str,
-    pub field: Option<&'a str>,
-    pub content_type: Type,
+    pub field: &'a str,
+    pub content_type: ValType,
     pub mutable: bool,
 }
 
@@ -91,11 +91,11 @@ impl<'a> ImportList<'a> {
 
     pub fn add_import(&mut self, i: Import<'a>) {
         match i.ty {
-            ImportSectionEntryType::Function(ty) => {
-                self.func_imports.push(FuncImport { module: i.module, field: i.field, ty })
+            TypeRef::Func(ty) => {
+                self.func_imports.push(FuncImport { module: i.module, field: i.name, ty })
             }
-            ImportSectionEntryType::Global(GlobalType { content_type, mutable }) => {
-                self.global_imports.push(GlobalImport { module: i.module, field: i.field, content_type, mutable })
+            TypeRef::Global(GlobalType { content_type, mutable }) => {
+                self.global_imports.push(GlobalImport { module: i.module, field: i.name, content_type, mutable })
             }
             _ => todo!("{:?}", i),
         }
@@ -118,8 +118,8 @@ impl<'a> ExportList<'a> {
 
     pub fn find_func(&self, name: &str) -> Option<usize> {
         for export in self.exports.iter() {
-            if export.field == name {
-                assert!(matches!(export.kind, ExternalKind::Function));
+            if export.name == name {
+                assert!(matches!(export.kind, ExternalKind::Func));
                 return Some(export.index as usize);
             }
         }
@@ -146,54 +146,51 @@ impl MemoryList {
 #[derive(Debug)]
 pub struct FunctionBody<'a> {
     pub operators: Vec<Operator<'a>>,
-    pub locals: Vec<(u32, Type)>,
+    pub locals: Vec<(u32, ValType)>,
 }
 
 #[derive(Debug)]
-pub struct TypeList<'a> {
-    pub types: Vec<TypeDef<'a>>,
+pub struct TypeList {
+    pub types: Vec<Type>,
 }
 
-impl<'a> TypeList<'a> {
+impl TypeList {
     pub fn new() -> Self {
         TypeList {
             types: Vec::new()
         }
     }
 
-    pub fn add_type(&mut self, ty: TypeDef<'a>) {
-        if matches!(ty, TypeDef::Module(_) | TypeDef::Instance(_)) {
-            todo!()
-        }
-
+    pub fn add_type(&mut self, ty: Type) {
         self.types.push(ty);
     }
 
     pub fn func_type(&self, idx: u32) -> &FuncType {
         // FIXME: How does indexing work here?
 
-        if let TypeDef::Func(f) = &self.types[idx as usize] {
+        if let Type::Func(f) = &self.types[idx as usize] {
             f
         } else {
             panic!()
         }
     }
 
-    pub fn start_types(&self, ty: TypeOrFuncType) -> Box<[Type]> {
+    pub fn start_types(&self, ty: BlockType) -> Box<[ValType]> {
         match ty {
-            TypeOrFuncType::Type(_) => Vec::new().into_boxed_slice(),
-            TypeOrFuncType::FuncType(i) => {
+            BlockType::Empty => Box::new([]),
+            BlockType::Type(_) => Vec::new().into_boxed_slice(),
+            BlockType::FuncType(i) => {
                 let ty = &self.func_type(i);
                 ty.params.clone()
             }
         }
     }
 
-    pub fn end_types(&self, ty: TypeOrFuncType) -> Box<[Type]> {
+    pub fn end_types(&self, ty: BlockType) -> Box<[ValType]> {
         match ty {
-            TypeOrFuncType::Type(Type::EmptyBlockType) => Vec::new().into_boxed_slice(),
-            TypeOrFuncType::Type(t) => vec![t].into_boxed_slice(),
-            TypeOrFuncType::FuncType(i) => {
+            BlockType::Empty => Box::new([]),
+            BlockType::Type(t) => vec![t].into_boxed_slice(),
+            BlockType::FuncType(i) => {
                 let ty = &self.func_type(i);
                 ty.returns.clone()
             }
@@ -221,7 +218,7 @@ impl FunctionList {
 
 
 pub struct WasmFile<'a> {
-    pub types: TypeList<'a>,
+    pub types: TypeList,
     pub globals: GlobalList<'a>,
     pub memory: MemoryList,
     pub exports: ExportList<'a>,
@@ -264,7 +261,7 @@ impl<'a> WasmFile<'a> {
         self.types.func_type(type_idx)
     }
 
-    pub fn func_locals(&self, func_idx: usize) -> Vec<Type> {
+    pub fn func_locals(&self, func_idx: usize) -> Vec<ValType> {
         let mut result = Vec::new();
 
         let func_ty = self.func_type(func_idx);
@@ -392,7 +389,7 @@ impl<'a> From<&'a [u8]> for WasmFile<'a> {
                         elements.add_element(elem);
                     }
                 }
-                Payload::End => {}
+                Payload::End(_) => {}
                 _other => {
                     println!("TODO: Unknown section {:?}", _other);
                 }

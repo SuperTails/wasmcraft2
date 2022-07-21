@@ -8,7 +8,7 @@ pub mod reg_alloc;
 
 use std::{collections::{HashMap, HashSet}, fmt};
 
-use wasmparser::{Type, MemoryImmediate};
+use wasmparser::{Type, MemoryImmediate, ValType};
 
 use self::interp::TypedValue;
 
@@ -47,16 +47,16 @@ impl SsaVarAlloc {
 		id
 	}
 
-	pub fn new_typed(&mut self, ty: Type) -> TypedSsaVar {
+	pub fn new_typed(&mut self, ty: ValType) -> TypedSsaVar {
 		TypedSsaVar(self.next_id(), ty)
 	}
 
 	pub fn new_i32(&mut self) -> TypedSsaVar {
-		self.new_typed(Type::I32)
+		self.new_typed(ValType::I32)
 	}
 
 	pub fn new_i64(&mut self) -> TypedSsaVar {
-		self.new_typed(Type::I64)
+		self.new_typed(ValType::I64)
 	}
 }
 
@@ -64,7 +64,7 @@ impl SsaVarAlloc {
 pub struct SsaVar(u32);
 
 impl SsaVar {
-	pub fn into_typed(self, ty: Type) -> TypedSsaVar {
+	pub fn into_typed(self, ty: ValType) -> TypedSsaVar {
 		TypedSsaVar(self.0, ty)
 	}
 }
@@ -76,7 +76,7 @@ pub enum SsaVarOrConst {
 }
 
 impl SsaVarOrConst {
-	pub fn ty(&self) -> Type {
+	pub fn ty(&self) -> ValType {
 		match self {
 			SsaVarOrConst::Var(v) => v.ty(),
 			SsaVarOrConst::Const(c) => c.ty(),
@@ -113,10 +113,10 @@ impl From<TypedValue> for SsaVarOrConst {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TypedSsaVar(u32, Type);
+pub struct TypedSsaVar(u32, ValType);
 
 impl TypedSsaVar {
-	pub fn ty(self) -> Type {
+	pub fn ty(self) -> ValType {
 		self.1
 	}
 
@@ -125,28 +125,25 @@ impl TypedSsaVar {
 	}
 
 	pub fn unwrap_i32(self) -> SsaVar {
-		assert_eq!(self.1, Type::I32);
+		assert_eq!(self.1, ValType::I32);
 		SsaVar(self.0)
 	}
 
 	pub fn unwrap_i64(self) -> SsaVar {
-		assert_eq!(self.1, Type::I64);
+		assert_eq!(self.1, ValType::I64);
 		SsaVar(self.0)
 	}
 }
 
-fn get_ty_index(ty: Type) -> u32 {
+fn get_ty_index(ty: ValType) -> u32 {
 	match ty {
-		Type::I32 => 0,
-		Type::I64 => 1,
-		Type::F32 => 2,
-		Type::F64 => 3,
-		Type::V128 => 4,
-		Type::FuncRef => 5,
-		Type::ExternRef => 6,
-		Type::ExnRef => 7,
-		Type::Func => 8,
-		Type::EmptyBlockType => 9,
+		ValType::I32 => 0,
+		ValType::I64 => 1,
+		ValType::F32 => 2,
+		ValType::F64 => 3,
+		ValType::V128 => 4,
+		ValType::FuncRef => 5,
+		ValType::ExternRef => 6,
 	}
 }
 
@@ -610,20 +607,20 @@ impl SsaInstr {
 
 	pub fn coalescable_vars(&self) -> Vec<(&TypedSsaVar, &TypedSsaVar)> {
 		match self {
-			SsaInstr::Add(dst, SsaVarOrConst::Var(lhs), SsaVarOrConst::Var(rhs)) if dst.ty() == Type::I32 => vec![(dst, lhs), (dst, rhs)],
-			SsaInstr::Add(dst, SsaVarOrConst::Var(lhs), _) if dst.ty() == Type::I32 => vec![(dst, lhs)],
-			SsaInstr::Add(dst, _, SsaVarOrConst::Var(rhs)) if dst.ty() == Type::I32 => vec![(dst, rhs)],
+			SsaInstr::Add(dst, SsaVarOrConst::Var(lhs), SsaVarOrConst::Var(rhs)) if dst.ty() == ValType::I32 => vec![(dst, lhs), (dst, rhs)],
+			SsaInstr::Add(dst, SsaVarOrConst::Var(lhs), _) if dst.ty() == ValType::I32 => vec![(dst, lhs)],
+			SsaInstr::Add(dst, _, SsaVarOrConst::Var(rhs)) if dst.ty() == ValType::I32 => vec![(dst, rhs)],
 
 			SsaInstr::Assign(dst, SsaVarOrConst::Var(src)) => vec![(dst, src)],
 
-			SsaInstr::Mul(dst, lhs, _rhs) if dst.ty() == Type::I32 => vec![(dst, lhs), /*(dst, rhs)*/],
-			SsaInstr::ShrS(dst, lhs, _) if dst.ty() == Type::I32 => vec![(dst, lhs)],
-			SsaInstr::ShrU(dst, lhs, _) if dst.ty() == Type::I32 => vec![(dst, lhs)],
-			SsaInstr::Shl(dst, lhs, _) if dst.ty() == Type::I32 => vec![(dst, lhs)],
+			SsaInstr::Mul(dst, lhs, _rhs) if dst.ty() == ValType::I32 => vec![(dst, lhs), /*(dst, rhs)*/],
+			SsaInstr::ShrS(dst, lhs, _) if dst.ty() == ValType::I32 => vec![(dst, lhs)],
+			SsaInstr::ShrU(dst, lhs, _) if dst.ty() == ValType::I32 => vec![(dst, lhs)],
+			SsaInstr::Shl(dst, lhs, _) if dst.ty() == ValType::I32 => vec![(dst, lhs)],
 			SsaInstr::Xor(dst, lhs, _) => vec![(dst, lhs)],
 
 			SsaInstr::And(dst, lhs, SsaVarOrConst::Const(c))
-				if dst.ty() == Type::I32 && is_simple_and_mask(c.into_i32().unwrap()) => vec![(dst, lhs)],
+				if dst.ty() == ValType::I32 && is_simple_and_mask(c.into_i32().unwrap()) => vec![(dst, lhs)],
 
 			_ => Vec::new(), 
 		}
@@ -754,12 +751,12 @@ pub struct SsaFunction {
 	pub func_id: usize,
 	/// A sparse array, where each basic block's ID is represented as its index in the list.
 	pub code: Vec<Option<SsaBasicBlock>>,
-	pub params: Box<[Type]>,
-	pub returns: Box<[Type]>,
+	pub params: Box<[ValType]>,
+	pub returns: Box<[ValType]>,
 }
 
 impl SsaFunction {
-	pub fn new<C>(blocks: C, params: Box<[Type]>, returns: Box<[Type]>) -> Self
+	pub fn new<C>(blocks: C, params: Box<[ValType]>, returns: Box<[ValType]>) -> Self
 		where C: IntoIterator<Item=(BlockId, SsaBasicBlock)>
 	{
 		let mut code = Vec::new();
@@ -851,7 +848,7 @@ impl SsaFunction {
 }
 
 pub struct SsaProgram {
-	pub local_types: HashMap<usize, Vec<Type>>,
+	pub local_types: HashMap<usize, Vec<ValType>>,
 	pub globals: Vec<TypedValue>,
 	pub memory: Vec<Memory>,
 	pub tables: Vec<Table>,

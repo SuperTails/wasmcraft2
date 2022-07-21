@@ -1,6 +1,6 @@
 use std::{collections::HashMap, hash::{Hash, Hasher}};
 
-use wasmparser::Type;
+use wasmparser::ValType;
 
 use crate::ssa::liveness::{NoopLivenessInfo, LivenessInfo};
 
@@ -136,11 +136,11 @@ fn print_static_state(state: &StaticState) {
 		match val {
 			StaticValue::Mask(msk) => print!("{{ set: {:#X}, clr: {:#X} }}", msk.set_bits, msk.clr_bits),
 			StaticValue::Constant(TypedValue::I32(c)) => {
-				assert_eq!(var.ty(), Type::I32);
+				assert_eq!(var.ty(), ValType::I32);
 				print!("{c}");
 			},
 			StaticValue::Constant(TypedValue::I64(c)) => {
-				assert_eq!(var.ty(), Type::I64);
+				assert_eq!(var.ty(), ValType::I64);
 				print!("{c}");
 			}
 		}
@@ -570,8 +570,8 @@ pub fn do_block_const_prop_from(_id: BlockId, block: &SsaBasicBlock, constants: 
 
 				match (lhs_val, rhs_val) {
 					(StaticValue::Mask(msk), StaticValue::Constant(cst)) => {
-						let is_ok_64 = lhs.ty() == Type::I64 && msk.clr_bits & (1 << 63) != 0;
-						let is_ok_32 = lhs.ty() == Type::I32 && msk.clr_bits & (1 << 31) != 0;
+						let is_ok_64 = lhs.ty() == ValType::I64 && msk.clr_bits & (1 << 63) != 0;
+						let is_ok_32 = lhs.ty() == ValType::I32 && msk.clr_bits & (1 << 31) != 0;
 						if is_ok_64 || is_ok_32 {
 							let c = match cst {
 								TypedValue::I32(c) => c as u32 as u64,
@@ -739,16 +739,16 @@ pub fn do_strength_reduction(block: &mut SsaBasicBlock, constants: &StaticState)
 				if !ok {
 					if let (Some(lhs_val), Some(rhs_val)) = (lhs_val, rhs_val) {
 						let lhs_is_pos = match lhs_val {
-							StaticValue::Mask(msk) if lhs.ty() == Type::I32 => msk.clr_bits & (1 << 31) != 0,
-							StaticValue::Mask(msk) if lhs.ty() == Type::I64 => msk.clr_bits & (1 << 63) != 0,
+							StaticValue::Mask(msk) if lhs.ty() == ValType::I32 => msk.clr_bits & (1 << 31) != 0,
+							StaticValue::Mask(msk) if lhs.ty() == ValType::I64 => msk.clr_bits & (1 << 63) != 0,
 							StaticValue::Constant(TypedValue::I32(c)) => c >= 0,
 							StaticValue::Constant(TypedValue::I64(c)) => c >= 0,
 							_ => panic!(),
 						};
 
 						let rhs_is_pos = match rhs_val {
-							StaticValue::Mask(msk) if rhs.ty() == Type::I32 => msk.clr_bits & (1 << 31) != 0,
-							StaticValue::Mask(msk) if rhs.ty() == Type::I64 => msk.clr_bits & (1 << 63) != 0,
+							StaticValue::Mask(msk) if rhs.ty() == ValType::I32 => msk.clr_bits & (1 << 31) != 0,
+							StaticValue::Mask(msk) if rhs.ty() == ValType::I64 => msk.clr_bits & (1 << 63) != 0,
 							StaticValue::Constant(TypedValue::I32(c)) => c >= 0,
 							StaticValue::Constant(TypedValue::I64(c)) => c >= 0,
 							_ => panic!(),
@@ -824,8 +824,8 @@ pub fn do_strength_reduction(block: &mut SsaBasicBlock, constants: &StaticState)
 						};
 					}
 					(StaticValue::Mask(msk), _) => {
-						let is_ok_64 = lhs.ty() == Type::I64 && msk.clr_bits & (1 << 63) != 0;
-						let is_ok_32 = lhs.ty() == Type::I32 && msk.clr_bits & (1 << 31) != 0;
+						let is_ok_64 = lhs.ty() == ValType::I64 && msk.clr_bits & (1 << 63) != 0;
+						let is_ok_32 = lhs.ty() == ValType::I32 && msk.clr_bits & (1 << 31) != 0;
 
 						if is_ok_64 || is_ok_32 {
 							*instr = SsaInstr::ShrS(dst, lhs, rhs);

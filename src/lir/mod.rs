@@ -3,7 +3,7 @@ pub mod interp;
 use std::{ops::RangeInclusive, fmt, collections::{HashSet, HashMap}};
 
 use datapack_common::functions::command_components::{ScoreHolder, Objective};
-use wasmparser::Type;
+use wasmparser::ValType;
 
 use crate::ssa::{BlockId, Memory, interp::TypedValue, Table, const_prop::StaticValue, lir_emitter::RegisterWithInfo};
 
@@ -295,8 +295,8 @@ pub enum LirInstr {
 
 	IfCond { cond: Condition, instr: Box<LirInstr> },
 
-	PushLocalFrame(Vec<Type>),
-	PopLocalFrame(Vec<Type>),
+	PushLocalFrame(Vec<ValType>),
+	PopLocalFrame(Vec<ValType>),
 
 	Memset { dest: Register, value: Register, length: Register, result: Register },
 
@@ -340,7 +340,7 @@ pub struct LirBasicBlock {
 
 pub struct LirFunction {
 	pub code: Vec<(BlockId, LirBasicBlock)>,
-	pub returns: Box<[Type]>,
+	pub returns: Box<[ValType]>,
 }
 
 impl LirFunction {

@@ -232,10 +232,10 @@ pub mod wasm_suite_prelude {
 
 pub mod wasm_suite_prelude {
 	use command_parser::CommandParse;
-use datapack_common::functions::command_components::{FunctionIdent, ScoreHolder, Objective};
-use datapack_vm::Interpreter;
+	use datapack_common::functions::command_components::{FunctionIdent, ScoreHolder, Objective};
+	use datapack_vm::Interpreter;
 	use wasm_runner::{wasm_file::WasmFile, ssa::{interp::{SsaInterpreter, TypedValue}, lir_emitter, BlockId}, validator::wasm_to_ssa, lir::{interp::LirInterpreter, Register}, pack_emitter::{self, get_mc_id}, CompileContext};
-use wasmparser::Type;
+	use wasmparser::ValType;
 
 	use super::sexpr::SExpr;
 
@@ -266,15 +266,15 @@ use wasmparser::Type;
 		}
 	}
 
-	pub fn get_returns(interp: &mut Interpreter, return_tys: &[Type]) -> Vec<TypedValue> {
+	pub fn get_returns(interp: &mut Interpreter, return_tys: &[ValType]) -> Vec<TypedValue> {
 		return_tys.iter().enumerate().map(|(idx, ty)| {
 			match ty {
-				Type::I32 => {
+				ValType::I32 => {
 					let (holder, obj) = Register::return_lo(idx as u32).scoreboard_pair();
 					let v = interp.get_named_score(&holder, &obj).unwrap();
 					TypedValue::I32(v)
 				}
-				Type::I64 => {
+				ValType::I64 => {
 					let (holder_lo, obj_lo) = Register::return_lo(idx as u32).scoreboard_pair();
 					let v_lo = interp.get_named_score(&holder_lo, &obj_lo).unwrap();
 
@@ -317,7 +317,7 @@ use wasmparser::Type;
 
 				let interp_idx = test_state.interp.get_func_idx(&mc_func_name);
 				test_state.interp.set_pos(interp_idx);
-
+				
 				test_state.interp.run_to_end().unwrap();
 
 				get_returns(&mut test_state.interp, return_tys)

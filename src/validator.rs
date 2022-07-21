@@ -1,6 +1,6 @@
 use std::{ops::{Index, IndexMut}, collections::HashMap};
 
-use wasmparser::{Type, Operator, MemoryImmediate, DataKind, ElementKind, ElementItem, ExternalKind};
+use wasmparser::{Operator, MemoryImmediate, DataKind, ElementKind, ElementItem, ExternalKind, ValType};
 
 use crate::{wasm_file::{WasmFile, eval_init_expr_single}, ssa::{SsaBasicBlock, BlockId, SsaTerminator, TypedSsaVar, SsaInstr, SsaVarAlloc, JumpTarget, SsaProgram, SsaFunction, Memory, Table, SsaVarOrConst}, CompileContext};
 
@@ -47,7 +47,7 @@ use UncertainVar::Unknown as UnknownVar;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UncertainType {
 	Unknown,
-	Known(Type),
+	Known(ValType),
 }
 
 impl UncertainType {
@@ -62,8 +62,8 @@ impl UncertainType {
 
 use UncertainType::Unknown as UnknownType;
 
-impl From<Type> for UncertainType {
-    fn from(ty: Type) -> Self {
+impl From<ValType> for UncertainType {
+    fn from(ty: ValType) -> Self {
 	    UncertainType::Known(ty)
     }
 }
@@ -134,14 +134,14 @@ impl ControlOp {
 #[derive(Clone, Debug)]
 struct ControlFrame {
 	operator: ControlOp,
-	start_types: Box<[Type]>,
-	end_types: Box<[Type]>,
+	start_types: Box<[ValType]>,
+	end_types: Box<[ValType]>,
 	height: usize,
 	unreachable: bool,
 }
 
 impl ControlFrame {
-	pub fn label_types(&self) -> &[Type] {
+	pub fn label_types(&self) -> &[ValType] {
 		if matches!(self.operator, ControlOp::Loop(_)) {
 			&self.start_types
 		} else {
@@ -156,7 +156,7 @@ struct TopIndex(usize);
 struct ControlStack(Vec<ControlFrame>);
 
 impl ControlStack {
-	pub fn push(&mut self, operator: ControlOp, start_vars: &[UncertainVar], start_types: Box<[Type]>, end_types: Box<[Type]>, value_stack: &mut ValueStack) {
+	pub fn push(&mut self, operator: ControlOp, start_vars: &[UncertainVar], start_types: Box<[ValType]>, end_types: Box<[ValType]>, value_stack: &mut ValueStack) {
 		let height = value_stack.0.len();
 
 		value_stack.push_many(start_vars);
@@ -240,7 +240,7 @@ impl PartialBasicBlock {
 		}
 	}
 
-	pub fn new_with_locals(locals: &[Type], alloc: &mut SsaVarAlloc) -> Self {
+	pub fn new_with_locals(locals: &[ValType], alloc: &mut SsaVarAlloc) -> Self {
 		let new_locals = locals.iter().map(|&ty| alloc.new_typed(ty)).collect::<Vec<_>>();
 
 		let mut block = SsaBasicBlock::default();
@@ -279,7 +279,7 @@ impl SsaFuncBuilder {
 		BlockId { func: self.func, block }
 	}
 
-	pub fn alloc_block_with_locals(&mut self, locals: &[Type], var_alloc: &mut SsaVarAlloc) -> BlockId {
+	pub fn alloc_block_with_locals(&mut self, locals: &[ValType], var_alloc: &mut SsaVarAlloc) -> BlockId {
 		let block = self.blocks.len();
 		self.blocks.push(PartialBasicBlock::new_with_locals(locals, var_alloc));
 		BlockId { func: self.func, block }
@@ -394,7 +394,7 @@ impl Validator {
 		self.value_stack.pop_many(tys, &self.control_stack)
 	}
 	
-	pub fn push_ctrl(&mut self, operator: ControlOp, start_vars: &[UncertainVar], start_types: Box<[Type]>, end_types: Box<[Type]>) {
+	pub fn push_ctrl(&mut self, operator: ControlOp, start_vars: &[UncertainVar], start_types: Box<[ValType]>, end_types: Box<[ValType]>) {
 		self.control_stack.push(operator, start_vars, start_types, end_types, &mut self.value_stack);
 	}
 
@@ -411,7 +411,7 @@ impl Validator {
 	}
 }
 
-fn make_params(builder: &mut SsaFuncBuilder, validator: &mut Validator, t: &[Type], alloc: &mut SsaVarAlloc) {
+fn make_params(builder: &mut SsaFuncBuilder, validator: &mut Validator, t: &[ValType], alloc: &mut SsaVarAlloc) {
 	//assert!(builder.current_block_mut().params.is_empty());
 
 	validator.pop_values(t);
@@ -488,8 +488,8 @@ impl ValidationState<'_> {
 				L: From<TypedSsaVar>,
 				R: From<TypedSsaVar>,
 		{
-			let rhs = validator.pop_value_ty(Type::I32.into());
-			let lhs = validator.pop_value_ty(Type::I32.into());
+			let rhs = validator.pop_value_ty(ValType::I32.into());
+			let lhs = validator.pop_value_ty(ValType::I32.into());
 
 			let dst = alloc.new_i32();
 			validator.push_value(dst);
@@ -505,8 +505,8 @@ impl ValidationState<'_> {
 				L: From<TypedSsaVar>,
 				R: From<TypedSsaVar>,
 		{
-			let rhs = validator.pop_value_ty(Type::I64.into());
-			let lhs = validator.pop_value_ty(Type::I64.into());
+			let rhs = validator.pop_value_ty(ValType::I64.into());
+			let lhs = validator.pop_value_ty(ValType::I64.into());
 
 			let dst = alloc.new_i64();
 			validator.push_value(dst);
@@ -520,8 +520,8 @@ impl ValidationState<'_> {
 			where
 				F: FnOnce(TypedSsaVar, SsaVarOrConst, SsaVarOrConst) -> SsaInstr
 		{
-			let rhs = validator.pop_value_ty(Type::I64.into());
-			let lhs = validator.pop_value_ty(Type::I64.into());
+			let rhs = validator.pop_value_ty(ValType::I64.into());
+			let lhs = validator.pop_value_ty(ValType::I64.into());
 
 			let dst = alloc.new_i32();
 			validator.push_value(dst);
@@ -535,7 +535,7 @@ impl ValidationState<'_> {
 			where
 				F: FnOnce(TypedSsaVar, TypedSsaVar) -> SsaInstr
 		{
-			let src = validator.pop_value_ty(Type::I32.into());
+			let src = validator.pop_value_ty(ValType::I32.into());
 			let dst = alloc.new_i32();
 			validator.push_value(dst);
 
@@ -548,7 +548,7 @@ impl ValidationState<'_> {
 			where
 				F: FnOnce(TypedSsaVar, TypedSsaVar) -> SsaInstr
 		{
-			let src = validator.pop_value_ty(Type::I64.into());
+			let src = validator.pop_value_ty(ValType::I64.into());
 			let dst = alloc.new_i64();
 			validator.push_value(dst);
 
@@ -561,7 +561,7 @@ impl ValidationState<'_> {
 			where
 				F: FnOnce(MemoryImmediate, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
 		{
-			let addr = validator.pop_value_ty(Type::I32.into());
+			let addr = validator.pop_value_ty(ValType::I32.into());
 			let dst = alloc.new_i32();
 			validator.push_value(dst);
 
@@ -574,7 +574,7 @@ impl ValidationState<'_> {
 			where
 				F: FnOnce(MemoryImmediate, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
 		{
-			let addr = validator.pop_value_ty(Type::I32.into());
+			let addr = validator.pop_value_ty(ValType::I32.into());
 			let dst = alloc.new_i64();
 			validator.push_value(dst);
 			
@@ -587,8 +587,8 @@ impl ValidationState<'_> {
 			where
 				F: FnOnce(MemoryImmediate, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
 		{
-			let src = validator.pop_value_ty(Type::I32.into());
-			let addr = validator.pop_value_ty(Type::I32.into());
+			let src = validator.pop_value_ty(ValType::I32.into());
+			let addr = validator.pop_value_ty(ValType::I32.into());
 
 			if validator.reachable() {
 				builder.current_block_mut().body.push(f(memarg, src.unwrap(), addr.unwrap().into()));
@@ -599,8 +599,8 @@ impl ValidationState<'_> {
 			where
 				F: FnOnce(MemoryImmediate, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
 		{
-			let src = validator.pop_value_ty(Type::I64.into());
-			let addr = validator.pop_value_ty(Type::I32.into());
+			let src = validator.pop_value_ty(ValType::I64.into());
+			let addr = validator.pop_value_ty(ValType::I32.into());
 
 			if validator.reachable() {
 				builder.current_block_mut().body.push(f(memarg, src.unwrap(), addr.unwrap().into()));
@@ -611,7 +611,7 @@ impl ValidationState<'_> {
 			where
 				F: FnOnce(TypedSsaVar, TypedSsaVar) -> SsaInstr,
 		{
-			let src = validator.pop_value_ty(Type::I32.into());
+			let src = validator.pop_value_ty(ValType::I32.into());
 			let dst = alloc.new_i32();
 			validator.push_value(dst);
 
@@ -620,7 +620,7 @@ impl ValidationState<'_> {
 			}
 		}
 
-		fn make_i64_extend<F>(f: F, source: Type, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
+		fn make_i64_extend<F>(f: F, source: ValType, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
 			where
 				F: FnOnce(TypedSsaVar, TypedSsaVar) -> SsaInstr,
 		{
@@ -646,7 +646,7 @@ impl ValidationState<'_> {
 			}
 
 			Operator::I32Eqz => {
-				let src = validator.pop_value_ty(Type::I32.into());
+				let src = validator.pop_value_ty(ValType::I32.into());
 				let dst = alloc.new_i32();
 				if let UncertainVar::Known(src) = src {
 					builder.current_block_mut().body.push(SsaInstr::Eqz(dst, src));
@@ -654,7 +654,7 @@ impl ValidationState<'_> {
 				validator.push_value(dst);
 			}
 			Operator::I64Eqz => {
-				let src = validator.pop_value_ty(Type::I64.into());
+				let src = validator.pop_value_ty(ValType::I64.into());
 				let dst = alloc.new_i32();
 				if let UncertainVar::Known(src) = src {
 					builder.current_block_mut().body.push(SsaInstr::Eqz(dst, src));
@@ -727,16 +727,16 @@ impl ValidationState<'_> {
 			Operator::I32Extend8S => make_i32_extend(SsaInstr::Extend8S, builder, validator, alloc),
 			Operator::I32Extend16S => make_i32_extend(SsaInstr::Extend16S, builder, validator, alloc),
 
-			Operator::I64Extend8S => make_i64_extend(SsaInstr::Extend8S, Type::I64, builder, validator, alloc),
-			Operator::I64Extend16S => make_i64_extend(SsaInstr::Extend16S, Type::I64, builder, validator, alloc),
-			Operator::I64Extend32S => make_i64_extend(SsaInstr::Extend32S, Type::I64, builder, validator, alloc),
+			Operator::I64Extend8S => make_i64_extend(SsaInstr::Extend8S, ValType::I64, builder, validator, alloc),
+			Operator::I64Extend16S => make_i64_extend(SsaInstr::Extend16S, ValType::I64, builder, validator, alloc),
+			Operator::I64Extend32S => make_i64_extend(SsaInstr::Extend32S, ValType::I64, builder, validator, alloc),
 
-			Operator::I64ExtendI32S => make_i64_extend(SsaInstr::Extend32S, Type::I32, builder, validator, alloc),
-			Operator::I64ExtendI32U => make_i64_extend(SsaInstr::Extend32U, Type::I32, builder, validator, alloc),
+			Operator::I64ExtendI32S => make_i64_extend(SsaInstr::Extend32S, ValType::I32, builder, validator, alloc),
+			Operator::I64ExtendI32U => make_i64_extend(SsaInstr::Extend32U, ValType::I32, builder, validator, alloc),
 			
 
 			Operator::I32WrapI64 => {
-				let src = validator.pop_value_ty(Type::I64.into());
+				let src = validator.pop_value_ty(ValType::I64.into());
 				let dst = alloc.new_i32();
 				if let UncertainVar::Known(src) = src {
 					builder.current_block_mut().body.push(SsaInstr::Wrap(dst, src));
@@ -807,7 +807,7 @@ impl ValidationState<'_> {
 				validator.pop_push_values(&[ty], &[src]);
 			}
 			&Operator::TypedSelect { ty } => {
-				let cond = validator.pop_value_ty(Type::I32.into());
+				let cond = validator.pop_value_ty(ValType::I32.into());
 				let false_var = validator.pop_value_ty(ty.into());
 				let true_var = validator.pop_value_ty(ty.into());
 
@@ -820,7 +820,7 @@ impl ValidationState<'_> {
 				validator.push_value(dst);
 			}
 			Operator::Select => {
-				let cond = validator.pop_value_ty(Type::I32.into());
+				let cond = validator.pop_value_ty(ValType::I32.into());
 				let false_var = validator.pop_value();
 				let true_var = validator.pop_value();
 
@@ -853,7 +853,7 @@ impl ValidationState<'_> {
 				if let Some(params) = params {
 					if !wasm_file.func_is_defined(function_index as usize) {
 						let import = wasm_file.func_import(function_index as usize);
-						match (import.module, import.field.unwrap()) {
+						match (import.module, import.field) {
 							("env", "turtle_x") => {
 								assert_eq!(params.len(), 1);
 								assert_eq!(returns.len(), 0);
@@ -927,10 +927,14 @@ impl ValidationState<'_> {
 					}
 				}
 			}
-			&Operator::CallIndirect { index, table_index } => {
+			&Operator::CallIndirect { index, table_index, table_byte } => {
+				if table_byte as u32 != table_index {
+					todo!()
+				}
+
 				let called_ty = wasm_file.types.func_type(index);
 
-				let table_entry: Option<_> = validator.pop_value_ty(Type::I32.into()).into();
+				let table_entry: Option<_> = validator.pop_value_ty(ValType::I32.into()).into();
 
 				let params = validator.pop_values(&called_ty.params);
 				let params = params.into_iter().map(Option::from).collect::<Option<Vec<_>>>();
@@ -990,7 +994,7 @@ impl ValidationState<'_> {
 				let false_label = builder.alloc_block();
 				let next_label = builder.alloc_block_with_locals(&locals, alloc);
 
-				let cond: Option<_> = validator.pop_value_ty(Type::I32.into()).into();
+				let cond: Option<_> = validator.pop_value_ty(ValType::I32.into()).into();
 
 				let start_vars = validator.pop_values(&start_types);
 
@@ -1133,7 +1137,7 @@ impl ValidationState<'_> {
 				builder.set_block(new_block);
 			}
 			Operator::BrTable { table } => {
-				let cond: Option<_> = validator.pop_value_ty(Type::I32.into()).into();
+				let cond: Option<_> = validator.pop_value_ty(ValType::I32.into()).into();
 
 				let default_frame = &validator.control_stack[TopIndex(table.default() as usize)];
 				let default_label = default_frame.operator.target_label();
@@ -1179,7 +1183,7 @@ impl ValidationState<'_> {
 				let label_types = target_frame.label_types().to_owned();
 				let true_label = target_frame.operator.target_label();
 
-				let cond: Option<_> = validator.pop_value_ty(Type::I32.into()).into();
+				let cond: Option<_> = validator.pop_value_ty(ValType::I32.into()).into();
 
 				let label_vals = validator.pop_values(&label_types).into_iter().map(Option::from).collect::<Option<Vec<TypedSsaVar>>>();
 
@@ -1226,7 +1230,7 @@ impl ValidationState<'_> {
 				}
 
 				// TODO:
-				let _n = validator.pop_value_ty(Type::I32.into());
+				let _n = validator.pop_value_ty(ValType::I32.into());
 				self.visit_operator(&Operator::I32Const { value: -1 });
 			}
 
@@ -1268,10 +1272,10 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 
 	for local in start_locals.iter().skip(func_ty.params.len()) {
 		match local.ty() {
-			Type::I32 => {
+			ValType::I32 => {
 				builder.current_block_mut().body.push(SsaInstr::I32Set(*local, 0));
 			}
-			Type::I64 => {
+			ValType::I64 => {
 				builder.current_block_mut().body.push(SsaInstr::I64Set(*local, 0));
 			}
 			_ => todo!("{:?}", local),
@@ -1366,7 +1370,7 @@ pub fn wasm_to_ssa(ctx: &CompileContext, wasm_file: &WasmFile) -> SsaProgram {
 	}).collect();
 
 	let mut tables = wasm_file.tables.tables.iter().map(|table_ty| {
-		if table_ty.element_type != Type::FuncRef {
+		if table_ty.element_type != ValType::FuncRef {
 			todo!()
 		}
 
@@ -1377,7 +1381,7 @@ pub fn wasm_to_ssa(ctx: &CompileContext, wasm_file: &WasmFile) -> SsaProgram {
 	}).collect::<Vec<_>>();
 
 	for elem in wasm_file.elements.elements.iter() {
-		if elem.ty != Type::FuncRef {
+		if elem.ty != ValType::FuncRef {
 			todo!()
 		}
 
@@ -1429,9 +1433,9 @@ pub fn wasm_to_ssa(ctx: &CompileContext, wasm_file: &WasmFile) -> SsaProgram {
 
 	let exports = wasm_file.exports.exports.iter().filter_map(|export| {
 		match export.kind {
-			ExternalKind::Function => {
+			ExternalKind::Func => {
 				let id = BlockId { func: export.index as usize, block: 0 };
-				Some((export.field.to_owned(), id))
+				Some((export.name.to_owned(), id))
 			}
 			ExternalKind::Memory => None,
 			ExternalKind::Global => None, // TODO:

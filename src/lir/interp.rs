@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use wasmparser::Type;
+use wasmparser::ValType;
 
 use crate::{ssa::{interp::TypedValue, BlockId, Memory, Table, lir_emitter::RegisterWithInfo}, jump_mode, JumpMode, lir::LirInstr};
 
@@ -43,11 +43,11 @@ impl CallStack {
 pub struct LocalStack(Vec<Vec<TypedValue>>);
 
 impl LocalStack {
-	pub fn push(&mut self, frame: &[Type]) {
+	pub fn push(&mut self, frame: &[ValType]) {
 		let frame_vals = frame.iter().map(|ty| {
 			match ty {
-				Type::I32 => TypedValue::I32(0),
-				Type::I64 => TypedValue::I64(0),
+				ValType::I32 => TypedValue::I32(0),
+				ValType::I64 => TypedValue::I64(0),
 				_ => todo!(),
 			}
 		}).collect();
@@ -55,7 +55,7 @@ impl LocalStack {
 		self.0.push(frame_vals);
 	}
 
-	pub fn pop(&mut self, frame: &[Type]) {
+	pub fn pop(&mut self, frame: &[ValType]) {
 		let old_frame = self.0.pop().unwrap();
 
 		assert_eq!(old_frame.len(), frame.len());
@@ -205,7 +205,7 @@ pub struct LirInterpreter {
 	registers: RegContext,
 	memory: Vec<Memory>,
 	tables: Vec<Table>,
-	returns: HashMap<usize, Box<[Type]>>,
+	returns: HashMap<usize, Box<[ValType]>>,
 	code: HashMap<BlockId, LirBasicBlock>,
 	scheduled: Option<BlockId>,
 }
@@ -645,10 +645,10 @@ impl LirInterpreter {
 					if self.call_stack.is_empty() {
 						let return_vals = returns.iter().enumerate().map(|(idx, return_ty)| {
 							match *return_ty {
-								Type::I32 => {
+								ValType::I32 => {
 									TypedValue::I32(self.registers.get(Register::return_lo(idx as u32)))
 								}
-								Type::I64 => {
+								ValType::I64 => {
 									TypedValue::I64(self.registers.get_64(DoubleRegister::return_reg(idx as u32)))
 								}
 								_ => todo!(),
@@ -672,10 +672,10 @@ impl LirInterpreter {
 
 						let return_vals = returns.iter().enumerate().map(|(idx, return_ty)| {
 							match *return_ty {
-								Type::I32 => {
+								ValType::I32 => {
 									TypedValue::I32(self.registers.get(Register::return_lo(idx as u32)))
 								}
-								Type::I64 => {
+								ValType::I64 => {
 									TypedValue::I64(self.registers.get_64(DoubleRegister::return_reg(idx as u32)))
 								}
 								_ => todo!(),

@@ -724,7 +724,7 @@ impl DomTree {
 
 #[cfg(test)]
 mod test {
-	use wasmparser::Type;
+	use wasmparser::ValType;
 
 	use crate::ssa::{SsaFunction, SsaTerminator, TypedSsaVar, JumpTarget, BlockId, SsaBasicBlock, liveness::DomTree};
 
@@ -740,7 +740,7 @@ mod test {
 			let term = if dests.is_empty() {
 				SsaTerminator::Return(Vec::new())
 			} else {
-				SsaTerminator::BranchTable { cond: TypedSsaVar(0, Type::I32), default: dests[0].clone(), arms: dests }
+				SsaTerminator::BranchTable { cond: TypedSsaVar(0, ValType::I32), default: dests[0].clone(), arms: dests }
 			};
 
 			let block_id = BlockId { func: 0, block: id };

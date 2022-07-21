@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use wasmparser::{Type, MemoryImmediate};
+use wasmparser::{ValType, MemoryImmediate};
 
 use crate::ssa::{TypedSsaVar, const_prop::state_matches};
 
@@ -21,11 +21,11 @@ pub struct CallFrame {
 }
 
 impl CallFrame {
-	pub fn new(block: BlockId, local_tys: &[Type], return_vars: Option<Vec<TypedSsaVar>>) -> Self {
+	pub fn new(block: BlockId, local_tys: &[ValType], return_vars: Option<Vec<TypedSsaVar>>) -> Self {
 		// TODO: Are locals zero-initialized???
 		let locals = local_tys.iter().map(|ty| match ty {
-			Type::I32 => TypedValue::I32(0),
-			Type::I64 => TypedValue::I64(0),
+			ValType::I32 => TypedValue::I32(0),
+			ValType::I64 => TypedValue::I64(0),
 			_ => panic!(),
 		}).collect();
 
@@ -76,10 +76,10 @@ pub enum TypedValue {
 }
 
 impl TypedValue {
-	pub fn ty(&self) -> Type {
+	pub fn ty(&self) -> ValType {
 		match self {
-			Self::I32(_) => Type::I32,
-			Self::I64(_) => Type::I64,
+			Self::I32(_) => ValType::I32,
+			Self::I64(_) => ValType::I64,
 		}
 	}
 
@@ -160,7 +160,7 @@ impl Var for SsaVarOrConst {
 }
 
 pub struct SsaInterpreter {
-	local_types: HashMap<usize, Vec<Type>>,
+	local_types: HashMap<usize, Vec<ValType>>,
 	globals: Vec<TypedValue>,
 	memory: Vec<Memory>,
 	tables: Vec<Table>,
@@ -403,8 +403,8 @@ impl SsaInterpreter {
 				};
 
 				let result = match dst.ty() {
-					Type::I32 => TypedValue::I32(f(s)),
-					Type::I64 => TypedValue::I64(g(s)),
+					ValType::I32 => TypedValue::I32(f(s)),
+					ValType::I64 => TypedValue::I64(g(s)),
 					_ => panic!(),
 				};
 
@@ -415,8 +415,8 @@ impl SsaInterpreter {
 				let s = var_context.get_typed(src).expect("src was uninit");
 
 				let result = match (dst.ty(), s) {
-					(Type::I32, TypedValue::I32(s)) => TypedValue::I32(f(s)),
-					(Type::I64, TypedValue::I32(s)) => TypedValue::I64(g(s)),
+					(ValType::I32, TypedValue::I32(s)) => TypedValue::I32(f(s)),
+					(ValType::I64, TypedValue::I32(s)) => TypedValue::I64(g(s)),
 					_ => panic!(),
 				};
 
@@ -450,8 +450,8 @@ impl SsaInterpreter {
 				let buf = i64::from_le_bytes(buf);
 
 				let result = match dst.ty() {
-					Type::I32 => TypedValue::I32(f(buf)),
-					Type::I64 => TypedValue::I64(g(buf)),
+					ValType::I32 => TypedValue::I32(f(buf)),
+					ValType::I64 => TypedValue::I64(g(buf)),
 					_ => panic!(),
 				};
 
@@ -460,11 +460,11 @@ impl SsaInterpreter {
 
 			match &block.body[frame.pc.instr] {
 				&super::SsaInstr::I32Set(dst, val) => {
-					assert_eq!(dst.ty(), Type::I32);
+					assert_eq!(dst.ty(), ValType::I32);
 					frame.var_context.insert(dst.into_untyped(), val.into());
 				}
 				&super::SsaInstr::I64Set(dst, val) => {
-					assert_eq!(dst.ty(), Type::I64);
+					assert_eq!(dst.ty(), ValType::I64);
 					frame.var_context.insert(dst.into_untyped(), val.into());
 				}
 				&super::SsaInstr::Assign(dst, src) => {
@@ -507,7 +507,7 @@ impl SsaInterpreter {
 				&super::SsaInstr::Ctz(dst, src) => do_unaryop(dst, src, &mut frame.var_context, |a| a.trailing_zeros() as i32, |a| a.trailing_zeros() as i64),
 
 				&super::SsaInstr::Eqz(dst, src) => {
-					assert_eq!(dst.ty(), Type::I32);
+					assert_eq!(dst.ty(), ValType::I32);
 
 					match frame.var_context.get_typed(src).unwrap() {
 						TypedValue::I32(s) => {
@@ -564,7 +564,7 @@ impl SsaInterpreter {
 				&super::SsaInstr::Wrap(dst, src) => {
 					let src = frame.var_context.get_typed(src).unwrap();
 					if let TypedValue::I64(src) = src {
-						assert_eq!(dst.ty(), Type::I32);
+						assert_eq!(dst.ty(), ValType::I32);
 						frame.var_context.insert(dst.into_untyped(), TypedValue::I32(src as i32));
 					} else {
 						panic!()

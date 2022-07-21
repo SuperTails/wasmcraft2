@@ -2,7 +2,7 @@ use std::{collections::{HashSet, HashMap}, path::Path, ops::Range};
 
 use command_parser::parse_command;
 use datapack_common::functions::{Function, Command, command_components::FunctionIdent};
-use wasmparser::Type;
+use wasmparser::ValType;
 
 use crate::{lir::{LirProgram, LirFunction, LirBasicBlock, LirInstr, Register, LirTerminator, Condition, Half, DoubleRegister}, ssa::{BlockId, Memory, interp::TypedValue, const_prop::{StaticValue, BitMask}, lir_emitter::RegisterWithInfo}, jump_mode, JumpMode};
 
@@ -282,7 +282,7 @@ fn create_zeroed_array(count: usize) -> String {
 	arr
 }
 
-fn push_local_frame(ty: &[Type], code: &mut Vec<String>) {
+fn push_local_frame(ty: &[ValType], code: &mut Vec<String>) {
 	let arr = create_zeroed_array(ty.len() * 2);
 
 	code.push(format!("data modify storage wasm:scratch stack.data set value {arr}"));
@@ -290,7 +290,7 @@ fn push_local_frame(ty: &[Type], code: &mut Vec<String>) {
 	code.push("data modify storage wasm:localstack stack set from storage wasm:scratch stack".to_string());
 }
 
-fn pop_local_frame(_ty: &[Type], code: &mut Vec<String>) {
+fn pop_local_frame(_ty: &[ValType], code: &mut Vec<String>) {
 	code.push("data modify storage wasm:localstack stack set from storage wasm:localstack stack.tail".to_string());
 }
 

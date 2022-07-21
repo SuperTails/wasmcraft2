@@ -3,7 +3,7 @@ mod sexpr;
 
 use rcon::{Connection, AsyncStdStream};
 use wasm_runner::{ssa::{interp::TypedValue, lir_emitter, BlockId}, lir::Register, wasm_file::WasmFile, validator::wasm_to_ssa, pack_emitter::{self, get_mc_id}, CompileContext};
-use wasmparser::Type;
+use wasmparser::ValType;
 
 type Server = Connection<AsyncStdStream>;
 
@@ -69,18 +69,18 @@ async fn set_params(server: &mut Server, func_params: &[TypedValue]) {
 	}
 }
 
-async fn get_returns(server: &mut Server, return_tys: &[Type]) -> Vec<TypedValue> {
+async fn get_returns(server: &mut Server, return_tys: &[ValType]) -> Vec<TypedValue> {
 	let mut result = Vec::new();
 
 	for (idx, ty) in return_tys.iter().enumerate() {
 		match ty {
-			Type::I32 => {
+			ValType::I32 => {
 				let param_pair = Register::return_lo(idx as u32);
 				let val = scoreboard_get_reg(server, param_pair).await;
 
 				result.push(TypedValue::I32(val));
 			}
-			Type::I64 => {
+			ValType::I64 => {
 				let param_pair_lo = Register::return_lo(idx as u32);
 				let v_lo = scoreboard_get_reg(server, param_pair_lo).await;
 

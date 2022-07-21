@@ -81,7 +81,7 @@ pub struct FullRegAlloc {
 mod register_set {
 	use std::collections::{HashMap, BTreeSet};
 
-	use wasmparser::Type;
+	use wasmparser::ValType;
 
 	use crate::ssa::{liveness::LiveRange, SsaInstr};
 
@@ -97,7 +97,7 @@ mod register_set {
 			for (_, block) in func.iter() {
 				for instr in block.body.iter() {
 					match instr {
-						SsaInstr::Add(dst, lhs, rhs) if dst.ty() == Type::I64 => {
+						SsaInstr::Add(dst, lhs, rhs) if dst.ty() == ValType::I64 => {
 							if let Some(l) = lhs.get_var() {
 								result.add_edge(*dst, l)
 							}
@@ -108,7 +108,7 @@ mod register_set {
 								result.add_edge(l, r);
 							}
 						}
-						SsaInstr::Ctz(dst, src) if dst.ty() == Type::I64 => {
+						SsaInstr::Ctz(dst, src) if dst.ty() == ValType::I64 => {
 							result.add_edge(*dst, *src);
 						}
 						SsaInstr::GeU(dst, lhs, rhs) |
@@ -125,7 +125,7 @@ mod register_set {
 						SsaInstr::GeS(dst, lhs, rhs) |
 						SsaInstr::GtS(dst, lhs, rhs) |
 						SsaInstr::LeS(dst, lhs, rhs) |
-						SsaInstr::LtS(dst, lhs, rhs) if dst.ty() == Type::I64 => {
+						SsaInstr::LtS(dst, lhs, rhs) if dst.ty() == ValType::I64 => {
 							if let Some(l) = lhs.get_var() {
 								result.add_edge(*dst, l);
 							}
@@ -133,7 +133,7 @@ mod register_set {
 								result.add_edge(*dst, r);
 							}
 						}
-						SsaInstr::RemU(dst, lhs, rhs) if dst.ty() == Type::I32 => {
+						SsaInstr::RemU(dst, lhs, rhs) if dst.ty() == ValType::I32 => {
 							result.add_edge(*dst, *lhs);
 							if let Some(r) = rhs.get_var() {
 								result.add_edge(*dst, r);
@@ -381,7 +381,7 @@ impl RegAlloc for FullRegAlloc {
 
 #[cfg(test)]
 mod test {
-	use wasmparser::Type;
+	use wasmparser::ValType;
 
 	use crate::ssa::{SsaBasicBlock, TypedSsaVar, SsaInstr, SsaTerminator, JumpTarget, BlockId, SsaFunction, liveness::{FullLivenessInfo, LivenessInfo, print_liveness_info}};
 
@@ -389,8 +389,8 @@ use super::{FullRegAlloc, RegAlloc};
 
 	/*#[test]
 	fn reg_across_jump() {
-		let r0 = TypedSsaVar(0, Type::I32);
-		let r1 = TypedSsaVar(1, Type::I32);
+		let r0 = TypedSsaVar(0, ValType::I32);
+		let r1 = TypedSsaVar(1, ValType::I32);
 
 		let b0 = SsaBasicBlock {
 			// TODO: ???
@@ -408,8 +408,8 @@ use super::{FullRegAlloc, RegAlloc};
 	#[test]
 	#[ignore]
 	fn coalesce_jump_param() {
-		let r0 = TypedSsaVar(0, Type::I32);
-		let r1 = TypedSsaVar(1, Type::I32);
+		let r0 = TypedSsaVar(0, ValType::I32);
+		let r1 = TypedSsaVar(1, ValType::I32);
 
 		let b0 = SsaBasicBlock {
 			params: Vec::new(),
@@ -434,7 +434,7 @@ use super::{FullRegAlloc, RegAlloc};
 				(BlockId { func: 0, block: 1 }, b1),
 			],
 			Box::new([]),
-			Box::new([Type::I32]),
+			Box::new([ValType::I32]),
 		);
 
 		let reg_alloc = FullRegAlloc::analyze(&func);
