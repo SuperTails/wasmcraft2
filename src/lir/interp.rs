@@ -559,6 +559,7 @@ impl LirInterpreter {
 			LirInstr::TurtleSetY(_) |
 			LirInstr::TurtleSetZ(_) |
 			LirInstr::TurtleSetBlock(_) |
+			LirInstr::TurtleFillBlock { .. } |
 			LirInstr::TurtleGetBlock(_) |
 			LirInstr::TurtleCopy |
 			LirInstr::TurtlePaste |

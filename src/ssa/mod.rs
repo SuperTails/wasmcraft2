@@ -276,6 +276,7 @@ pub enum SsaInstr {
 	TurtleSetY(SsaVarOrConst),
 	TurtleSetZ(SsaVarOrConst),
 	TurtleSetBlock(TypedSsaVar),
+	TurtleFillBlock { block: SsaVarOrConst, x_span: SsaVarOrConst, y_span: SsaVarOrConst, z_span: SsaVarOrConst },
 	TurtleGetBlock(TypedSsaVar),
 	TurtleCopy,
 	TurtlePaste,
@@ -386,6 +387,14 @@ impl SsaInstr {
 			SsaInstr::TurtleSetZ(SsaVarOrConst::Const(_)) => Vec::new(),
 
 			SsaInstr::TurtleSetBlock(b) => vec![*b],
+			SsaInstr::TurtleFillBlock { block, x_span, y_span, z_span } => {
+				let mut result = Vec::new();
+				result.extend(block.get_var());
+				result.extend(x_span.get_var());
+				result.extend(y_span.get_var());
+				result.extend(z_span.get_var());
+				return result;
+			}
 			SsaInstr::TurtleGetBlock(_) => Vec::new(),
 			SsaInstr::TurtleCopy => Vec::new(),
 			SsaInstr::TurtlePaste => Vec::new(),
@@ -471,6 +480,7 @@ impl SsaInstr {
 			SsaInstr::TurtleSetY(_) => Vec::new(),
 			SsaInstr::TurtleSetZ(_) => Vec::new(),
 			SsaInstr::TurtleSetBlock(_) => Vec::new(),
+			SsaInstr::TurtleFillBlock { .. } => Vec::new(),
 			SsaInstr::TurtleGetBlock(b) => vec![*b],
 			SsaInstr::TurtleCopy => Vec::new(),
 			SsaInstr::TurtlePaste => Vec::new(),
@@ -544,6 +554,7 @@ impl SsaInstr {
 			SsaInstr::TurtleSetY(_) |
 			SsaInstr::TurtleSetZ(_) |
 			SsaInstr::TurtleSetBlock(_) |
+			SsaInstr::TurtleFillBlock { .. } |
 			SsaInstr::TurtleGetBlock(_) |
 			SsaInstr::TurtleCopy |
 			SsaInstr::TurtlePaste |
@@ -600,6 +611,8 @@ impl SsaInstr {
 			SsaInstr::TurtleSetX(v) |
 			SsaInstr::TurtleSetY(v) |
 			SsaInstr::TurtleSetZ(v) => vec![v],
+
+			SsaInstr::TurtleFillBlock { block, x_span, y_span, z_span } => vec![block, x_span, y_span, z_span],
 
 			_ => Vec::new(),
 		}

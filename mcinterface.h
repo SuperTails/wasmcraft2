@@ -28,8 +28,16 @@ extern void turtle_x(int value);
 extern void turtle_y(int value);
 extern void turtle_z(int value);
 
-// Sets the block at the turtle's position
-extern void turtle_set(enum Block block);
+// Fills a volume relative to the turtle's postion.
+// The x, y, and z span arguments are effectively the size of the region minus one,
+// so `turtle_fill(block, 0, 0, 0)` is equivalent to `turtle_set(block)`
+// This function is UNSTABLE and MAY NOT COMPILE.
+extern void turtle_fill(enum Block block, int x_span, int y_span, int z_span);
+
+// Sets the block at the turtle's position.
+static void turtle_set(enum Block block) {
+    turtle_fill(block, 0, 0, 0);
+}
 
 // Returns the block at the turtle's position
 extern enum Block turtle_get(void);

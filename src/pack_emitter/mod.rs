@@ -1338,6 +1338,39 @@ fn turtle_set_block(reg: Register, code: &mut Vec<String>) {
 
 }
 
+fn turtle_fill_block(block: Register, x_span: Register, y_span: Register, z_span: Register, code: &mut Vec<String>) {
+	if let (Some(x_span), Some(y_span), Some(z_span)) = (x_span.get_const(), y_span.get_const(), z_span.get_const()) {
+		if let Some(block) = block.get_const() {
+			let block = BLOCKS[block as usize];
+			code.push(format!("execute at @e[tag=turtle] run fill ~ ~ ~ ~{x_span} ~{y_span} ~{z_span} {block} replace"));
+		} else {
+			for (idx, block_name) in BLOCKS.iter().enumerate() {
+				// TODO: Replace or destroy?
+				code.push(format!("execute at @e[tag=turtle] if score {block} matches {idx} run fill ~ ~ ~ ~{x_span} ~{y_span} ~{z_span} {block_name} replace"));
+			}
+		}
+	} else {
+		todo!()
+	}
+
+	/*
+	for (idx, block) in BLOCKS.iter().enumerate() {
+		// TODO: Replace or destroy?
+		code.push(format!("execute at @e[tag=turtle] if score {reg} matches {idx} run setblock ~ ~ ~ {block} replace"));
+	}
+
+	let reg_name = reg.scoreboard_pair().0;
+
+	let mut s = format!("execute unless score {reg} matches 0..{} run ", BLOCKS.len() - 1);
+	s.push_str(r#"tellraw @a [{"text":"Attempt to set invalid block"},{"score":{"name":""#);
+	s.push_str(reg_name.as_ref());
+	s.push_str(r#"","objective":"reg"}}]"#);
+	code.push(s);
+	*/
+
+}
+
+
 fn turtle_get_block(reg: Register, code: &mut Vec<String>) {
 	code.push(format!("scoreboard players set {reg} 0"));
 	for (idx, block) in BLOCKS.iter().enumerate() {
@@ -2183,7 +2216,8 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 		LirInstr::TurtleSetZ(z) => {
 			code.push(format!("execute as @e[tag=turtle] store result entity @s Pos[2] double 1 run scoreboard players get {z}"));
 		}
-		LirInstr::TurtleSetBlock(r) => turtle_set_block(*r, code),
+		&LirInstr::TurtleSetBlock(r) => turtle_set_block(r, code),
+		&LirInstr::TurtleFillBlock { block, x_span, y_span, z_span } => turtle_fill_block(block, x_span, y_span, z_span, code),
 		LirInstr::TurtleGetBlock(r) => turtle_get_block(*r, code),
 		LirInstr::TurtleCopy => {
 			code.push("execute at @e[tag=turtle] run clone ~ ~ ~ ~ ~ ~ -1 -1 -1".to_string());

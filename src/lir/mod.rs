@@ -304,6 +304,7 @@ pub enum LirInstr {
 	TurtleSetY(Register),
 	TurtleSetZ(Register),
 	TurtleSetBlock(Register),
+	TurtleFillBlock { block: Register, x_span: Register, y_span: Register, z_span: Register },
 	TurtleGetBlock(Register),
 	TurtleCopy,
 	TurtlePaste,

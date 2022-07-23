@@ -946,6 +946,13 @@ fn lower_block<L>(
 				let reg = ra.get(v.unwrap_i32());
 				block.push(LirInstr::TurtleSetBlock(reg));
 			}
+			&super::SsaInstr::TurtleFillBlock { block: block_var, x_span, y_span, z_span } => {
+				let block_reg = map_ra_i32(block_var, ra);
+				let x_span = map_ra_i32(x_span, ra);
+				let y_span = map_ra_i32(y_span, ra);
+				let z_span = map_ra_i32(z_span, ra);
+				block.push(LirInstr::TurtleFillBlock { block: block_reg, x_span, y_span, z_span });
+			}
 			&super::SsaInstr::TurtleGetBlock(v) => {
 				let reg = ra.get(v.unwrap_i32());
 				block.push(LirInstr::TurtleGetBlock(reg));
