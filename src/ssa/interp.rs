@@ -663,6 +663,8 @@ impl SsaInterpreter {
 				super::SsaInstr::TurtleSetZ(_) |
 				super::SsaInstr::TurtleSetBlock(_) |
 				super::SsaInstr::TurtleFillBlock { .. } |
+				super::SsaInstr::TurtleCopyRegion { .. } |
+				super::SsaInstr::TurtlePasteRegionMasked { .. } |
 				super::SsaInstr::TurtleCopy |
 				super::SsaInstr::TurtlePaste |
 				super::SsaInstr::PrintInt(_) => {}

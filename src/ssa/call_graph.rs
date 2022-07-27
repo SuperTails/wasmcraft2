@@ -23,9 +23,15 @@ pub struct CallGraph {
 
 impl CallGraph {
 	pub fn new(program: &SsaProgram) -> Self {
+		println!("doing direct calls!");
+
 		let direct_calls = get_direct_calls(program);
 
+		println!("did direct calls, doing single tick!");
+
 		let is_single_tick = get_single_tick_funcs(program);
+
+		println!("did single tick, doing tables!");
 
 		// FIXME: This becomes invalid once table-modifying instructions are added
 		let mut table_info = HashMap::new();

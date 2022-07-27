@@ -883,6 +883,22 @@ impl ValidationState<'_> {
 								let z_span = params[3].into();
 								builder.current_block_mut().body.push(SsaInstr::TurtleFillBlock { block, x_span, y_span, z_span });
 							}
+							("env", "turtle_copy_region") => {
+								assert_eq!(params.len(), 3);
+								assert_eq!(returns.len(), 0);
+								let x_span = params[0].into();
+								let y_span = params[1].into();
+								let z_span = params[2].into();
+								builder.current_block_mut().body.push(SsaInstr::TurtleCopyRegion { x_span, y_span, z_span });
+							}
+							("env", "turtle_paste_region_masked") => {
+								assert_eq!(params.len(), 3);
+								assert_eq!(returns.len(), 0);
+								let x_span = params[0].into();
+								let y_span = params[1].into();
+								let z_span = params[2].into();
+								builder.current_block_mut().body.push(SsaInstr::TurtlePasteRegionMasked { x_span, y_span, z_span });
+							}
 							("env", "turtle_get") => {
 								assert_eq!(params.len(), 0);
 								assert_eq!(returns.len(), 1);

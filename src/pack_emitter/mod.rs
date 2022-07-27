@@ -45,6 +45,9 @@ fn create_pointers_init(code: &mut Vec<String>) {
 fn create_constants_init(constants: &HashSet<i32>, code: &mut Vec<String>) {
 	let old_style = [-1];
 
+	code.push(format!("scoreboard players set %%PAGE_SPAN_Z reg {PAGE_SPAN_Z}"));
+	code.push(format!("scoreboard players set %%PAGE_SPAN_Y reg {PAGE_SPAN_Y}"));
+
 	for v in old_style {
 		code.push(format!("scoreboard players set %%{v} reg {v}"));
 	}
@@ -68,18 +71,21 @@ fn create_memory_init(memory: &[Memory], code: &mut Vec<String>) {
 
 	for (memory_idx, memory) in memory.iter().enumerate() {
 		assert_eq!(memory_idx, 0);
-		assert_eq!(memory.data.len() % 65536, 0);
-		let num_pages = memory.data.len() / 65536;
+		assert_eq!(memory.data.len() % MEMORY_PAGE_SIZE, 0);
+		let num_pages = memory.data.len() / MEMORY_PAGE_SIZE;
 		for x_offset in 0..num_pages {
-			let x_offset = x_offset * 8;
+			let x_begin = x_offset as i32 * PAGE_SPAN_X;
+			let x_end = x_begin + PAGE_SPAN_X - 1;
+			let y_end = PAGE_SPAN_Y - 1;
+			let z_end = PAGE_SPAN_Z - 1;
 			// Web assembly page size is 64KiB
 			// Thus an 8x256x8 area where each block is an i32
 			// makes up exactly one page
 
 			// Also note that a single fill command can only fill 32768 blocks,
 			// so we'll just do it one at a time for safety
-			code.push(format!("fill {} 0 0 {} 255 7 minecraft:air replace", x_offset, x_offset + 8));
-			code.push(format!("fill {} 0 0 {} 255 7 minecraft:jukebox{{RecordItem:{{id:\"minecraft:stone\",Count:1b,tag:{{Memory:0}}}}}} replace", x_offset, x_offset + 8));
+			code.push(format!("fill {x_begin} 0 0 {x_end} {y_end} {z_end} minecraft:air replace"));
+			code.push(format!("fill {x_begin} 0 0 {x_end} {y_end} {z_end} minecraft:jukebox{{RecordItem:{{id:\"minecraft:stone\",Count:1b,tag:{{Memory:0}}}}}} replace"));
 		}
 
 		for (word_idx, d) in memory.data.chunks_exact(4).enumerate() {
@@ -88,9 +94,7 @@ fn create_memory_init(memory: &[Memory], code: &mut Vec<String>) {
 			let data = i32::from_le_bytes(data);
 
 			if data != 0 {
-				let z = word_idx % 8;
-				let y = (word_idx / 8) % 256;
-				let x = word_idx / (8 * 256);
+				let (x, y, z) = get_address_pos(word_idx as i32 * 4);
 				code.push(format!("setblock {x} {y} {z} minecraft:air replace"));
 				code.push(format!("setblock {x} {y} {z} minecraft:jukebox{{RecordItem:{{id:\"minecraft:stone\",Count:1b,tag:{{Memory:{data}}}}}}} replace"))
 			}
@@ -564,16 +568,24 @@ fn mem_store_8 (src: Register, addr: RegisterWithInfo, code: &mut Vec<String>) {
 	}
 }
 
+const PAGE_SPAN_Z: i32 = 32;
+const PAGE_SPAN_Y: i32 = 256;
+const PAGE_SPAN_X: i32 = 2;
+
+const MEMORY_PAGE_SIZE: usize = 65536;
+
+const MEMORY_PAGE_BLOCKS: usize = MEMORY_PAGE_SIZE / 4;
+
 fn get_address_pos(addr: i32) -> (i32, i32, i32) {
 	assert!(addr >= 0);
 	assert_eq!(addr % 4, 0);
 
 	let mut word_addr = addr / 4;
 
-	let z = word_addr % 8;
-	word_addr /= 8;
-	let y = word_addr % 256;
-	word_addr /= 256;
+	let z = word_addr % PAGE_SPAN_Z;
+	word_addr /= PAGE_SPAN_Z;
+	let y = word_addr % PAGE_SPAN_Y;
+	word_addr /= PAGE_SPAN_Y;
 	let x = word_addr;
 
 	(x, y, z)
@@ -1369,6 +1381,42 @@ fn turtle_fill_block(block: Register, x_span: Register, y_span: Register, z_span
 	*/
 
 }
+
+fn turtle_paste_region_masked(x_span: Register, y_span: Register, z_span: Register, code: &mut Vec<String>) {
+	if let (Some(x_span), Some(y_span), Some(z_span)) = (x_span.get_const(), y_span.get_const(), z_span.get_const()) {
+		let x_end = x_span;
+		let y_end = y_span;
+		let z_end = -1 + z_span;
+		code.push(format!("execute at @e[tag=turtle] run clone 0 0 -1 {x_end} {y_end} {z_end} ~ ~ ~ masked"));
+	} else {
+		todo!()
+	}
+}
+
+fn turtle_copy_region(x_span: Register, y_span: Register, z_span: Register, code: &mut Vec<String>) {
+	if let (Some(x_span), Some(y_span), Some(z_span)) = (x_span.get_const(), y_span.get_const(), z_span.get_const()) {
+		code.push(format!("execute at @e[tag=turtle] run clone ~ ~ ~ ~{x_span} ~{y_span} ~{z_span} 0 0 -1"));
+	} else {
+		todo!()
+	}
+
+	/*
+	for (idx, block) in BLOCKS.iter().enumerate() {
+		// TODO: Replace or destroy?
+		code.push(format!("execute at @e[tag=turtle] if score {reg} matches {idx} run setblock ~ ~ ~ {block} replace"));
+	}
+
+	let reg_name = reg.scoreboard_pair().0;
+
+	let mut s = format!("execute unless score {reg} matches 0..{} run ", BLOCKS.len() - 1);
+	s.push_str(r#"tellraw @a [{"text":"Attempt to set invalid block"},{"score":{"name":""#);
+	s.push_str(reg_name.as_ref());
+	s.push_str(r#"","objective":"reg"}}]"#);
+	code.push(s);
+	*/
+
+}
+
 
 
 fn turtle_get_block(reg: Register, code: &mut Vec<String>) {
@@ -2219,6 +2267,8 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 		&LirInstr::TurtleSetBlock(r) => turtle_set_block(r, code),
 		&LirInstr::TurtleFillBlock { block, x_span, y_span, z_span } => turtle_fill_block(block, x_span, y_span, z_span, code),
 		LirInstr::TurtleGetBlock(r) => turtle_get_block(*r, code),
+		&LirInstr::TurtleCopyRegion { x_span, y_span, z_span } => turtle_copy_region(x_span, y_span, z_span, code),
+		&LirInstr::TurtlePasteRegionMasked { x_span, y_span, z_span } => turtle_paste_region_masked(x_span, y_span, z_span, code),
 		LirInstr::TurtleCopy => {
 			code.push("execute at @e[tag=turtle] run clone ~ ~ ~ ~ ~ ~ -1 -1 -1".to_string());
 		}
@@ -2767,6 +2817,12 @@ mod test {
 			interp.set_named_score(&holder, &obj, c);
 		}
 
+		let holder_z = ScoreHolder::new("%%PAGE_SPAN_Z".to_string()).unwrap();
+		let holder_y = ScoreHolder::new("%%PAGE_SPAN_Y".to_string()).unwrap();
+		let obj = Objective::new("reg".to_string()).unwrap();
+		interp.set_named_score(&holder_z, &obj, PAGE_SPAN_Z);
+		interp.set_named_score(&holder_y, &obj, PAGE_SPAN_Y);
+
 		for c in const_pool {
 			let (holder, obj) = Register::const_val(c).scoreboard_pair();
 			interp.set_named_score(&holder, &obj, c);
@@ -3032,10 +3088,16 @@ mod test {
 			interp.set_named_score(&holder, &obj, c);
 		}
 
+		let holder_z = ScoreHolder::new("%%PAGE_SPAN_Z".to_string()).unwrap();
+		let holder_y = ScoreHolder::new("%%PAGE_SPAN_Y".to_string()).unwrap();
+		let obj = Objective::new("reg".to_string()).unwrap();
+		interp.set_named_score(&holder_z, &obj, PAGE_SPAN_Z);
+		interp.set_named_score(&holder_y, &obj, PAGE_SPAN_Y);
+
 		//interp.scoreboard.0.insert(Objective::new("reg".to_string()).unwrap(), Default::default());
 
-		for i in 0..8 * 256 * 8 * 3 {
-			let pos = get_address_pos(i * 4);
+		for i in 0..MEMORY_PAGE_BLOCKS * 3 {
+			let pos = get_address_pos(i as i32 * 4);
 			let v0 = 0x55_55_55_55;
 			interp.set_block_raw(pos, datapack_vm::interpreter::Block::Jukebox(v0));
 		}
@@ -3046,8 +3108,8 @@ mod test {
 
 		let mut bytes = Vec::new();
 
-		for i in 0..8 * 256 * 8 * 3 {
-			let pos = get_address_pos(i * 4);
+		for i in 0..MEMORY_PAGE_BLOCKS * 3 {
+			let pos = get_address_pos(i as i32 * 4);
 			let block = interp.get_block(pos);
 
 			if let Some(datapack_vm::interpreter::Block::Jukebox(m0)) = block {

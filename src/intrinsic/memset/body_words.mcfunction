@@ -20,20 +20,20 @@
 #		*memoryptr = value;
 #		
 #		++z;
-#		if (z == 8) {
+#		if (z == PAGE_SPAN_Z) {
 #			++y;
 #		}
-#		if (y == 256) {
+#		if (y == PAGE_SPAN_Y) {
 #			++x;
 #		}
 #
 #
-#		if (y == 256) {
+#		if (y == PAGE_SPAN_Y) {
 #			setptr_x(x);
 #			y = 0;
 #		}
 #
-#		if (z == 8) {
+#		if (z == PAGE_SPAN_Z) {
 #			setptr_y(y);
 #			z = 0;
 #		}
@@ -47,14 +47,14 @@
 execute at @e[tag=memoryptr] store result block ~ ~ ~ RecordItem.tag.Memory int 1 run scoreboard players get %mst_value_word reg
 
 scoreboard players add %mst_z reg 1
-execute if score %mst_z reg matches 8 run scoreboard players add %mst_y reg 1
-execute if score %mst_y reg matches 256 run scoreboard players add %mst_x reg 1
+execute if score %mst_z reg = %%PAGE_SPAN_Z reg run scoreboard players add %mst_y reg 1
+execute if score %mst_y reg = %%PAGE_SPAN_Y reg run scoreboard players add %mst_x reg 1
 
-execute if score %mst_y reg matches 256 as @e[tag=memoryptr] store result entity @s Pos[0] double 1 run scoreboard players get %mst_x reg
-execute if score %mst_y reg matches 256 run scoreboard players set %mst_y reg 0
+execute if score %mst_y reg = %%PAGE_SPAN_Y reg as @e[tag=memoryptr] store result entity @s Pos[0] double 1 run scoreboard players get %mst_x reg
+execute if score %mst_y reg = %%PAGE_SPAN_Y reg run scoreboard players set %mst_y reg 0
 
-execute if score %mst_z reg matches 8 as @e[tag=memoryptr] store result entity @s Pos[1] double 1 run scoreboard players get %mst_y reg
-execute if score %mst_z reg matches 8 run scoreboard players set %mst_z reg 0
+execute if score %mst_z reg = %%PAGE_SPAN_Z reg as @e[tag=memoryptr] store result entity @s Pos[1] double 1 run scoreboard players get %mst_y reg
+execute if score %mst_z reg = %%PAGE_SPAN_Z reg run scoreboard players set %mst_z reg 0
 
 execute as @e[tag=memoryptr] store result entity @s Pos[2] double 1 run scoreboard players get %mst_z reg
 

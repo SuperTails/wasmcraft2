@@ -277,6 +277,8 @@ pub enum SsaInstr {
 	TurtleSetZ(SsaVarOrConst),
 	TurtleSetBlock(TypedSsaVar),
 	TurtleFillBlock { block: SsaVarOrConst, x_span: SsaVarOrConst, y_span: SsaVarOrConst, z_span: SsaVarOrConst },
+	TurtleCopyRegion { x_span: SsaVarOrConst, y_span: SsaVarOrConst, z_span: SsaVarOrConst },
+	TurtlePasteRegionMasked { x_span: SsaVarOrConst, y_span: SsaVarOrConst, z_span: SsaVarOrConst },
 	TurtleGetBlock(TypedSsaVar),
 	TurtleCopy,
 	TurtlePaste,
@@ -395,6 +397,20 @@ impl SsaInstr {
 				result.extend(z_span.get_var());
 				return result;
 			}
+			SsaInstr::TurtleCopyRegion { x_span, y_span, z_span } => {
+				let mut result = Vec::new();
+				result.extend(x_span.get_var());
+				result.extend(y_span.get_var());
+				result.extend(z_span.get_var());
+				return result;
+			}
+			SsaInstr::TurtlePasteRegionMasked { x_span, y_span, z_span } => {
+				let mut result = Vec::new();
+				result.extend(x_span.get_var());
+				result.extend(y_span.get_var());
+				result.extend(z_span.get_var());
+				return result;
+			}
 			SsaInstr::TurtleGetBlock(_) => Vec::new(),
 			SsaInstr::TurtleCopy => Vec::new(),
 			SsaInstr::TurtlePaste => Vec::new(),
@@ -481,6 +497,8 @@ impl SsaInstr {
 			SsaInstr::TurtleSetZ(_) => Vec::new(),
 			SsaInstr::TurtleSetBlock(_) => Vec::new(),
 			SsaInstr::TurtleFillBlock { .. } => Vec::new(),
+			SsaInstr::TurtleCopyRegion { .. } => Vec::new(),
+			SsaInstr::TurtlePasteRegionMasked { .. } => Vec::new(),
 			SsaInstr::TurtleGetBlock(b) => vec![*b],
 			SsaInstr::TurtleCopy => Vec::new(),
 			SsaInstr::TurtlePaste => Vec::new(),
@@ -555,6 +573,8 @@ impl SsaInstr {
 			SsaInstr::TurtleSetZ(_) |
 			SsaInstr::TurtleSetBlock(_) |
 			SsaInstr::TurtleFillBlock { .. } |
+			SsaInstr::TurtleCopyRegion { .. } |
+			SsaInstr::TurtlePasteRegionMasked { .. } |
 			SsaInstr::TurtleGetBlock(_) |
 			SsaInstr::TurtleCopy |
 			SsaInstr::TurtlePaste |
@@ -613,6 +633,9 @@ impl SsaInstr {
 			SsaInstr::TurtleSetZ(v) => vec![v],
 
 			SsaInstr::TurtleFillBlock { block, x_span, y_span, z_span } => vec![block, x_span, y_span, z_span],
+
+			SsaInstr::TurtleCopyRegion { x_span, y_span, z_span } |
+			SsaInstr::TurtlePasteRegionMasked { x_span, y_span, z_span } => vec![x_span, y_span, z_span],
 
 			_ => Vec::new(),
 		}
@@ -871,7 +894,7 @@ pub struct SsaProgram {
 
 impl SsaProgram {
 	pub fn get_func(&self, func_id: u32) -> &SsaFunction {
-		self.code.iter().find(|f| f.func_id() == func_id).unwrap()
+		self.code.iter().find(|f| f.func_id() == func_id).unwrap_or_else(|| panic!("couldn't find function {:?}", func_id))
 	}
 }
 
