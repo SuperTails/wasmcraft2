@@ -22,8 +22,6 @@ enum CodegenStage {
 
 const CODEGEN_STAGE: CodegenStage = CodegenStage::Datapack;
 
-const PERSIST_PROGRAM: bool = false;
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 enum RegAllocMode {
     /// No-op regalloc. Faster compilation, slower output.
@@ -275,6 +273,9 @@ fn run_datapack_output(datapack: Vec<Function>) {
 
 	let mut interp = datapack_vm::Interpreter::new(datapack, 0);
 
+	interp.max_tick_commands = 400_000_000;
+	interp.max_total_commands = 400_000_000;
+
 
 	let (_, func_name) = datapack_common::functions::command_components::FunctionIdent::parse_from_command("wasmrunner:init").unwrap();
 
@@ -318,25 +319,35 @@ fn run_datapack_output(datapack: Vec<Function>) {
 
 		if interp.call_stack_depth() == 0 {
 			let name = "wasm:returnstack".to_string();
-			let path: NbtPath = command_parser::parse_command("stack.data").unwrap();
+			// TODO: This may not be a strict enough condition?
+			let path: NbtPath = command_parser::parse_command("stack.data.ptr").unwrap();
 			if interp.nbt_storage.contains_path(&name, &path) {
 				println!("return stack was not empty");
 				break;
 			}
 		}
-
-		if interp.call_stack_depth() == 1 {
-			let top = interp.call_stack_top().unwrap().0;
-			if top.id.namespace == "wasmrunner" && top.id.path == "wasm_8_3" {
-				println!("Panicked!");
-				break;
-			}
-		}
 	}
 
+	static MAX_PRINTED_STACK_SIZE: usize = 50;
+
+	let call_stack = interp.call_stack();
+
 	println!("Call stack:");
-	for entry in interp.call_stack() {
-		print!("{{ {}, {} }},", entry.0.id, entry.1);
+	if call_stack.len() > MAX_PRINTED_STACK_SIZE {
+		let num_skipped = call_stack.len() - MAX_PRINTED_STACK_SIZE;
+		let skip_start = (call_stack.len() / 2) - (num_skipped / 2);
+		let skip_end = (call_stack.len() / 2) + (num_skipped / 2);
+		for entry in call_stack[..skip_start].iter() {
+			print!("{{ {}, {} }},", entry.0.id, entry.1);
+		}
+		print!("... {} entries omitted ...", num_skipped);
+		for entry in call_stack[skip_end..].iter() {
+			print!("{{ {}, {} }},", entry.0.id, entry.1);
+		}
+	} else {
+		for entry in call_stack.iter() {
+			print!("{{ {}, {} }},", entry.0.id, entry.1);
+		}
 	}
 	println!();
 
@@ -350,6 +361,7 @@ fn run_datapack_output(datapack: Vec<Function>) {
 	let total: usize = traces.iter().map(|(_, c)| *c).sum();
 
 	println!("\nTOTAL: {}", total);
+	traces.truncate(50);
 	for (func, count) in traces {
 		println!("{}: {}", func.id, count);
 		if count < 1000 {
@@ -360,6 +372,7 @@ fn run_datapack_output(datapack: Vec<Function>) {
 	println!("\nIntrinsic cumulative times:");
 	let mut intrin_cum_times = intrin_cum_times.iter().enumerate().map(|(f, c)| (&interp.program[f], *c)).collect::<Vec<_>>();
 	intrin_cum_times.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+	intrin_cum_times.truncate(20);
 	for (func, count) in intrin_cum_times.iter() {
 		if *count < 1000 {
 			break;
@@ -369,6 +382,17 @@ fn run_datapack_output(datapack: Vec<Function>) {
 
 	println!("Ticks run: {}", interp.tick);
 
+	if false {
+		use std::io::Write;
+
+		let dur = std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap();
+		let path = format!("./interp_output_{}.txt", dur.as_secs());
+		let mut f = std::fs::File::create(&path).unwrap();
+		for out in interp.output {
+			f.write_all(out.as_bytes()).unwrap();
+			f.write_all(b"\n").unwrap();
+		}
+	}
 }
 
 // TODO: Test mixed-tick tables

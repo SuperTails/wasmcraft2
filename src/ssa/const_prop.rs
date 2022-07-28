@@ -719,7 +719,7 @@ pub fn do_strength_reduction(block: &mut SsaBasicBlock, constants: &StaticState)
 				}
 			}
 		}
-
+		
 		match *instr {
 			SsaInstr::DivU(dst, lhs, rhs) => {
 				let lhs_val = constants.get(&lhs).copied();

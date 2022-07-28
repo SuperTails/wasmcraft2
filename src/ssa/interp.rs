@@ -165,14 +165,14 @@ pub struct SsaInterpreter {
 	memory: Vec<Memory>,
 	tables: Vec<Table>,
 	program: HashMap<BlockId, SsaBasicBlock>,
-	//constants: HashMap<usize, StaticState>,
+	constants: HashMap<BlockId, StaticState>,
 	call_stack: CallStack,
 	steps: u64,
 }
 
 impl SsaInterpreter {
 	pub fn new(program: SsaProgram) -> Self {
-		//let constants = program.code.iter().map(|f| (f.func_id, super::const_prop::get_func_constants(f))).collect();
+		let constants = program.code.iter().flat_map(|f| super::const_prop::get_func_constants(f)).collect();
 		
 		//let constants = HashMap::new();
 		
@@ -185,7 +185,7 @@ impl SsaInterpreter {
 			tables: program.tables,
 			program: code,
 			call_stack: CallStack(Vec::new()),
-			//constants,
+			constants,
 			steps: 0,
 		}
 	}
@@ -321,23 +321,26 @@ impl SsaInterpreter {
 		} else {
 			let mut incr_pc = true;
 
-			/*let consts = self.constants.get(&frame.pc.block.func).unwrap_or_else(|| panic!("{:?}", frame.pc));
+			if /*frame.pc.instr == 0*/ true {
+				let consts = self.constants.get(&frame.pc.block).unwrap_or_else(|| panic!("{:?}", frame.pc));
 
-			println!("{:?}", &block.body[frame.pc.instr]);
+				//println!("{:?}", &block.body[frame.pc.instr]);
 
-			for (var, value) in frame.var_context.0.iter() {
-				let var = TypedSsaVar(var.0, value.ty());
+				for (var, value) in frame.var_context.0.iter() {
+					let var = TypedSsaVar(var.0, value.ty());
 
-				if let Some(cst) = consts.get(&var) {
-					if !state_matches(*cst, *value) {
-						println!("const: {:X?}", cst);
-						println!("value: {:X?}", value);
-						println!("variable: {:?}", var);
-						println!("pc: {:?}", frame.pc);
-						panic!();
+					if let Some(cst) = consts.get(&var) {
+						if !state_matches(*cst, *value) {
+							println!("const: {:X?}", cst);
+							println!("value: {:X?}", value);
+							println!("variable: {:?}", var);
+							println!("pc: {:?}", frame.pc);
+							panic!();
+						}
 					}
 				}
-			}*/
+
+			}
 
 			fn do_compare_op(dst: TypedSsaVar, lhs: SsaVarOrConst, rhs: SsaVarOrConst, var_context: &mut VarContext, f: impl FnOnce(i32, i32) -> bool, g: impl FnOnce(i64, i64) -> bool) {
 				let l = lhs.eval(var_context).expect("lhs was uninit");
@@ -666,8 +669,15 @@ impl SsaInterpreter {
 				super::SsaInstr::TurtleCopyRegion { .. } |
 				super::SsaInstr::TurtlePasteRegionMasked { .. } |
 				super::SsaInstr::TurtleCopy |
-				super::SsaInstr::TurtlePaste |
-				super::SsaInstr::PrintInt(_) => {}
+				super::SsaInstr::TurtlePaste => {}
+
+				super::SsaInstr::PrintInt(v) => {
+					let value = v.eval(&frame.var_context).unwrap().into_i32().unwrap();
+					println!("{:?}", value);
+					if value == 402 {
+						panic!();
+					}
+				}
 
 				super::SsaInstr::TurtleGetBlock(dst) => {
 					frame.var_context.insert(dst.into_untyped(), 0.into());

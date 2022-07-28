@@ -1473,7 +1473,7 @@ fn bit_run_to_mask(run: Range<u32>) -> i32 {
 }
 
 fn emit_constant_or(dst: Register, lhs: RegisterWithInfo, rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
-	let RegisterWithInfo(lhs, lhs_info) = lhs;
+	let RegisterWithInfo(lhs, _lhs_info) = lhs;
 
 	if dst != lhs {
 		code.push(format!("scoreboard players operation {dst} = {lhs}"));
@@ -1518,6 +1518,13 @@ fn emit_constant_or(dst: Register, lhs: RegisterWithInfo, rhs: i32, code: &mut V
 		code.push(format!("scoreboard players operation {dst} %= %%{mask} reg"));
 		code.push(format!("scoreboard players remove {dst} {}", -rhs));
 	} else {
+		code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
+		code.push(format!("scoreboard players set %param1%0 reg {rhs}"));
+		code.push("function intrinsic:or".to_string());
+		code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
+
+		/* FIXME: THIS IS BROKEN. DO NOT USE.
+
 		let bit_runs = get_all_bit_runs(rhs).collect::<Vec<_>>();
 		if bit_runs.len() == 1 {
 			let run = bit_runs[0].clone();
@@ -1542,6 +1549,8 @@ fn emit_constant_or(dst: Register, lhs: RegisterWithInfo, rhs: i32, code: &mut V
 			code.push("function intrinsic:or".to_string());
 			code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
 		}
+
+		*/
 	}
 }
 
@@ -2455,11 +2464,21 @@ pub fn add_export_funcs(exports: &HashMap<String, BlockId>, code: &mut Vec<Funct
 	code.extend(exports.iter().map(|(name, id)| make_export_func(name, *id)));
 }
 
+static INSERT_FUNC_PRINTS: bool = false;
+
 pub fn emit_program(lir_program: &LirProgram) -> Vec<Function> {
 	let mut result = Vec::new();
 	let mut constants = lir_program.constants.clone();
 	for func in lir_program.code.iter() {
 		result.extend(emit_function(func, lir_program, &mut constants));
+	}
+
+	if INSERT_FUNC_PRINTS {
+		for r in result.iter_mut() {
+			let id = r.id.to_string();
+			let s = format!(r#"tellraw @a [{{"text":"Entered {id}"}}]"#);
+			r.cmds.insert(0, s.parse().unwrap());
+		}
 	}
 
 	let init_func = create_init_func(lir_program, &constants);
@@ -2894,14 +2913,15 @@ mod test {
 
 		//interp.scoreboard.0.insert(Objective::new("reg".to_string()).unwrap(), Default::default());
 
+		let (off_holder, off_obj) = addr.scoreboard_pair();
+		interp.set_named_score(&off_holder, &off_obj, offset);
+
 		for i in 0..32 {
 			let c: i32 = 1 << i;
 			let holder = ScoreHolder::new(format!("%%{c}")).unwrap();
 			let obj = Objective::new("reg".to_string()).unwrap();
 			interp.set_named_score(&holder, &obj, c);
 		}
-
-
 
 		for (addr, value) in memory.iter().copied().enumerate() {
 			let (x, y, z) = get_address_pos(addr as i32 * 4);
