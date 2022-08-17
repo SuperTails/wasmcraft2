@@ -2,7 +2,7 @@
 # %ptr      - Address to store at
 # %param0%0 - Word to be stored
 
-tellraw @a [{"text":"storing unaligned word "},{"score": {"name": "%%align", "objective": "reg"}}]
+# tellraw @a [{"text":"storing unaligned word "},{"score": {"name": "%%align", "objective": "reg"}}]
 
 scoreboard players operation %%temp0_swu reg = %param0%0 reg
 

@@ -259,6 +259,14 @@ fn try_merge_term(sets: &mut RegisterSet, block_id: BlockId, dst: &TypedSsaVar, 
 	let dst_set = sets.get(*dst);
 	let src_set = sets.get(*src);
 
+	if dst_set.live_range.is_empty() {
+		panic!("merging to dead destination {:?} {:?}", block_id, dst);
+	}
+
+	if src_set.live_range.is_empty() {
+		panic!("merging from dead source")
+	}
+
 	if interf_graph.interferes(dst_set, src_set) {
 		return;
 	}
@@ -269,8 +277,12 @@ fn try_merge_term(sets: &mut RegisterSet, block_id: BlockId, dst: &TypedSsaVar, 
 		if dst_set.live_range.0.get(&succ_block).unwrap().live_in {
 			// This variable isn't actually defined by the terminator, so don't try to coalesce it.
 			return
-
 		}
+
+		/*if !dst_set.live_range.0.get(&succ_block).unwrap().body_contains(0) {
+			// This variable isn't actually alive.
+			panic!("variable is not alive {:?} {:?}", dst, block_id);
+		}*/
 	}
 
 	let overlap = dst_set.live_range.overlap(&src_set.live_range);
@@ -279,6 +291,14 @@ fn try_merge_term(sets: &mut RegisterSet, block_id: BlockId, dst: &TypedSsaVar, 
 	//print_live_ranges(&[dst_set.live_range.clone(), src_set.live_range.clone()], func);
 
 	if overlap.is_empty() {
+		/*let v74 = TypedSsaVar(20, wasmparser::ValType::I32);
+		let v76 = TypedSsaVar(45, wasmparser::ValType::I32);
+		let ok1 = dst_set.members.contains(&v74) && src_set.members.contains(&v76);
+		let ok2 = dst_set.members.contains(&v76) && src_set.members.contains(&v74);
+		if ok1 || ok2 {
+			panic!();
+		}*/
+
 		sets.merge(*dst, *src);
 	}
 }
@@ -295,12 +315,34 @@ fn try_merge(sets: &mut RegisterSet, block_id: BlockId, instr_idx: usize, dst: &
 		return;
 	}
 
+	if dst_set.live_range.is_empty() {
+		panic!("merging to dead destination {:?} {:?}", block_id, dst);
+	}
+
+	if src_set.live_range.is_empty() {
+		panic!("merging from dead source")
+	}
+
 	let overlap = dst_set.live_range.overlap(&src_set.live_range);
+
 
 	//println!("Registers {:?} {:?}", dst, src);
 	//print_live_ranges(&[dst_set.live_range.clone(), src_set.live_range.clone()], func);
 
 	if overlap.is_empty() {
+		let dst_block_live_range = dst_set.live_range.0.get(&block_id).unwrap();
+		if !dst_block_live_range.body.iter().any(|r| r.contains(&(instr_idx + 1))) {
+			panic!();
+		}
+
+		/*let v36 = TypedSsaVar(36, wasmparser::ValType::I32);
+		let v72 = TypedSsaVar(72, wasmparser::ValType::I32);
+		let ok1 = dst_set.members.contains(&v72) && src_set.members.contains(&v36);
+		let ok2 = dst_set.members.contains(&v36) && src_set.members.contains(&v72);
+		if ok1 || ok2 {
+			panic!();
+		}*/
+
 		sets.merge(*dst, *src);
 	}
 }
@@ -314,7 +356,6 @@ impl FullRegAlloc {
 		let mut sets = RegisterSet::new(func);
 
 		println!("Register sets created for {}", func.func_id());
-
 
 		for (block_id, block) in func.iter() {
 			for (instr_idx, instr) in block.body.iter().enumerate() {
@@ -406,6 +447,63 @@ use super::{FullRegAlloc, RegAlloc};
 	}*/
 
 	#[test]
+	fn no_coalesce_dead_register() {
+		// TODO: Also use the palette test for this.
+
+		let r0 = TypedSsaVar(0, ValType::I32);
+		let r1 = TypedSsaVar(1, ValType::I32);
+
+		let r2 = TypedSsaVar(2, ValType::I32);
+		let r3 = TypedSsaVar(3, ValType::I32);
+
+		let r4 = TypedSsaVar(4, ValType::I32);
+
+		let b1 = SsaBasicBlock {
+			params: Vec::new(),
+			body: vec![
+				SsaInstr::I32Set(r0, 42),
+				SsaInstr::I32Set(r1, 17),
+			],
+			term: SsaTerminator::Jump(JumpTarget {
+				label: BlockId { func: 0, block: 0 },
+				params: vec![r0, r1],
+			})
+		};
+
+		let b0 = SsaBasicBlock {
+			params: vec![r2, r3],
+			body: vec![
+				SsaInstr::Assign(r3, r2.into()), // This convinces the regalloc to try coalescing r3 and r2, which triggers the bug.
+				SsaInstr::Or(r4, r3, r3.into()), // Use this instruction so that it doesn't try to coalesce r4 and r3
+			],
+			term: SsaTerminator::Return(vec![r2]),
+		};
+
+		let func = SsaFunction::new(
+			vec![
+				// It's also order-dependent, too.
+				(BlockId { func: 0, block: 0 }, b0),
+				(BlockId { func: 0, block: 1 }, b1),
+			],
+			Box::new([]),
+			Box::new([ValType::I32]),
+		);
+
+		let reg_alloc = FullRegAlloc::analyze(&func);
+
+		let reg0 = reg_alloc.get(r0.into_untyped());
+		let reg1 = reg_alloc.get(r1.into_untyped());
+		let reg2 = reg_alloc.get(r2.into_untyped());
+		let reg3 = reg_alloc.get(r3.into_untyped());
+
+		assert_eq!(reg0, reg2);
+		assert_eq!(reg1, reg3);
+		assert_ne!(reg0, reg1);
+
+		panic!("{:?}", reg_alloc.map);
+	}
+
+	#[test]
 	#[ignore]
 	fn coalesce_jump_param() {
 		let r0 = TypedSsaVar(0, ValType::I32);
@@ -430,8 +528,8 @@ use super::{FullRegAlloc, RegAlloc};
 
 		let func = SsaFunction::new(
 			vec![
-				(BlockId { func: 0, block: 0 }, b0),
 				(BlockId { func: 0, block: 1 }, b1),
+				(BlockId { func: 0, block: 0 }, b0),
 			],
 			Box::new([]),
 			Box::new([ValType::I32]),

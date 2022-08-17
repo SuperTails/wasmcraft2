@@ -67,6 +67,10 @@ impl BlockLiveRange {
 		self.live_out |= other.live_out;
 	}
 
+	pub fn body_contains(&self, idx: usize) -> bool {
+		self.body.iter().any(|range| range.contains(&idx))
+	}
+
 	/*pub fn is_live_into(&self, instr_idx: usize) -> bool {
 		if instr_idx == 0 {
 			self.live_in

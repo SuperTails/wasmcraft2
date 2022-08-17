@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::{Hash, Hasher}};
+use std::{collections::HashMap, hash::Hash};
 
 use wasmparser::ValType;
 

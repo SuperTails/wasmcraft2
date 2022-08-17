@@ -311,6 +311,7 @@ pub enum LirInstr {
 	TurtleCopy,
 	TurtlePaste,
 	PrintInt(Register),
+	PutChar(Register),
 
 	PushReturnAddr(BlockId),
 	PopReturnAddr,

@@ -30,6 +30,10 @@ fn create_stack_init(code: &mut Vec<String>) {
 	code.push("data modify storage wasm:scratch stack set value {}".to_string());
 }
 
+fn create_stdout_init(code: &mut Vec<String>) {
+	code.push("data modify storage wasm:stdout buffer set value []".to_string());
+}
+
 fn create_pointers_init(code: &mut Vec<String>) {
 	code.push("# Remove old armor stand pointers".to_string());
 	code.push("kill @e[tag=memoryptr]".to_string());
@@ -142,6 +146,7 @@ fn create_init_func(program: &LirProgram, constants: &HashSet<i32>) -> Function 
 
 	create_scoreboard_init(&mut code);
 	create_stack_init(&mut code);
+	create_stdout_init(&mut code);
 	create_pointers_init(&mut code);
 	create_constants_init(constants, &mut code);
 	create_memory_init(&program.memory, &mut code);
@@ -152,8 +157,6 @@ fn create_init_func(program: &LirProgram, constants: &HashSet<i32>) -> Function 
 }
 
 fn create_return_to_saved_func(program: &LirProgram) -> Vec<Function> {
-	let num_blocks = program.all_block_ids().count();
-
 	let reg = Register::temp_lo(0);
 	
 	let mut code = Vec::new();
@@ -164,11 +167,6 @@ fn create_return_to_saved_func(program: &LirProgram) -> Vec<Function> {
 	code.push("data modify storage wasm:scratch stack.data set from storage wasm:returnstack stack.data".to_string());
 	code.push(format!("execute store result score {reg} run data get storage wasm:returnstack stack.data.ptr 1"));
 	code.push("data modify storage wasm:returnstack stack set from storage wasm:returnstack stack.tail".to_string());
-
-	/*for block_id in program.all_block_ids() {
-		let addr_str = get_mc_id(block_id);
-		code.push(format!("execute if score {cond_taken} matches 0 if data storage wasm:scratch stack.data.'{addr_str}' run function {addr_str}"));
-	}*/
 
 	let blocks = program.all_block_ids().enumerate().collect::<Vec<_>>();
 
@@ -182,7 +180,7 @@ fn create_return_to_saved_func(program: &LirProgram) -> Vec<Function> {
 
 	let func = parse_function("wasmrunner:__return_to_saved", &code);
 	funcs.push(func);
-	return funcs
+	funcs
 }
 
 fn create_nested_return_func(cond: Register, values: &[(usize, BlockId)], funcs: &mut Vec<Function>) {
@@ -190,32 +188,32 @@ fn create_nested_return_func(cond: Register, values: &[(usize, BlockId)], funcs:
 
 	let mut code = Vec::new();
 
-	if values.len() == 0 {
-		panic!("nested return func was empty");
-	} else if values.len() == 1 {
-		let (addr, block_id) = values[0];
-		let func = get_mc_id(block_id);
-		code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {addr} run function {func}"));
-	} else if values.len() == 2 {
-		let (addr0, block_id0) = values[0];
-		let func0 = get_mc_id(block_id0);
-		code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {addr0} run function {func0}"));
-		let (addr1, block_id1) = values[1];
-		let func1 = get_mc_id(block_id1);
-		code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {addr1} run function {func1}"));
-	} else {
-		create_nested_return_func(cond, &values[..values.len() / 2], funcs);
-		let func_name_lesser = format!("wasmrunner:__return_to_saved_{}", funcs.len() - 1);
+	match values[..] {
+		[] => panic!("nested return func was empty"),
+		[(addr, block_id)] => {
+			let func = get_mc_id(block_id);
+			code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {addr} run function {func}"));
+		}
+		[(addr0, block_id0), (addr1, block_id1)] => {
+			let func0 = get_mc_id(block_id0);
+			code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {addr0} run function {func0}"));
+			let func1 = get_mc_id(block_id1);
+			code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {addr1} run function {func1}"));
+		}
+		_ => {
+			create_nested_return_func(cond, &values[..values.len() / 2], funcs);
+			let func_name_lesser = format!("wasmrunner:__return_to_saved_{}", funcs.len() - 1);
 
-		create_nested_return_func(cond, &values[values.len() / 2 + 1..], funcs);
-		let func_name_greater = format!("wasmrunner:__return_to_saved_{}", funcs.len() - 1);
+			create_nested_return_func(cond, &values[values.len() / 2 + 1..], funcs);
+			let func_name_greater = format!("wasmrunner:__return_to_saved_{}", funcs.len() - 1);
 
-		let (addr_mid, block_id_mid) = values[values.len() / 2];
-		let func_mid = get_mc_id(block_id_mid);
+			let (addr_mid, block_id_mid) = values[values.len() / 2];
+			let func_mid = get_mc_id(block_id_mid);
 
-		code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches ..{} run function {func_name_lesser}", addr_mid - 1));
-		code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {} run function {func_mid}", addr_mid));
-		code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {}.. run function {func_name_greater}", addr_mid + 1));
+			code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches ..{} run function {func_name_lesser}", addr_mid - 1));
+			code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {} run function {func_mid}", addr_mid));
+			code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {}.. run function {func_name_greater}", addr_mid + 1));
+		}
 	}
 
 	let func_name = format!("wasmrunner:__return_to_saved_{}", funcs.len());
@@ -946,13 +944,18 @@ fn unsigned_less_than(dst: Register, lhs: Register, rhs: Register, code: &mut Ve
 }
 
 fn unsigned_less_than_eq(dst: Register, lhs: Register, rhs: Register, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
+	// FIXME: Add a test for this (previously I had r_value - 1, which was a bug)
+
 	if let Some(r) = rhs.get_const() {
 		let r_value = r as u32;
-		if r_value == 0 {
+		if r_value == u32::MAX {
+			// n <= u32::MAX is always true; this should be caught in const prop!
+			panic!("missed optimization in const propogation: n <= u32::MAX");
+		} else if r_value == 0 {
 			// n <= 0 for unsigned values is only true if n == 0
 			code.push(format!("execute store success score {dst} if score {lhs} matches 0"));
 		} else {
-			let new_r = (r_value - 1) as i32;
+			let new_r = (r_value + 1) as i32;
 			const_pool.insert(new_r);
 			unsigned_less_than(dst, lhs, Register::const_val(new_r), code);
 		}
@@ -1475,6 +1478,14 @@ fn bit_run_to_mask(run: Range<u32>) -> i32 {
 fn emit_constant_or(dst: Register, lhs: RegisterWithInfo, rhs: i32, code: &mut Vec<String>, const_pool: &mut HashSet<i32>) {
 	let RegisterWithInfo(lhs, _lhs_info) = lhs;
 
+	code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
+	code.push(format!("scoreboard players set %param1%0 reg {rhs}"));
+	code.push("function intrinsic:or".to_string());
+	code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
+
+	return;
+
+
 	if dst != lhs {
 		code.push(format!("scoreboard players operation {dst} = {lhs}"));
 	}
@@ -1588,6 +1599,13 @@ fn emit_constant_and(dst: Register, lhs: RegisterWithInfo, rhs: i32, code: &mut 
 			code.push(format!("scoreboard players operation {dst} %= {modulus}"));
 		}
 	} else {
+		code.push(format!("scoreboard players operation %param0%0 reg = {lhs}"));
+		code.push(format!("scoreboard players set %param1%0 reg {rhs}"));
+		code.push("function intrinsic:and".to_string());
+		code.push(format!("scoreboard players operation {dst} = %return%0 reg"));
+
+		/*
+		FIXME: THIS IS BROKEN. DO NOT USE.
 		code.push(format!("# ({}) = ({}) & ({:#X})", dst, lhs, rhs));
 
 		let tmp_dst = Register::temp_lo(1235);
@@ -1638,6 +1656,7 @@ fn emit_constant_and(dst: Register, lhs: RegisterWithInfo, rhs: i32, code: &mut 
 
 			code.push(format!("scoreboard players operation {dst} += {tmp_dst}"));
 		}
+		*/
 	}
 }
 
@@ -1693,7 +1712,11 @@ fn emit_constant_xor(dst: Register, lhs: RegisterWithInfo, mut rhs: i32, code: &
 	}
 
 	if rhs == 1 << 31 {
-		code.push(format!("scoreboard players add {dst} {}", 1 << 31));
+		// TODO: Add a regresstion test; this didn't work because it tried to add a negative number.
+
+		// This adds (1 << 31), but it has to be split into two parts.
+		code.push(format!("scoreboard players add {dst} {}", i32::MAX));
+		code.push(format!("scoreboard players add {dst} 1"));
 		return;
 	}
 	
@@ -2292,7 +2315,10 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 			s.push_str(i);
 			s.push_str(r#"","objective":"reg"}}]"#);
 			code.push(s);
-
+		}
+		LirInstr::PutChar(i) => {
+			code.push(format!("scoreboard players operation %param0%0 reg = {i}"));
+			code.push("function intrinsic:put_char".to_string());
 		}
 	}
 }
@@ -2784,6 +2810,19 @@ mod test {
 		for i in 0..4 * values.len() - 7 {
 			constant_load_64(&values, i as i32);
 		}
+	}
+
+	fn run_interp_test(code: Vec<String>) {
+		let func = parse_function("wasmrunner:test", code);
+		let func_id = func.id.clone();
+
+		let program = vec![func];
+
+		let mut interp = Interpreter::new(program, 0);
+
+		let interp_idx = interp.get_func_idx(&func_id);
+		interp.set_pos(interp_idx);
+		interp.run_to_end().unwrap();
 	}
 
 	fn constant_load_64(memory: &[i32], offset: i32) {

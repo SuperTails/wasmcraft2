@@ -225,7 +225,6 @@ struct PartialBasicBlock {
 	block: SsaBasicBlock,
 	finished: bool,
 	count: i32,
-	has_new_locals: bool,
 	starting_locals: Vec<TypedSsaVar>,
 }
 
@@ -235,7 +234,6 @@ impl PartialBasicBlock {
 			block: SsaBasicBlock::default(),
 			finished: false,
 			count: -1,
-			has_new_locals: false,
 			starting_locals: old_locals.to_owned(),
 		}
 	}
@@ -246,7 +244,7 @@ impl PartialBasicBlock {
 		let mut block = SsaBasicBlock::default();
 		block.params.extend(new_locals.iter().copied());
 
-		PartialBasicBlock { block, finished: false, count: -1, has_new_locals: true, starting_locals: new_locals }
+		PartialBasicBlock { block, finished: false, count: -1, starting_locals: new_locals }
 	}
 
 	pub fn starting_locals(&self) -> &[TypedSsaVar] {
@@ -938,8 +936,10 @@ impl ValidationState<'_> {
 								builder.current_block_mut().body.push(SsaInstr::PrintInt(params[0]));
 							}
 							("env", "mc_putc") => {
-								// TODO:
-								println!("ignoring putc");
+								assert_eq!(params.len(), 1);
+								assert_eq!(returns.len(), 0);
+
+								builder.current_block_mut().body.push(SsaInstr::PutChar(params[0]));
 							}
 							_ => todo!("{:?}", import),
 						}

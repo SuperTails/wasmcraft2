@@ -233,7 +233,7 @@ pub fn run(args: Args) {
 	}
 
 	let datapack = ctx.compute_datapack(&lir_program);
-	
+
 	/*for (idx, lir_func) in lir_program.code.iter().enumerate() {
 		println!("\n\n============ Function {} ============", idx);
 		for (block_id, block) in lir_func.code.iter() {
@@ -244,6 +244,8 @@ pub fn run(args: Args) {
 			println!("    {:?}", block.term);
 		}
 	}*/
+
+	std::mem::drop(lir_program);
 
 	if ctx.dump_datapack {
 		for func in datapack.iter() {
@@ -265,17 +267,15 @@ pub fn run(args: Args) {
 }
 
 fn run_datapack_output(datapack: Vec<Function>) {
-	let mut indiv_time = vec![0; datapack.len()];
-	let mut intrin_cum_times = vec![0; datapack.len()];
-	let mut intrin_visited = vec![false; datapack.len()];
+	let indiv_time = vec![0; datapack.len()];
+	let intrin_cum_times = vec![0; datapack.len()];
+	let intrin_visited = vec![false; datapack.len()];
 	let intrin_funcs = datapack.iter().map(|func| func.id.namespace == "intrinsic").collect::<Vec<_>>();
-
 
 	let mut interp = datapack_vm::Interpreter::new(datapack, 0);
 
-	interp.max_tick_commands = 400_000_000;
-	interp.max_total_commands = 400_000_000;
-
+	interp.max_total_commands = 1_500_000_000;
+	interp.max_tick_commands = 60_000_000;
 
 	let (_, func_name) = datapack_common::functions::command_components::FunctionIdent::parse_from_command("wasmrunner:init").unwrap();
 
@@ -284,30 +284,54 @@ fn run_datapack_output(datapack: Vec<Function>) {
 
 	interp.run_to_end().unwrap();
 
+	interp.max_tick_commands = 10_000_000;
+
 	let (_, func_name) = datapack_common::functions::command_components::FunctionIdent::parse_from_command("wasmrunner:_start").unwrap();
 
 	let interp_idx = interp.get_func_idx(&func_name);
 	interp.set_pos(interp_idx);
+
+	#[cfg(feature = "gui")]
+	{
+		let (sdl, state) = datapack_vm::gui::setup(&mut interp);
+
+		std::thread::spawn(move || {
+			run_interp(indiv_time, intrin_cum_times, intrin_visited, intrin_funcs, interp);
+		});
+
+		datapack_vm::gui::run(sdl, state);
+	}
+
+	#[cfg(not(feature = "gui"))]
+	{
+		run_interp(indiv_time, intrin_cum_times, intrin_visited, intrin_funcs, interp);
+	}
+}
+
+fn run_interp(
+	mut indiv_time: Vec<u64>,
+	mut intrin_cum_times: Vec<u64>,
+	mut intrin_visited: Vec<bool>,
+	intrin_funcs: Vec<bool>,
+	mut interp: datapack_vm::Interpreter) {
 
 	while !interp.halted() {
 		for v in intrin_visited.iter_mut() {
 			*v = false;
 		}
 
-		if interp.total_commands_run > 5_000_000 { // Don't start recording time until we enter the hot loop.
-			if let Some((func_idx, _)) = interp.call_stack_raw().iter().rev().next() {
-				indiv_time[*func_idx] += 1;
+		if let Some((func_idx, _)) = interp.call_stack_raw().iter().rev().next() {
+			indiv_time[*func_idx] += 1;
+		}
+
+		for &(func_idx, _) in interp.call_stack_raw().iter().rev() {
+			if !intrin_visited[func_idx] {
+				intrin_visited[func_idx] = true;
+				intrin_cum_times[func_idx] += 1;
 			}
 
-			for &(func_idx, _) in interp.call_stack_raw().iter().rev() {
-				if !intrin_visited[func_idx] {
-					intrin_visited[func_idx] = true;
-					intrin_cum_times[func_idx] += 1;
-				}
-
-				if !intrin_funcs[func_idx] {
-					break
-				}
+			if !intrin_funcs[func_idx] {
+				break
 			}
 		}
 
@@ -358,7 +382,7 @@ fn run_datapack_output(datapack: Vec<Function>) {
 
 	let mut traces = indiv_time.iter().enumerate().map(|(i, t)| (&interp.program[i], *t)).collect::<Vec<_>>();
 	traces.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
-	let total: usize = traces.iter().map(|(_, c)| *c).sum();
+	let total: u64 = traces.iter().map(|(_, c)| *c).sum();
 
 	println!("\nTOTAL: {}", total);
 	traces.truncate(50);

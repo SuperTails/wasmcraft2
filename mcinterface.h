@@ -1,3 +1,6 @@
+#ifndef MCINTERFACE_H_DEFINED
+#define MCINTERFACE_H_DEFINED
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -35,23 +38,25 @@ extern void turtle_z(int value);
 extern void turtle_fill(enum Block block, int x_span, int y_span, int z_span);
 
 // Sets the block at the turtle's position.
-static void turtle_set(enum Block block) {
-    turtle_fill(block, 0, 0, 0);
-}
+extern void turtle_set(enum Block block);
 
 // Returns the block at the turtle's position
 extern enum Block turtle_get(void);
 
 // Returns 1 if the block at the turtle's position matches the argument
-static int turtle_check(enum Block block) {
+inline int turtle_check(enum Block block) {
     return block == turtle_get();
 }
 
 extern int turtle_get_char(void);
 
 // Pauses execution and continues it on the next tick
-extern void sleep();
+extern void mc_sleep();
+
+extern void mc_putc(int ch);
 
 #ifdef __cplusplus
 }
+#endif
+
 #endif

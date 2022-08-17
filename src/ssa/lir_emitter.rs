@@ -424,12 +424,26 @@ fn lower_block<L>(
 				do_binop(dst, lhs, rhs, &mut block, ra, i32_add, i64_add);
 			}
 			&super::SsaInstr::Sub(dst, lhs, rhs) => {
-				let i32_sub = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
-					if dst != lhs {
-						block.push(LirInstr::Assign(dst, lhs));
-					}
+				let temp = ra.get_temp();
 
-					block.push(LirInstr::Sub(dst, rhs));
+				let i32_sub = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
+					if dst == lhs {
+						if dst == rhs {
+							println!("missed optimization opportunity or bug (subtracting a number from itself)");
+						}
+
+						block.push(LirInstr::Sub(dst, rhs));
+					} else if dst == rhs {
+						// FIXME: Write a test for this and related functions.
+						// Previously, if (dst == rhs), rhs would be prematurely overwritten by the `dst := lhs` assignment.
+
+						block.push(LirInstr::Assign(temp, lhs));
+						block.push(LirInstr::Sub(temp, rhs));
+						block.push(LirInstr::Assign(dst, temp));
+					} else {
+						block.push(LirInstr::Assign(dst, lhs));
+						block.push(LirInstr::Sub(dst, rhs));
+					}
 				};
 
 				let i64_sub = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
@@ -440,11 +454,14 @@ fn lower_block<L>(
 			}
 			&super::SsaInstr::Mul(dst, lhs, rhs) => {
 				let i32_mul = |dst, lhs, rhs, block: &mut Vec<LirInstr>| {
-					if dst != lhs {
+					if dst == lhs {
+						block.push(LirInstr::Mul(dst, rhs));
+					} else if dst == rhs {
+						block.push(LirInstr::Mul(dst, lhs));
+					} else {
 						block.push(LirInstr::Assign(dst, lhs));
+						block.push(LirInstr::Mul(dst, rhs));
 					}
-
-					block.push(LirInstr::Mul(dst, rhs));
 				};
 
 				let t = ra.get_temp();
@@ -978,6 +995,10 @@ fn lower_block<L>(
 			&super::SsaInstr::PrintInt(v) => {
 				let reg = ra.get(v.unwrap_i32());
 				block.push(LirInstr::PrintInt(reg));
+			}
+			&super::SsaInstr::PutChar(v) => {
+				let reg = ra.get(v.unwrap_i32());
+				block.push(LirInstr::PutChar(reg));
 			}
 		}
 	}

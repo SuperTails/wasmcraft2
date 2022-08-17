@@ -283,6 +283,7 @@ pub enum SsaInstr {
 	TurtleCopy,
 	TurtlePaste,
 	PrintInt(TypedSsaVar),
+	PutChar(TypedSsaVar),
 }
 
 impl SsaInstr {
@@ -415,6 +416,7 @@ impl SsaInstr {
 			SsaInstr::TurtleCopy => Vec::new(),
 			SsaInstr::TurtlePaste => Vec::new(),
 			SsaInstr::PrintInt(i) => vec![*i],
+			SsaInstr::PutChar(i) => vec![*i],
 		}
 	}
 
@@ -503,6 +505,7 @@ impl SsaInstr {
 			SsaInstr::TurtleCopy => Vec::new(),
 			SsaInstr::TurtlePaste => Vec::new(),
 			SsaInstr::PrintInt(_) => Vec::new(),
+			SsaInstr::PutChar(_) => Vec::new(),
 		}
 	}
 
@@ -578,7 +581,8 @@ impl SsaInstr {
 			SsaInstr::TurtleGetBlock(_) |
 			SsaInstr::TurtleCopy |
 			SsaInstr::TurtlePaste |
-			SsaInstr::PrintInt(_) => true,
+			SsaInstr::PrintInt(_) |
+			SsaInstr::PutChar(_) => true,
 		}
 
 	}

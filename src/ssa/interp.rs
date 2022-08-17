@@ -674,10 +674,8 @@ impl SsaInterpreter {
 				super::SsaInstr::PrintInt(v) => {
 					let value = v.eval(&frame.var_context).unwrap().into_i32().unwrap();
 					println!("{:?}", value);
-					if value == 402 {
-						panic!();
-					}
 				}
+				super::SsaInstr::PutChar(_) => todo!(),
 
 				super::SsaInstr::TurtleGetBlock(dst) => {
 					frame.var_context.insert(dst.into_untyped(), 0.into());
