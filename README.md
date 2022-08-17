@@ -8,18 +8,29 @@ written in e.g. C in Minecraft.
 
 This was inspired by [Sethbling's Atari 2600 Datapack](https://youtu.be/mq7T5_xH24M) and is the (much, much improved) spiritual successor to [Langcraft](https://github.com/SuperTails/langcraft).
 
-## Demonstration
+## Demonstrations
 
 [Here](https://youtu.be/5jEyaGQFP0g) is a short demonstration of [a port of Minecraft 4k](https://github.com/SuperTails/Minecraft4k-For-Wasmcraft),
-compiled using wasmcraft, running in vanilla Minecraft. (That's right: Minecraft in Minecraft).
+compiled using Wasmcraft, running in vanilla Minecraft. (That's right: Minecraft in Minecraft).
 
 Alternatively, [here is a video](https://youtu.be/jrMrde9tQlg) of the CHIP-8 Emulator from [here](https://github.com/JamesGriffin/CHIP-8-Emulator) running Pong.
 
 ## Features
 
-* All integer operations supported
-* (Relatively) efficient code generation
-* Works most of the time
+* Minimal porting required
+  * Only mandatory code modification is the insertion of sleep calls
+  * Most non-hosted/freestanding code that doesn't use floats is compatible
+  * Compatible with [newlib](https://sourceware.org/newlib/) to provide libc features like `printf` and `malloc`
+* Common, well-supported, and stable source language
+  * Can be targeted from C, C++, and Rust
+* All WASM integer and control flow operations supported (and tested against the WebAssembly test suite)
+* SSA-based optimizations
+  * Strength reduction
+  * Constant folding
+  * Dead code elimination
+  * Register allocation
+* No game modification required
+  * Compatible with vanilla Java Edition Minecraft 1.16+ (tested on 1.19+)
 
 ## Usage
 
@@ -40,14 +51,20 @@ int _start() {
 }
 ```
 
-First, compile it to WebAssembly:
+First, compile it to an object file:
 
-`clang foo.c -target wasm32 -nostdlib -o foo.wasm`
+```bash
+clang foo.c -target wasm32 -nostdlib -c -o foo.o
+wasm-ld foo.o --lto-O3 --gc-sections --import-undefined -o foo.wasm
+wasm2wat foo.wasm -o foo.wat # Optional, useful for debugging
+```
 
 Ensure you have Rust version >= 1.58 installed, which is very recent. To update Rust, run `rustup update`.
 Then, simply navigate to the wasmcraft2 directory and run:
 
-`cargo run --release -- ../foo.wasm -o ../nameofdatapack`
+```bash
+cargo run --release -- ../foo.wasm -O1 -o ../nameofdatapack`
+```
 
 This will create a datapack in the folder `nameofdatapack`, which can be directly placed in the datapacks folder
 of any Minecraft Java Edition world (this has only been tested on 1.18/1.19, but should work on older and newer versions as well).
@@ -60,9 +77,11 @@ so do **NOT** run this in a world with builds you don't want destroyed!*
 
 Run these commands:
 
-`/gamerule maxCommandChainLength 1000000` (This only needs to be run once per world)
+`/gamerule maxCommandChainLength 100000000` (This only needs to be run once per world)
 
 `/reload` (This only needs to be run when the datapack is changed while the world is open)
+
+`/datapack enable "name/of/my/datapack"` (If it is not already enabled)
 
 `/function wasmrunner:init`
 
@@ -70,15 +89,48 @@ Run these commands:
 
 And you should see the numbers 0 to 9 printed out in the chat.
 
+## Inserting Sleep Calls
+
+Currently, programs compiled under Wasmcraft have to have sleep calls manually inserted into them.
+This is because Minecraft tries to execute all commands in a datapack function call within a single game tick,
+so in the worst case a very long-running function will freeze the game world indefinitely.
+
+The `mc_sleep()` function provided in `mcinterface.h` will pause execution and resume it on the next game tick.
+If sleep calls are inserted too frequently, the datapack will run very slowly.
+However, if sleep calls are not inserted frequently enough, the game will lag or command execution will be canceled by the game entirely.
+
+In order to determine if some code has sleep calls inserted frequently enough,
+Wasmcraft can simulate the code using the following command:
+
+```bash
+cargo run --release -- ../foo.wasm -O1 -o ../nameofdatapack --no-persist-output --run-output
+```
+
+If `MaxTickCommandsRun` appears in the output,
+too many commands were executed in a single tick and `mc_sleep()` must be inserted somewhere.
+The provided stacktrace, combined with `print` statements or the `.wat` file, can be used to find the problematic code.
+(Wasmcraft function IDs always match the ID of the corresponding function in the WebAssembly file).
+
+When using the datapack in-game, press Ctrl-Alt-F3 to get a tick time graph (on the right side).
+This can be used to find ticks that are running too slowly or are lagging the game.
+
+Manual sleep calls are planned to be fixed in a future update.
+
 ## Limitations
 
 * Floating point operations are not supported (yet).
 Use fixed point operations instead, e.g. [libfixmath](https://github.com/PetteriAimonen/libfixmath)
-* Bitwise operations and 64-bit divisions are *absurdly* slow.
+* Bitwise operations and 64-bit divisions have to be emulated and are very slow.
 * 8-bit and 16-bit accesses are fairly slow, and all memory accesses have not-insignificant overhead.
 * Manual calls to `mc_sleep()` have to be inserted in long-running code,
 because Minecraft can only run a limited number of commands per tick.
-* The API is very limited
+(The removal of this requirement is planned for a future update.)
+* Only a limited subset of Minecraft commands are available in the interface
+
+## Related Tools
+
+The [Wasmcraft Preview Simulator](https://github.com/SuperTails/wasmcraft-simulator) is useful for prototyping
+and quickly testing programs before actually providing them to the Wasmcraft compiler.
 
 ## License
 
