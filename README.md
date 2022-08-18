@@ -116,6 +116,18 @@ This can be used to find ticks that are running too slowly or are lagging the ga
 
 Manual sleep calls are planned to be fixed in a future update.
 
+## Using the C Standard Library
+
+In order to use C library functions like `printf`, `malloc`, `open`, etc.,
+projects can be compiled with the Newlib C stdlib implementation.
+
+An example of how to do that can be found [here](https://github.com/SuperTails/wasmcraft-newlib-example)
+
+## Related Tools
+
+The [Wasmcraft Preview Simulator](https://github.com/SuperTails/wasmcraft-simulator) is useful for prototyping
+and quickly testing programs before actually providing them to the Wasmcraft compiler.
+
 ## Limitations
 
 * Floating point operations are not supported (yet).
@@ -126,11 +138,6 @@ Use fixed point operations instead, e.g. [libfixmath](https://github.com/Petteri
 because Minecraft can only run a limited number of commands per tick.
 (The removal of this requirement is planned for a future update.)
 * Only a limited subset of Minecraft commands are available in the interface
-
-## Related Tools
-
-The [Wasmcraft Preview Simulator](https://github.com/SuperTails/wasmcraft-simulator) is useful for prototyping
-and quickly testing programs before actually providing them to the Wasmcraft compiler.
 
 ## License
 
