@@ -2,7 +2,7 @@ use std::{ops::{Index, IndexMut}, collections::HashMap};
 
 use wasmparser::{Operator, MemoryImmediate, DataKind, ElementKind, ElementItem, ExternalKind, ValType};
 
-use crate::{wasm_file::{WasmFile, eval_init_expr_single}, ssa::{SsaBasicBlock, BlockId, SsaTerminator, TypedSsaVar, SsaInstr, SsaVarAlloc, JumpTarget, SsaProgram, SsaFunction, Memory, Table, SsaVarOrConst}, CompileContext};
+use crate::{wasm_file::{WasmFile, eval_const_expr_single}, ssa::{SsaBasicBlock, BlockId, SsaTerminator, TypedSsaVar, SsaInstr, SsaVarAlloc, JumpTarget, SsaProgram, SsaFunction, Memory, Table, SsaVarOrConst}, CompileContext};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UncertainVar {
@@ -203,7 +203,7 @@ impl ControlStack {
 	}
 }
 
-impl<'a> Index<TopIndex> for ControlStack {
+impl Index<TopIndex> for ControlStack {
     type Output = ControlFrame;
 
     fn index(&self, index: TopIndex) -> &Self::Output {
@@ -213,7 +213,7 @@ impl<'a> Index<TopIndex> for ControlStack {
     }
 }
 
-impl<'a> IndexMut<TopIndex> for ControlStack {
+impl IndexMut<TopIndex> for ControlStack {
     fn index_mut(&mut self, index: TopIndex) -> &mut Self::Output {
 	    assert!(!self.0.is_empty());
 	    let i = self.0.len() - 1 - index.0;
@@ -1389,7 +1389,7 @@ pub fn wasm_to_ssa(ctx: &CompileContext, wasm_file: &WasmFile) -> SsaProgram {
 	}
 
 	let globals = wasm_file.globals().iter().map(|global| {
-		let val = eval_init_expr_single(&global.init_expr);
+		let val = eval_const_expr_single(&global.init_expr);
 		assert_eq!(val.ty(), global.ty.content_type);
 		val
 	}).collect();
@@ -1411,10 +1411,10 @@ pub fn wasm_to_ssa(ctx: &CompileContext, wasm_file: &WasmFile) -> SsaProgram {
 		}
 
 		match elem.kind {
-			ElementKind::Active { table_index, init_expr } => {
+			ElementKind::Active { table_index, offset_expr } => {
 				let table = &mut tables[table_index as usize];
 
-				let offset = eval_init_expr_single(&init_expr);
+				let offset = eval_const_expr_single(&offset_expr);
 				let offset = offset.into_i32().unwrap();
 
 				for (idx, item) in elem.items.get_items_reader().unwrap().into_iter().enumerate() {
@@ -1443,8 +1443,8 @@ pub fn wasm_to_ssa(ctx: &CompileContext, wasm_file: &WasmFile) -> SsaProgram {
 
 	for data in wasm_file.data.data.iter() {
 		match data.kind {
-			DataKind::Active { memory_index, init_expr } => {
-				let offset = eval_init_expr_single(&init_expr);
+			DataKind::Active { memory_index, offset_expr } => {
+				let offset = eval_const_expr_single(&offset_expr);
 				let offset = offset.into_i32().unwrap();
 
 				let memory = &mut memory[memory_index as usize];

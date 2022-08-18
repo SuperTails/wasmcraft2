@@ -1,4 +1,4 @@
-use wasmparser::{Data, Element, Export, FuncType, Global, Import, MemoryType, Operator, Parser, Payload, TableType, BlockType, ExternalKind, GlobalType, InitExpr, ValType, Type, TypeRef};
+use wasmparser::{Data, Element, Export, FuncType, Global, Import, MemoryType, Operator, Parser, Payload, TableType, BlockType, ExternalKind, GlobalType, ConstExpr, ValType, Type, TypeRef};
 
 use crate::ssa::interp::TypedValue;
 
@@ -415,7 +415,7 @@ impl<'a> From<&'a [u8]> for WasmFile<'a> {
     }
 }
 
-pub fn eval_init_expr(init_expr: &InitExpr) -> Vec<TypedValue> {
+pub fn eval_const_expr(init_expr: &ConstExpr) -> Vec<TypedValue> {
     let ops = init_expr.get_operators_reader().into_iter().map(|o| o.unwrap()).collect::<Vec<_>>();
 
     match &ops[..] {
@@ -426,8 +426,8 @@ pub fn eval_init_expr(init_expr: &InitExpr) -> Vec<TypedValue> {
     }
 }
 
-pub fn eval_init_expr_single(init_expr: &InitExpr) -> TypedValue {
-    let result = eval_init_expr(init_expr);
+pub fn eval_const_expr_single(init_expr: &ConstExpr) -> TypedValue {
+    let result = eval_const_expr(init_expr);
     assert_eq!(result.len(), 1);
     result.into_iter().next().unwrap()
 }
