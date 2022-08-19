@@ -32,6 +32,7 @@ pub enum DoubleRegister {
 	Const(i64),
 	Global(u32),
 	CondTaken,
+	SleepNeeded,
 }
 
 impl DoubleRegister {
@@ -119,6 +120,10 @@ impl Register {
 		DoubleRegister::CondTaken.lo()
 	}
 
+	pub fn sleep_needed() -> Register {
+		DoubleRegister::SleepNeeded.lo()
+	}
+
 	pub fn const_val(v: i32) -> Register {
 		DoubleRegister::Const(v as i64).lo()
 	}
@@ -157,6 +162,7 @@ impl fmt::Display for Register {
 			DoubleRegister::Const(val) if half == Half::Hi => write!(f, "%const%{}", (val >> 32) as i32)?,
 			DoubleRegister::Const(val) => write!(f,"%const%{}", val as i32)?,
 			DoubleRegister::CondTaken => write!(f, "%condtaken")?,
+			DoubleRegister::SleepNeeded => write!(f, "%sleepneeded")?,
 		}
 
 		write!(f, " {OBJECTIVE_NAME}")
@@ -327,11 +333,19 @@ impl LirInstr {
 	}
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct LirJumpTarget {
+	/// The location in the code to jump to
+	pub label: BlockId,
+	/// If true, jumping to this target may be scheduled instead of direct
+	pub cmd_check: bool,
+}
+
 #[derive(Debug)]
 pub enum LirTerminator {
 	ScheduleJump(BlockId, u32),
-	Jump(BlockId),
-	JumpIf { true_label: BlockId, false_label: BlockId, cond: Register },
+	Jump(LirJumpTarget),
+	JumpIf { true_label: LirJumpTarget, false_label: LirJumpTarget, cond: Register },
 	JumpTable { arms: Vec<Option<BlockId>>, default: Option<BlockId>, cond: Register },
 	Return,
 	ReturnToSaved,

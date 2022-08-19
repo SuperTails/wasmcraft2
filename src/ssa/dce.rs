@@ -4,6 +4,26 @@ use super::{SsaProgram, liveness::{LivenessInfo, FullLivenessInfo}, BlockId, Ssa
 
 pub fn do_dead_code_elim(program: &mut SsaProgram) {
 	for func in program.code.iter_mut() {
+		let mut reachable_blocks = HashSet::new();
+
+		let mut to_visit = vec![func.entry_point_id()];
+		while let Some(node) = to_visit.pop() {
+			if reachable_blocks.contains(&node) {
+				continue;
+			}
+			reachable_blocks.insert(node);
+
+			to_visit.extend(func.get(node).term.successors());
+		}
+
+		for (idx, b) in func.code.iter_mut().enumerate() {
+			if !reachable_blocks.contains(&BlockId { func: func.func_id, block: idx }) {
+				*b = None;
+			}
+		}
+	}
+
+	for func in program.code.iter_mut() {
 		let live_info = FullLivenessInfo::analyze(func);
 		
 		for (block_id, block) in func.iter_mut() {

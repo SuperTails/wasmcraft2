@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ssa::SsaTerminator;
 
-use super::{SsaProgram, SsaInstr, SsaFunction, TypedSsaVar, lir_emitter::get_compatible_functions};
+use super::{SsaProgram, SsaInstr, SsaFunction, TypedSsaVar, lir_emitter::get_compatible_functions, liveness::DomTree};
 
 #[derive(Debug, Clone, Copy)]
 struct TableInfo {
@@ -141,15 +141,30 @@ fn contains_scheduled_jump(func: &SsaFunction) -> bool {
 	})
 }
 
+fn contains_back_edge(func: &SsaFunction) -> bool {
+	let dom_tree = DomTree::analyze(func);
+
+	for (block_id, block) in func.iter() {
+		for succ_node in block.term.successors() {
+			if dom_tree.dominates(succ_node, block_id) {
+				return true
+			}
+		}
+	}
+
+	false
+}
+
 fn get_single_tick_funcs(program: &SsaProgram) -> HashMap<u32, bool> {
 	// A function is single tick iff:
-	//	It contains no scheduled jumps, AND
-	//	It all of its callees are single tick
+	// - It contains no scheduled jumps,
+	// - it contains no back edges, and
+	// - all of its callees are single tick
 
 	let mut is_single_tick = HashMap::new();
 
 	for func in program.code.iter() {
-		let is_st = !contains_scheduled_jump(func);
+		let is_st = !contains_scheduled_jump(func) && !contains_back_edge(func);
 		is_single_tick.insert(func.func_id(), is_st);
 	}
 

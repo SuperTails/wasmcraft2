@@ -6,6 +6,12 @@ use wasmparser::ValType;
 
 use crate::{lir::{LirProgram, LirFunction, LirBasicBlock, LirInstr, Register, LirTerminator, Condition, Half, DoubleRegister}, ssa::{BlockId, Memory, interp::TypedValue, const_prop::{StaticValue, BitMask}, lir_emitter::RegisterWithInfo}, jump_mode, JumpMode};
 
+/// This variable keeps track of how many commands have been run so far
+pub static CMDS_RUN_VAR: &str = "%%commands_run reg";
+
+/// This variable is the maximum number of commands allowed to run in a single tick
+pub static MAX_CMDS_VAR: &str = "%%max_commands reg";
+
 fn parse_function<C, T>(id: &str, code: C) -> Function
 	where
 		C: IntoIterator<Item=T>,
@@ -21,6 +27,12 @@ fn create_scoreboard_init(code: &mut Vec<String>) {
 	code.push("# Set up scoreboard".to_string());
 	code.push("scoreboard objectives remove reg".to_string());
 	code.push("scoreboard objectives add reg dummy".to_string());
+}
+
+fn create_cmd_count_init(code: &mut Vec<String>) {
+	code.push(format!("scoreboard players set {CMDS_RUN_VAR} 0"));
+	// TODO: This should check the maxCommandChainLength variable
+	code.push(format!("scoreboard players set {MAX_CMDS_VAR} 1000"));
 }
 
 fn create_stack_init(code: &mut Vec<String>) {
@@ -145,6 +157,7 @@ fn create_init_func(program: &LirProgram, constants: &HashSet<i32>) -> Function 
 	let mut code = Vec::new();
 
 	create_scoreboard_init(&mut code);
+	create_cmd_count_init(&mut code);
 	create_stack_init(&mut code);
 	create_stdout_init(&mut code);
 	create_pointers_init(&mut code);
@@ -2337,11 +2350,37 @@ fn emit_block(block_id: BlockId, block: &LirBasicBlock, parent: &LirProgram, con
 	for instr in block.body.iter() {
 		emit_instr(instr, parent, &mut code, const_pool);
 	}
+
+	// FIXME: This doesn't include called functions, the terminator, or count `execute` commands properly.
+	let mut num_cmds = code.len();
+	for c in code.iter() {
+		if c.contains("intrinsic:and") || c.contains("intrinisic:or") || c.contains("intrinsic:xor") {
+			num_cmds += 200;
+		} else if c.contains("intrinsic:shl_64") {
+			num_cmds += 700;
+		} else if c.contains("intrinsic:i64_sdiv") || c.contains("intrinsic:i64_srem") || c.contains("intrinsic:i64_udiv") || c.contains("intrinsic:i64_urem") {
+			num_cmds += 80_000;
+		}
+	}
+	code.push(format!("scoreboard players add {CMDS_RUN_VAR} {num_cmds}"));
 	
 	match &block.term {
 		&LirTerminator::Jump(target) => {
 			if jump_mode() == JumpMode::Direct {
-				code.push(format!("function {}", get_mc_id(target)));
+				let target_mc_id = get_mc_id(target.label);
+				if !target.cmd_check {
+					code.push(format!("function {target_mc_id}"));
+				} else {
+					// The return address was pushed beforehand in the LIR emitter, so we don't have to handle that here.
+
+					let sleep_reg = Register::sleep_needed();
+
+					code.push(format!("execute store success score {sleep_reg} if score {CMDS_RUN_VAR} >= {MAX_CMDS_VAR}"));
+					code.push(format!("execute if score {sleep_reg} matches 1 run scoreboard players set {CMDS_RUN_VAR} 0"));
+
+					code.push(format!("execute if score {sleep_reg} matches 1 run schedule function {target_mc_id} 1"));
+					code.push(format!("execute if score {sleep_reg} matches 0 run function {target_mc_id}"));
+				}
 			} else {
 				todo!()
 			}
@@ -2350,18 +2389,48 @@ fn emit_block(block_id: BlockId, block: &LirBasicBlock, parent: &LirProgram, con
 			if jump_mode() == JumpMode::Direct {
 				// TODO: add the "append" keyword
 				code.push(format!("schedule function {} {delay}", get_mc_id(target)));
+				code.push(format!("scoreboard players set {CMDS_RUN_VAR} 0"));
 			} else {
 				todo!()
 			}
 		}
 		&LirTerminator::JumpIf { true_label, false_label, cond } => {
 			if jump_mode() == JumpMode::Direct {
+				let true_func = get_mc_id(true_label.label);
+				let false_func = get_mc_id(false_label.label);
+
 				let cond_taken = Register::cond_taken();
-				let true_func = get_mc_id(true_label);
-				let false_func = get_mc_id(false_label);
+				let sleep_reg = Register::sleep_needed();
+
+				if true_label.cmd_check || false_label.cmd_check {
+					code.push(format!("execute store success score {sleep_reg} if score {CMDS_RUN_VAR} >= {MAX_CMDS_VAR}"));
+					code.push(format!("execute if score {sleep_reg} matches 1 run scoreboard players set {CMDS_RUN_VAR} 0"))
+				}
+
 				code.push(format!("scoreboard players set {cond_taken} 0"));
-				code.push(format!("execute unless score {cond} matches 0 run function {}", true_func));
-				code.push(format!("execute if score {cond_taken} matches 0 run function {}", false_func));
+				if !true_label.cmd_check && !false_label.cmd_check {
+					code.push(format!("execute unless score {cond} matches 0 run function {}", true_func));
+					code.push(format!("execute if score {cond_taken} matches 0 run function {}", false_func));
+				} else if true_label.cmd_check && !false_label.cmd_check {
+					code.push(format!("execute if score {sleep_reg} matches 1 unless score {cond} matches 0 run schedule function {} 1", true_func));
+					code.push(format!("execute if score {sleep_reg} matches 1 unless score {cond} matches 0 run scoreboard players set {cond_taken} 1"));
+
+					code.push(format!("execute if score {cond_taken} matches 0 unless score {cond} matches 0 run function {}", true_func));
+					code.push(format!("execute if score {cond_taken} matches 0 run function {}", false_func));
+				} else if !true_label.cmd_check && false_label.cmd_check {
+					code.push(format!("execute if score {sleep_reg} matches 1 if score {cond} matches 0 run schedule function {} 1", false_func));
+					code.push(format!("execute if score {sleep_reg} matches 1 if score {cond} matches 0 run scoreboard players set {cond_taken} 1"));
+
+					code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches 0 run function {}", false_func));
+					code.push(format!("execute if score {cond_taken} matches 0 run function {}", true_func));
+				} else if true_label.cmd_check && false_label.cmd_check {
+					code.push(format!("execute if score {sleep_reg} matches 1 unless score {cond} matches 0 run schedule function {} 1", true_func));
+					code.push(format!("execute if score {sleep_reg} matches 1 if score {cond} matches 0 run schedule function {} 1", false_func));
+					code.push(format!("execute if score {sleep_reg} matches 1 run scoreboard players set {cond_taken} 1"));
+
+					code.push(format!("execute if score {cond_taken} matches 0 unless score {cond} matches 0 run function {}", true_func));
+					code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches 0 run function {}", false_func));
+				}
 			} else {
 				todo!()
 			}
@@ -2765,6 +2834,7 @@ mod test {
 	}
 
 	#[test]
+	#[ignore]
 	fn constant_and() {
 		// -1 - INT_MIN * (-1)
 

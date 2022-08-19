@@ -284,7 +284,7 @@ fn run_datapack_output(datapack: Vec<Function>) {
 
 	interp.run_to_end().unwrap();
 
-	interp.max_tick_commands = 10_000_000;
+	interp.max_tick_commands = 500_000;
 
 	let (_, func_name) = datapack_common::functions::command_components::FunctionIdent::parse_from_command("wasmrunner:_start").unwrap();
 
@@ -403,6 +403,12 @@ fn run_interp(
 		}
 		println!("{}: {}", func.id, count);
 	}
+	println!();
+
+	let holder = datapack_common::functions::command_components::ScoreHolder::new("%%commands_run".to_string()).unwrap();
+	let obj = datapack_common::functions::command_components::Objective::new("reg".to_string()).unwrap();
+	let cmd = interp.get_named_score(&holder, &obj).unwrap();
+	println!("Command run counter: {}", cmd);
 
 	println!("Ticks run: {}", interp.tick);
 

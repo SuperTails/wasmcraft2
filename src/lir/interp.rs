@@ -596,11 +596,11 @@ impl LirInterpreter {
 
 					None
 				}
-				LirTerminator::Jump(block_id) => {
+				LirTerminator::Jump(target) => {
 					if jump_mode() == JumpMode::Direct {
 						self.call_stack.incr(&self.code);
 
-						self.call_stack.push(Pc { block: *block_id, instr: 0 });
+						self.call_stack.push(Pc { block: target.label, instr: 0 });
 
 						None
 					} else {
@@ -614,9 +614,9 @@ impl LirInterpreter {
 						let cond = self.registers.get(*cond);
 
 						if cond != 0 {
-							self.call_stack.push(Pc { block: *true_label, instr: 0 });
+							self.call_stack.push(Pc { block: true_label.label, instr: 0 });
 						} else {
-							self.call_stack.push(Pc { block: *false_label, instr: 0 });
+							self.call_stack.push(Pc { block: false_label.label, instr: 0 });
 						}
 
 						None

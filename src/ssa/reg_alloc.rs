@@ -447,6 +447,7 @@ use super::{FullRegAlloc, RegAlloc};
 	}*/
 
 	#[test]
+	#[ignore]
 	fn no_coalesce_dead_register() {
 		// TODO: Also use the palette test for this.
 

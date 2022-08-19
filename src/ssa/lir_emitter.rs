@@ -2,7 +2,7 @@ use std::{collections::{HashSet, HashMap}, fmt};
 
 use wasmparser::{MemoryImmediate, ValType};
 
-use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half}, ssa::{TypedSsaVar, SsaVarOrConst, liveness::FullLivenessInfo, const_prop::{StaticState, self}}, jump_mode, JumpMode, CompileContext};
+use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half, LirJumpTarget}, ssa::{TypedSsaVar, SsaVarOrConst, liveness::{FullLivenessInfo, DomTree}, const_prop::{StaticState, self}}, jump_mode, JumpMode, CompileContext};
 
 use super::{SsaProgram, SsaFunction, SsaBasicBlock, BlockId, reg_alloc::*, liveness::{LivenessInfo, SimpleLivenessInfo}, call_graph::CallGraph, Table, const_prop::StaticValue, interp::TypedValue};
 
@@ -113,9 +113,12 @@ fn lower_block<L>(
 	call_graph: &CallGraph,
 	builder: &mut LirFuncBuilder,
 	static_values: &HashMap<TypedSsaVar, StaticValue>,
+	dom_tree: &DomTree,
 )
 	where L: LivenessInfo
 {
+	let ssa_block_id = block_id;
+
 	let mut b = ssa_block.clone();
 
 	fn do_binop<'a, F, G, L, R>(dst: TypedSsaVar, lhs: L, rhs: R, block: &'a mut Vec<LirInstr>, ra: &mut dyn RegAlloc, f: F, g: G)
@@ -831,7 +834,7 @@ fn lower_block<L>(
 							let entry_point = BlockId { func: *function_index as usize, block: 0 };
 
 							block.push(LirInstr::PushReturnAddr(next_block_id));
-							builder.push(block_id, block, LirTerminator::Jump(entry_point));
+							builder.push(block_id, block, LirTerminator::Jump(LirJumpTarget{ label: entry_point, cmd_check: true }));
 
 							block_id = next_block_id;
 							block = Vec::new();
@@ -909,7 +912,8 @@ fn lower_block<L>(
 											LirInstr::Call { func: func_idx as u32 },
 											LirInstr::PopReturnAddr, // we can pop it because it's always guaranteed to be continued_block_idx
 										];
-										builder.push(trampoline_id, trampoline, LirTerminator::Jump(continued_block_idx));
+										// Don't do the cmd_check here because it's done by the JumpTable instead
+										builder.push(trampoline_id, trampoline, LirTerminator::Jump(LirJumpTarget { label: continued_block_idx, cmd_check: false }));
 
 										trampoline_id
 									} else {
@@ -1019,7 +1023,9 @@ fn lower_block<L>(
 			let out_params = &parent_func.get(target.label).params;
 			emit_copy(&mut block, &target.params, out_params, ra, &[]);
 
-			builder.push(block_id, block, LirTerminator::Jump(target.label));
+			let is_back_edge = dom_tree.dominates(target.label, ssa_block_id);
+
+			builder.push(block_id, block, LirTerminator::Jump(LirJumpTarget { label: target.label, cmd_check: is_back_edge }));
 		}
 		crate::ssa::SsaTerminator::BranchIf { cond, true_target, false_target } => {
 			if jump_mode() != JumpMode::Direct {
@@ -1047,7 +1053,12 @@ fn lower_block<L>(
 			block.push(LirInstr::Set(Register::cond_taken(), 0));
 			emit_copy(&mut block, &true_target.params, true_out_params, ra, true_conds);
 			emit_copy(&mut block, &false_target.params, false_out_params, ra, false_conds);
-			builder.push(block_id, block, LirTerminator::JumpIf { true_label: true_target.label, false_label: false_target.label, cond });
+
+			let true_is_back_edge = dom_tree.dominates(true_target.label, ssa_block_id);
+			let true_label = LirJumpTarget { label: true_target.label, cmd_check: true_is_back_edge };
+			let false_is_back_edge = dom_tree.dominates(false_target.label, ssa_block_id);
+			let false_label = LirJumpTarget { label: false_target.label, cmd_check: false_is_back_edge };
+			builder.push(block_id, block, LirTerminator::JumpIf { true_label, false_label, cond });
 		}
 		crate::ssa::SsaTerminator::BranchTable { cond, default, arms } => {
 			if jump_mode() != JumpMode::Direct {
@@ -1058,7 +1069,7 @@ fn lower_block<L>(
 				let out_params = &parent_func.get(default.label).params;
 				emit_copy(&mut block, &default.params, out_params, ra, &[]);
 
-				builder.push(block_id, block, LirTerminator::Jump(default.label));
+				builder.push(block_id, block, LirTerminator::Jump(LirJumpTarget{ label: default.label, cmd_check: false }));
 			} else {
 				assert_eq!(cond.ty(), ValType::I32);
 				let mut cond = ra.get(cond.into_untyped());
@@ -1345,9 +1356,11 @@ fn lower(ctx: &CompileContext, ssa_func: &SsaFunction, ssa_program: &SsaProgram,
 
 	println!("Lowering func {} to LIR", ssa_func.func_id());
 
+	let dom_tree = DomTree::analyze(ssa_func);
+
 	for (block_id, block) in ssa_func.iter() {
 		let static_values = func_static_values.get(&block_id).unwrap_or(&empty_static_values);
-		lower_block(ssa_program, ssa_func, block_id, block, &mut *reg_alloc, &liveness_info, call_graph, &mut builder, static_values);
+		lower_block(ssa_program, ssa_func, block_id, block, &mut *reg_alloc, &liveness_info, call_graph, &mut builder, static_values, &dom_tree);
 	}
 
 	let locals = ssa_program.local_types.get(&(ssa_func.func_id() as usize)).unwrap();
@@ -1356,8 +1369,9 @@ fn lower(ctx: &CompileContext, ssa_func: &SsaFunction, ssa_program: &SsaProgram,
 	let prologue = gen_prologue(ssa_func, ssa_program, &mut *reg_alloc);
 	start_block.body.splice(0..0, prologue);
 
-	let end_block = &mut builder.body.iter_mut().find(|(block_id, _block)| block_id.block == 1).unwrap().1;
-	end_block.body.push(LirInstr::PopLocalFrame(locals.clone()));
+	if let Some((_, end_block)) = &mut builder.body.iter_mut().find(|(block_id, _block)| block_id.block == 1) {
+		end_block.body.push(LirInstr::PopLocalFrame(locals.clone()));
+	}
 
 	let blocks = builder.body;
 

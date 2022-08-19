@@ -623,6 +623,18 @@ impl DomTree {
 		result
 	}
 
+	pub fn dominates(&self, parent: BlockId, child: BlockId) -> bool {
+		let mut to_visit = vec![parent];
+		while let Some(node) = to_visit.pop() {
+			if node == child {
+				return true;
+			}
+			to_visit.extend(self.0.get(&node).unwrap().children.iter().copied())
+		}
+
+		false
+	}
+
 	pub fn analyze(func: &SsaFunction) -> Self {
 		let postorder = get_postorder(func);
 		assert_eq!(postorder.last(), Some(&func.entry_point_id()));
