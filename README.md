@@ -18,7 +18,6 @@ Alternatively, [here is a video](https://youtu.be/jrMrde9tQlg) of the CHIP-8 Emu
 ## Features
 
 * Minimal porting required
-  * Only mandatory code modification is the insertion of sleep calls
   * Most non-hosted/freestanding code that doesn't use floats is compatible
   * Compatible with [newlib](https://sourceware.org/newlib/) to provide libc features like `printf` and `malloc`
 * Common, well-supported, and stable source language
@@ -91,11 +90,15 @@ And you should see the numbers 0 to 9 printed out in the chat.
 
 ## Inserting Sleep Calls
 
-Currently, programs compiled under Wasmcraft have to have sleep calls manually inserted into them.
+Currently, programs compiled under Wasmcraft have to have sleep calls manually inserted into them under certain circumstances.
 This is because Minecraft tries to execute all commands in a datapack function call within a single game tick,
 so in the worst case a very long-running function will freeze the game world indefinitely.
 
-The `mc_sleep()` function provided in `mcinterface.h` will pause execution and resume it on the next game tick.
+Wasmcraft currently inserts sleep checks before functions and inside of loops,
+but long stretches of code that don't have any loops or function calls can end up having too many commands to work properly,
+and some instructions are not command-counted properly (like memset).
+
+In these cases, the `mc_sleep()` function provided in `mcinterface.h` will pause execution and resume it on the next game tick.
 If sleep calls are inserted too frequently, the datapack will run very slowly.
 However, if sleep calls are not inserted frequently enough, the game will lag or command execution will be canceled by the game entirely.
 
@@ -134,10 +137,8 @@ and quickly testing programs before actually providing them to the Wasmcraft com
 Use fixed point operations instead, e.g. [libfixmath](https://github.com/PetteriAimonen/libfixmath)
 * Bitwise operations and 64-bit divisions have to be emulated and are very slow.
 * 8-bit and 16-bit accesses are fairly slow, and all memory accesses have not-insignificant overhead.
-* Manual calls to `mc_sleep()` have to be inserted in long-running code,
-because Minecraft can only run a limited number of commands per tick.
-(The removal of this requirement is planned for a future update.)
-* Only a limited subset of Minecraft commands are available in the interface
+* Manual calls to `mc_sleep()` have to be inserted in some cases.
+* Only a limited subset of Minecraft commands are available in the interface.
 
 ## License
 
