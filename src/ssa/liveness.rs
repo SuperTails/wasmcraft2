@@ -624,6 +624,15 @@ impl DomTree {
 	}
 
 	pub fn dominates(&self, parent: BlockId, child: BlockId) -> bool {
+		if parent == child {
+			return true
+		}
+
+		if !self.0.contains_key(&parent) {
+			// Anywhere else in the function this should panic
+			return false
+		}
+
 		let mut to_visit = vec![parent];
 		while let Some(node) = to_visit.pop() {
 			if node == child {

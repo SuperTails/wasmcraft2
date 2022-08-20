@@ -31,8 +31,7 @@ fn create_scoreboard_init(code: &mut Vec<String>) {
 
 fn create_cmd_count_init(code: &mut Vec<String>) {
 	code.push(format!("scoreboard players set {CMDS_RUN_VAR} 0"));
-	// TODO: This should check the maxCommandChainLength variable
-	code.push(format!("scoreboard players set {MAX_CMDS_VAR} 1000"));
+	code.push(format!("scoreboard players set {MAX_CMDS_VAR} 30000"));
 }
 
 fn create_stack_init(code: &mut Vec<String>) {
@@ -1853,52 +1852,43 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 		},
 
 		&LirInstr::DivS64(dst, lhs, rhs) => {
-			let (p0_lo, p0_hi) = DoubleRegister::param(0).split_lo_hi();
-			let (p1_lo, p1_hi) = DoubleRegister::param(1).split_lo_hi();
-			let (ret_lo, ret_hi) = DoubleRegister::return_reg(0).split_lo_hi();
 			let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
 			let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
 			let (dst_lo, dst_hi) = dst.split_lo_hi();
 
-			code.push(format!("scoreboard players operation {p0_lo} = {lhs_lo}"));
-			code.push(format!("scoreboard players operation {p0_hi} = {lhs_hi}"));
-			code.push(format!("scoreboard players operation {p1_lo} = {rhs_lo}"));
-			code.push(format!("scoreboard players operation {p1_hi} = {rhs_hi}"));
-			code.push("function intrinsic:i64_sdiv".to_string());
-			code.push(format!("scoreboard players operation {dst_lo} = {ret_lo}"));
-			code.push(format!("scoreboard players operation {dst_hi} = {ret_hi}"));
+			code.push(format!("scoreboard players operation %sdiv_lhs_lo reg = {lhs_lo}"));
+			code.push(format!("scoreboard players operation %sdiv_lhs_hi reg = {lhs_hi}"));
+			code.push(format!("scoreboard players operation %sdiv_rhs_lo reg = {rhs_lo}"));
+			code.push(format!("scoreboard players operation %sdiv_rhs_hi reg = {rhs_hi}"));
+			code.push("function intrinsic:i64_sdivrem/div".to_string());
+			code.push(format!("scoreboard players operation {dst_lo} = %sdiv_q_lo reg"));
+			code.push(format!("scoreboard players operation {dst_hi} = %sdiv_q_hi reg"));
 		}
 		&LirInstr::DivU64(dst, lhs, rhs) => {
-			let (p0_lo, p0_hi) = DoubleRegister::param(0).split_lo_hi();
-			let (p1_lo, p1_hi) = DoubleRegister::param(1).split_lo_hi();
-			let (ret_lo, ret_hi) = DoubleRegister::return_reg(0).split_lo_hi();
 			let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
 			let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
 			let (dst_lo, dst_hi) = dst.split_lo_hi();
 
-			code.push(format!("scoreboard players operation {p0_lo} = {lhs_lo}"));
-			code.push(format!("scoreboard players operation {p0_hi} = {lhs_hi}"));
-			code.push(format!("scoreboard players operation {p1_lo} = {rhs_lo}"));
-			code.push(format!("scoreboard players operation {p1_hi} = {rhs_hi}"));
-			code.push("function intrinsic:i64_udiv".to_string());
-			code.push(format!("scoreboard players operation {dst_lo} = {ret_lo}"));
-			code.push(format!("scoreboard players operation {dst_hi} = {ret_hi}"));
+			code.push(format!("scoreboard players operation %udiv_lhs_lo reg = {lhs_lo}"));
+			code.push(format!("scoreboard players operation %udiv_lhs_hi reg = {lhs_hi}"));
+			code.push(format!("scoreboard players operation %udiv_rhs_lo reg = {rhs_lo}"));
+			code.push(format!("scoreboard players operation %udiv_rhs_hi reg = {rhs_hi}"));
+			code.push("function intrinsic:i64_udivrem/main".to_string());
+			code.push(format!("scoreboard players operation {dst_lo} = %udiv_q_lo reg"));
+			code.push(format!("scoreboard players operation {dst_hi} = %udiv_q_hi reg"));
 		}
 		&LirInstr::RemS64(dst, lhs, rhs) => {
-			let (p0_lo, p0_hi) = DoubleRegister::param(0).split_lo_hi();
-			let (p1_lo, p1_hi) = DoubleRegister::param(1).split_lo_hi();
-			let (ret_lo, ret_hi) = DoubleRegister::return_reg(0).split_lo_hi();
 			let (lhs_lo, lhs_hi) = lhs.split_lo_hi();
 			let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
 			let (dst_lo, dst_hi) = dst.split_lo_hi();
 
-			code.push(format!("scoreboard players operation {p0_lo} = {lhs_lo}"));
-			code.push(format!("scoreboard players operation {p0_hi} = {lhs_hi}"));
-			code.push(format!("scoreboard players operation {p1_lo} = {rhs_lo}"));
-			code.push(format!("scoreboard players operation {p1_hi} = {rhs_hi}"));
-			code.push("function intrinsic:i64_srem".to_string());
-			code.push(format!("scoreboard players operation {dst_lo} = {ret_lo}"));
-			code.push(format!("scoreboard players operation {dst_hi} = {ret_hi}"));
+			code.push(format!("scoreboard players operation %sdiv_lhs_lo reg = {lhs_lo}"));
+			code.push(format!("scoreboard players operation %sdiv_lhs_hi reg = {lhs_hi}"));
+			code.push(format!("scoreboard players operation %sdiv_rhs_lo reg = {rhs_lo}"));
+			code.push(format!("scoreboard players operation %sdiv_rhs_hi reg = {rhs_hi}"));
+			code.push("function intrinsic:i64_sdivrem/rem".to_string());
+			code.push(format!("scoreboard players operation {dst_lo} = %sdiv_r_lo reg"));
+			code.push(format!("scoreboard players operation {dst_hi} = %sdiv_r_hi reg"));
 		}
 		&LirInstr::RemU64(dst, lhs, rhs) => {
 			let (p0_lo, p0_hi) = DoubleRegister::param(0).split_lo_hi();
@@ -1908,14 +1898,13 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 			let (rhs_lo, rhs_hi) = rhs.split_lo_hi();
 			let (dst_lo, dst_hi) = dst.split_lo_hi();
 
-			code.push(format!("scoreboard players operation {p0_lo} = {lhs_lo}"));
-			code.push(format!("scoreboard players operation {p0_hi} = {lhs_hi}"));
-			code.push(format!("scoreboard players operation {p1_lo} = {rhs_lo}"));
-			code.push(format!("scoreboard players operation {p1_hi} = {rhs_hi}"));
-			code.push("function intrinsic:i64_urem".to_string());
-			code.push(format!("scoreboard players operation {dst_lo} = {ret_lo}"));
-			code.push(format!("scoreboard players operation {dst_hi} = {ret_hi}"));
-
+			code.push(format!("scoreboard players operation %udiv_lhs_lo reg = {lhs_lo}"));
+			code.push(format!("scoreboard players operation %udiv_lhs_hi reg = {lhs_hi}"));
+			code.push(format!("scoreboard players operation %udiv_rhs_lo reg = {rhs_lo}"));
+			code.push(format!("scoreboard players operation %udiv_rhs_hi reg = {rhs_hi}"));
+			code.push("function intrinsic:i64_udivrem/main".to_string());
+			code.push(format!("scoreboard players operation {dst_lo} = %udiv_r_lo reg"));
+			code.push(format!("scoreboard players operation {dst_hi} = %udiv_r_hi reg"));
 		}
 
 		&LirInstr::Shl(dst, lhs, rhs) => {
@@ -2358,8 +2347,12 @@ fn emit_block(block_id: BlockId, block: &LirBasicBlock, parent: &LirProgram, con
 			num_cmds += 200;
 		} else if c.contains("intrinsic:shl_64") {
 			num_cmds += 700;
-		} else if c.contains("intrinsic:i64_sdiv") || c.contains("intrinsic:i64_srem") || c.contains("intrinsic:i64_udiv") || c.contains("intrinsic:i64_urem") {
-			num_cmds += 80_000;
+		} else if c.contains("intrinsic:i64_sdivrem/rem")  {
+			num_cmds += 4_000;
+		} else if c.contains("intrinsic:i64_sdivrem/div") || c.contains("intrinsic:i64_udivrem") {
+			num_cmds += 3_500;
+		} else {
+			// TODO: memset? bitwise operations?
 		}
 	}
 	code.push(format!("scoreboard players add {CMDS_RUN_VAR} {num_cmds}"));

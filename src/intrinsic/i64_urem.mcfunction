@@ -1,1 +1,0 @@
-function intrinsic:i64divrem/wasm_1_0

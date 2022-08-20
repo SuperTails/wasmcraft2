@@ -88,6 +88,12 @@ Run these commands:
 
 And you should see the numbers 0 to 9 printed out in the chat.
 
+To adjust the number of commands run per tick, you can set a value any time while the datapack is running:
+```
+scoreboard players set %%max_commands reg 30000
+```
+This number can be adjusted higher or lower depending on your system's performance.
+
 ## Inserting Sleep Calls
 
 Currently, programs compiled under Wasmcraft have to have sleep calls manually inserted into them under certain circumstances.
