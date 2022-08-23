@@ -3,7 +3,7 @@ mod sexpr;
 
 /*
 pub mod wasm_suite_prelude {
-	use wasm_runner::{wasm_file::WasmFile, ssa::{interp::{SsaInterpreter, TypedValue}, lir_emitter}, validator::wasm_to_ssa, lir::interp::LirInterpreter};
+	use wasmcraft::{wasm_file::WasmFile, ssa::{interp::{SsaInterpreter, TypedValue}, lir_emitter}, validator::wasm_to_ssa, lir::interp::LirInterpreter};
 
 	use super::sexpr::SExpr;
 
@@ -117,7 +117,7 @@ pub mod wasm_suite_prelude {
 
 /*
 pub mod wasm_suite_prelude {
-	use wasm_runner::{wasm_file::WasmFile, ssa::{interp::{SsaInterpreter, TypedValue}, lir_emitter}, validator::wasm_to_ssa, lir::interp::LirInterpreter};
+	use wasmcraft::{wasm_file::WasmFile, ssa::{interp::{SsaInterpreter, TypedValue}, lir_emitter}, validator::wasm_to_ssa, lir::interp::LirInterpreter};
 
 	use super::sexpr::SExpr;
 
@@ -234,7 +234,7 @@ pub mod wasm_suite_prelude {
 	use command_parser::CommandParse;
 	use datapack_common::functions::command_components::{FunctionIdent, ScoreHolder, Objective};
 	use datapack_vm::Interpreter;
-	use wasm_runner::{wasm_file::WasmFile, ssa::{interp::{SsaInterpreter, TypedValue}, lir_emitter, BlockId}, validator::wasm_to_ssa, lir::{interp::LirInterpreter, Register}, pack_emitter::{self, get_mc_id}, CompileContext};
+	use wasmcraft::{wasm_file::WasmFile, ssa::{interp::{SsaInterpreter, TypedValue}, lir_emitter, BlockId}, validator::wasm_to_ssa, lir::{interp::LirInterpreter, Register}, pack_emitter::{self, get_mc_id}, CompileContext};
 	use wasmparser::ValType;
 
 	use super::sexpr::SExpr;

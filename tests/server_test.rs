@@ -2,7 +2,7 @@
 mod sexpr;
 
 use rcon::{Connection, AsyncStdStream};
-use wasm_runner::{ssa::{interp::TypedValue, lir_emitter, BlockId}, lir::Register, wasm_file::WasmFile, validator::wasm_to_ssa, pack_emitter::{self, get_mc_id}, CompileContext};
+use wasmcraft::{ssa::{interp::TypedValue, lir_emitter, BlockId}, lir::Register, wasm_file::WasmFile, validator::wasm_to_ssa, pack_emitter::{self, get_mc_id}, CompileContext};
 use wasmparser::ValType;
 
 type Server = Connection<AsyncStdStream>;

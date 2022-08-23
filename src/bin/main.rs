@@ -1,8 +1,8 @@
 use clap::Parser;
-use wasm_runner::Args;
+use wasmcraft::Args;
 
 fn main() {
     let args = Args::parse();
 
-    wasm_runner::run(args);
+    wasmcraft::run(args);
 }

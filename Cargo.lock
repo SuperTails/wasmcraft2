@@ -441,7 +441,7 @@ dependencies = [
 [[package]]
 name = "datapack_vm"
 version = "0.1.0"
-source = "git+https://github.com/SuperTails/datapackvm.git?branch=interning#2ee7fa37ce7fbcc676650d87379a892a0b776791"
+source = "git+https://github.com/SuperTails/datapackvm.git?branch=interning#ede753991d85fe2e3388f1f50bed88a08be1f902"
 dependencies = [
  "datapack_common",
  "lazy_static",
@@ -1416,7 +1416,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6598dd0bd3c7d51095ff6531a5b23e02acdc81804e30d8f07afb77b7215a140a"
 
 [[package]]
-name = "wasm_runner"
+name = "wasmcraft"
 version = "0.1.0"
 dependencies = [
  "async-recursion",

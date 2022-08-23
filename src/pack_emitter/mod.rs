@@ -2539,7 +2539,7 @@ pub fn make_export_func(name: &str, id: BlockId) -> Function {
 
 	let func_id = get_mc_id(id);
 	let cmds: Vec<Command> = vec![
-		"data modify storage wasm:scratch stack.data set value {}".to_string().parse().unwrap(),
+		"data modify storage wasm:scratch stack.data set value {ptr:-1}".to_string().parse().unwrap(),
 		"data modify storage wasm:scratch stack.tail set from storage wasm:returnstack stack".parse().unwrap(),
 		"data modify storage wasm:returnstack stack set from storage wasm:scratch stack".parse().unwrap(),
 		format!("function {func_id}").parse().unwrap(),

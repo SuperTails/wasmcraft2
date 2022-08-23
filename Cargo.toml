@@ -1,5 +1,5 @@
 [package]
-name = "wasm_runner"
+name = "wasmcraft"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,11 +10,11 @@ servertests = []
 gui = ["datapack_vm/gui"]
 
 [[bin]]
-name = "wasm_runner"
+name = "wasmcraft"
 path = "src/bin/main.rs"
 
 [lib]
-name = "wasm_runner"
+name = "wasmcraft"
 path = "src/lib.rs"
 
 [dependencies]
