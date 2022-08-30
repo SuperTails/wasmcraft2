@@ -5,7 +5,7 @@ use std::{ops::RangeInclusive, fmt, collections::{HashSet, HashMap}};
 use datapack_common::functions::command_components::{ScoreHolder, Objective};
 use wasmparser::ValType;
 
-use crate::ssa::{BlockId, Memory, interp::TypedValue, Table, const_prop::StaticValue, lir_emitter::RegisterWithInfo};
+use crate::ssa::{BlockId, Memory, interp::TypedValue, Table, lir_emitter::RegisterWithInfo};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Half {

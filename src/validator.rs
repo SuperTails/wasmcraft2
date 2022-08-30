@@ -432,37 +432,6 @@ macro_rules! zip_vars {
 	};
 }
 
-macro_rules! generic_zip_all {
-	( $somevar:path , $nonevar:path , $( $opt:expr ),* ) => {
-		zip_all!( $somevar , $nonevar , $( $opt , )* )
-	};
-	( $somevar:path , $nonevar:path , $( $opt:expr , )* ) => {
-		match ( $( $opt , )* ) {
-			( $( $somevar ( $opt ) )* ) => $somevar ( $( $opt , )* ),
-			_ => $nonevar
-		}
-	};
-}
-
-
-macro_rules! generic_zip_all {
-	( $somevar:path , $nonevar:path , $( $opt:expr ),* ) => {
-		zip_all!( $somevar , $nonevar , $( $opt , )* )
-	};
-	( $somevar:path , $nonevar:path , $( $opt:expr , )* ) => {
-		match ( $( $opt , )* ) {
-			( $( $somevar ( $opt ) )* ) => $somevar ( $( $opt , )* ),
-			_ => $nonevar
-		}
-	};
-}
-
-macro_rules! zip_all {
-	( $($in:tt)* ) => {
-		generic_zip_all!( Some, None, $($in)* )
-	};
-}
-
 struct ValidationState<'a> {
 	wasm_file: &'a WasmFile<'a>,
 	func: usize,

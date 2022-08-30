@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use command_parser::CommandParse;
 use datapack_common::functions::{command_components::NbtPath, Function};
 use clap::{Parser, clap_derive::ValueEnum};
@@ -5,7 +7,7 @@ use lir::LirProgram;
 use ssa::SsaProgram;
 use wasm_file::WasmFile;
 
-use crate::{validator::wasm_to_ssa, ssa::lir_emitter, lir::interp::LirInterpreter};
+use crate::{validator::wasm_to_ssa, ssa::lir_emitter};
 
 pub mod wasm_file;
 pub mod validator;
@@ -30,6 +32,7 @@ enum RegAllocMode {
     Full,
 }
 
+/// Contains the command-line arguments passed to Wasmcraft
 #[derive(Parser, Debug)]
 pub struct Args {
     /// Path to the binary WebAssembly file.
@@ -78,6 +81,7 @@ pub struct Args {
     output: std::path::PathBuf,
 }
 
+/// A more-parsed form of the command line arguments
 pub struct CompileContext {
     /// Path to the binary WebAssembly file.
 	input: std::path::PathBuf,
@@ -196,6 +200,9 @@ impl CompileContext {
 	}
 }
 
+/// The main entry point for Wasmcraft.
+/// This will read a WebAssembly file and compile it into a datapack,
+/// possibly saving the resulting datapack or simulating it.
 pub fn run(args: Args) {
 	let ctx = CompileContext::new(args);
 
@@ -233,17 +240,6 @@ pub fn run(args: Args) {
 	}
 
 	let datapack = ctx.compute_datapack(&lir_program);
-
-	/*for (idx, lir_func) in lir_program.code.iter().enumerate() {
-		println!("\n\n============ Function {} ============", idx);
-		for (block_id, block) in lir_func.code.iter() {
-			println!("\n----------- Block {:?} ---------", block_id);
-			for instr in block.body.iter() {
-				println!("    {:?}", instr);
-			}
-			println!("    {:?}", block.term);
-		}
-	}*/
 
 	std::mem::drop(lir_program);
 

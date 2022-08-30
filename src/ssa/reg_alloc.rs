@@ -426,7 +426,7 @@ mod test {
 
 	use crate::ssa::{SsaBasicBlock, TypedSsaVar, SsaInstr, SsaTerminator, JumpTarget, BlockId, SsaFunction, liveness::{FullLivenessInfo, LivenessInfo, print_liveness_info}};
 
-use super::{FullRegAlloc, RegAlloc};
+	use super::{FullRegAlloc, RegAlloc};
 
 	/*#[test]
 	fn reg_across_jump() {

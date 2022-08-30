@@ -6,9 +6,9 @@ pub mod const_prop;
 pub mod dce;
 pub mod reg_alloc;
 
-use std::{collections::{HashMap, HashSet}, fmt};
+use std::collections::{HashMap, HashSet};
 
-use wasmparser::{Type, MemoryImmediate, ValType};
+use wasmparser::{MemoryImmediate, ValType};
 
 use self::interp::TypedValue;
 
@@ -396,21 +396,21 @@ impl SsaInstr {
 				result.extend(x_span.get_var());
 				result.extend(y_span.get_var());
 				result.extend(z_span.get_var());
-				return result;
+				result
 			}
 			SsaInstr::TurtleCopyRegion { x_span, y_span, z_span } => {
 				let mut result = Vec::new();
 				result.extend(x_span.get_var());
 				result.extend(y_span.get_var());
 				result.extend(z_span.get_var());
-				return result;
+				result
 			}
 			SsaInstr::TurtlePasteRegionMasked { x_span, y_span, z_span } => {
 				let mut result = Vec::new();
 				result.extend(x_span.get_var());
 				result.extend(y_span.get_var());
 				result.extend(z_span.get_var());
-				return result;
+				result
 			}
 			SsaInstr::TurtleGetBlock(_) => Vec::new(),
 			SsaInstr::TurtleCopy => Vec::new(),

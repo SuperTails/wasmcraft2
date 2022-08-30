@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use super::{SsaProgram, liveness::{LivenessInfo, FullLivenessInfo}, BlockId, SsaBasicBlock, SsaFunction, SsaTerminator};
+use super::{SsaProgram, liveness::{LivenessInfo, FullLivenessInfo}, BlockId, SsaBasicBlock, SsaTerminator};
 
 pub fn do_dead_code_elim(program: &mut SsaProgram) {
 	for func in program.code.iter_mut() {

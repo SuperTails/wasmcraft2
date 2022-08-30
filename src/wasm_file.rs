@@ -17,14 +17,14 @@ impl<'a> DataList<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct TableList {
     pub tables: Vec<TableType>,
 }
 
 impl TableList {
     pub fn new() -> Self {
-        TableList { tables: Vec::new() }
+        Default::default()
     }
 
     pub fn add_table(&mut self, ty: TableType) {
@@ -32,13 +32,14 @@ impl TableList {
     }
 }
 
+#[derive(Default)]
 pub struct ElementList<'a> {
     pub elements: Vec<Element<'a>>,
 }
 
 impl<'a> ElementList<'a> {
     pub fn new() -> Self {
-        ElementList { elements: Vec::new() }
+        Default::default()
     }
 
     pub fn add_element(&mut self, elem: Element<'a>) {
@@ -46,16 +47,14 @@ impl<'a> ElementList<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct GlobalList<'a> {
     pub globals: Vec<Global<'a>>,
 }
 
 impl<'a> GlobalList<'a> {
     pub fn new() -> Self {
-        GlobalList {
-            globals: Vec::new(),
-        }
+        GlobalList::default()
     }
 
     pub fn add_global(&mut self, global: Global<'a>) {
@@ -78,7 +77,7 @@ struct GlobalImport<'a> {
     pub mutable: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ImportList<'a> {
     func_imports: Vec<FuncImport<'a>>,
     global_imports: Vec<GlobalImport<'a>>,
@@ -86,7 +85,7 @@ pub struct ImportList<'a> {
 
 impl<'a> ImportList<'a> {
     pub fn new() -> Self {
-        ImportList { func_imports: Vec::new(), global_imports: Vec::new(), }
+        ImportList::default()
     }
 
     pub fn add_import(&mut self, i: Import<'a>) {
@@ -149,16 +148,14 @@ pub struct FunctionBody<'a> {
     pub locals: Vec<(u32, ValType)>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct TypeList {
     pub types: Vec<Type>,
 }
 
 impl TypeList {
     pub fn new() -> Self {
-        TypeList {
-            types: Vec::new()
-        }
+        TypeList::default()
     }
 
     pub fn add_type(&mut self, ty: Type) {
@@ -166,13 +163,9 @@ impl TypeList {
     }
 
     pub fn func_type(&self, idx: u32) -> &FuncType {
-        // FIXME: How does indexing work here?
+        let Type::Func(f) = &self.types[idx as usize];
 
-        if let Type::Func(f) = &self.types[idx as usize] {
-            f
-        } else {
-            panic!()
-        }
+        f
     }
 
     pub fn start_types(&self, ty: BlockType) -> Box<[ValType]> {
@@ -199,16 +192,14 @@ impl TypeList {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FunctionList {
     pub functions: Vec<u32>,
 }
 
 impl FunctionList {
     pub fn new() -> Self {
-        FunctionList {
-            functions: Vec::new(),
-        }
+        FunctionList::default()
     }
 
     pub fn add_function(&mut self, function: u32) {

@@ -667,7 +667,7 @@ impl LirInterpreter {
 				LirTerminator::ReturnToSaved => {
 					let returns = self.returns.get(&pc.block.func).unwrap();
 
-					let mut return_addr = self.return_stack.pop();
+					let return_addr = self.return_stack.pop();
 
 					self.call_stack.incr(&self.code);
 
