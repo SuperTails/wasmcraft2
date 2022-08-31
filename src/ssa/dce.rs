@@ -68,7 +68,7 @@ pub fn do_dead_code_elim(program: &mut SsaProgram) {
 	}
 }
 
-fn remove_from_target(block_id: BlockId, child: BlockId, block: &mut SsaBasicBlock, mut indices: &[usize]) {
+fn remove_from_target(_block_id: BlockId, child: BlockId, block: &mut SsaBasicBlock, mut indices: &[usize]) {
 	let mut offset = 0;
 	let mut i = 0;
 	while let Some(index) = indices.first() {

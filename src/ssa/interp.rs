@@ -172,7 +172,7 @@ pub struct SsaInterpreter {
 
 impl SsaInterpreter {
 	pub fn new(program: SsaProgram) -> Self {
-		let constants = program.code.iter().flat_map(|f| super::const_prop::get_func_constants(f)).collect();
+		let constants = program.code.iter().flat_map(super::const_prop::get_func_constants).collect();
 		
 		//let constants = HashMap::new();
 		

@@ -377,7 +377,7 @@ pub struct LirProgram {
 }
 
 impl LirProgram {
-	pub fn all_block_ids<'a>(&'a self) -> impl Iterator<Item=BlockId> + 'a {
+	pub fn all_block_ids(&self) -> impl Iterator<Item=BlockId> + '_ {
 		self.code.iter().flat_map(|func| {
 			func.code.iter().map(|(id, _)| *id)
 		})

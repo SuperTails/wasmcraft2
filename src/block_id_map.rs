@@ -23,6 +23,10 @@ impl<T> LocalBlockMap<T> {
 		self.data.iter().filter(|d| d.is_some()).count()
 	}
 
+	pub fn is_empty(&self) -> bool {
+		self.len() == 0
+	}
+
 	fn check_func_id(&mut self, func_id: usize) {
 		if let Some(id) = self.func_id {
 			assert_eq!(id, func_id);
@@ -77,7 +81,7 @@ impl<T> LocalBlockMap<T> {
 		self.get(k).is_some()
 	}
 
-	pub fn iter<'a>(&'a self) -> impl Iterator<Item=(BlockId, &'a T)> + 'a {
+	pub fn iter(&self) -> impl Iterator<Item=(BlockId, &T)> + '_ {
 		let func = self.func_id.unwrap_or(usize::MAX);
 
 		self.data.iter().enumerate().flat_map(move |(idx, v)| {
@@ -86,7 +90,7 @@ impl<T> LocalBlockMap<T> {
 		})
 	}
 
-	pub fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item=(BlockId, &'a mut T)> + 'a {
+	pub fn iter_mut(&mut self) -> impl Iterator<Item=(BlockId, &mut T)> {
 		let func = self.func_id.unwrap_or(usize::MAX);
 
 		self.data.iter_mut().enumerate().flat_map(move |(idx, v)| {
@@ -95,16 +99,16 @@ impl<T> LocalBlockMap<T> {
 		})
 	}
 
-	pub fn keys<'a>(&'a self) -> impl Iterator<Item=BlockId> + 'a {
+	pub fn keys(&self) -> impl Iterator<Item=BlockId> + '_ {
 		self.iter().map(|(k, _v)| k)
 	}
 
-	pub fn values<'a>(&'a self) -> impl Iterator<Item=&'a T> + 'a {
+	pub fn values(&self) -> impl Iterator<Item=&T> {
 		self.iter().map(|(_k, v)| v)
 	}
 
 	/// Includes keys that don't have a corresponding value in the map.
-	pub fn iter_all_keys<'a>(&'a self) -> impl Iterator<Item=BlockId> {
+	pub fn iter_all_keys(&self) -> impl Iterator<Item=BlockId> {
 		let func = self.func_id.unwrap();
 
 		(0..self.data.len()).map(move |i| {

@@ -97,7 +97,7 @@ fn get_direct_calls(program: &SsaProgram) -> HashMap<u32, HashSet<u32>> {
 }
 
 // Returns an iterator over the function IDs that this function can call using call instructions
-fn iter_direct_calls<'a>(func: &'a SsaFunction) -> impl Iterator<Item=u32> + 'a {
+fn iter_direct_calls(func: &SsaFunction) -> impl Iterator<Item=u32> + '_ {
 	func.iter().flat_map(|(_, block)| {
 		block.body.iter().filter_map(|instr| {
 			if let SsaInstr::Call { function_index, .. } = instr {
@@ -110,7 +110,7 @@ fn iter_direct_calls<'a>(func: &'a SsaFunction) -> impl Iterator<Item=u32> + 'a 
 }
 
 // Returns an iterator over the table IDs, params, and returns that this function uses in call_indirect instructions 
-fn iter_indirect_tables<'a>(func: &'a SsaFunction) -> impl Iterator<Item=(u32, &'a [TypedSsaVar], &'a [TypedSsaVar])> + 'a {
+fn iter_indirect_tables(func: &SsaFunction) -> impl Iterator<Item=(u32, &[TypedSsaVar], &[TypedSsaVar])> + '_ {
 	func.iter().flat_map(|(_, block)| {
 		block.body.iter().filter_map(|instr| {
 			if let SsaInstr::CallIndirect { table_index, params, returns, .. } = instr {

@@ -233,7 +233,7 @@ fn lower_block<L>(
 		}
 	}
 
-	fn do_unaryop<'a, F, G>(dst: TypedSsaVar, src: TypedSsaVar, block: &'a mut Vec<LirInstr>, ra: &mut dyn RegAlloc, f: F, g: G)
+	fn do_unaryop<F, G>(dst: TypedSsaVar, src: TypedSsaVar, block: &mut Vec<LirInstr>, ra: &mut dyn RegAlloc, f: F, g: G)
 		where
 			F: FnOnce(Register, Register) -> LirInstr,
 			G: FnOnce(DoubleRegister, DoubleRegister) -> LirInstr,
