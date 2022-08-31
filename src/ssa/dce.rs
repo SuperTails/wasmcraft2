@@ -16,9 +16,9 @@ pub fn do_dead_code_elim(program: &mut SsaProgram) {
 			to_visit.extend(func.get(node).term.successors());
 		}
 
-		for (idx, b) in func.code.iter_mut().enumerate() {
-			if !reachable_blocks.contains(&BlockId { func: func.func_id, block: idx }) {
-				*b = None;
+		for idx in func.code.iter_all_keys() {
+			if !reachable_blocks.contains(&idx) {
+				func.code.remove(idx);
 			}
 		}
 	}
@@ -127,7 +127,7 @@ fn remove_from_params(block: &mut SsaBasicBlock, mut indices: &[usize]) {
 
 fn get_param_dce_indices(block_id: BlockId, block: &SsaBasicBlock, live_info: &FullLivenessInfo) -> Vec<usize> {
 	block.params.iter().enumerate().filter(|(_i, p)| {
-		!live_info.0.get(&block_id).unwrap().live_in[0].contains(p)
+		!live_info.0.get(block_id).unwrap().live_in[0].contains(p)
 	}).map(|(i, _)| i).collect()
 }
 

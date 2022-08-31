@@ -14,6 +14,7 @@ pub mod validator;
 pub mod ssa;
 pub mod lir;
 pub mod pack_emitter;
+pub mod block_id_map;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CodegenStage {
@@ -216,7 +217,7 @@ pub fn run(args: Args) {
 		if ctx.run_output {
 			let start_idx = file.exports.find_func("_start").unwrap();
 
-			let func = ssa_program.code.iter().find(|f| f.func_id == start_idx).unwrap();
+			let func = ssa_program.code.iter().find(|f| f.func_id() as usize == start_idx).unwrap();
 			dbg!(func.code.len());
 
 			let mut interp = ssa::interp::SsaInterpreter::new(ssa_program);

@@ -274,7 +274,7 @@ fn try_merge_term(sets: &mut RegisterSet, block_id: BlockId, dst: &TypedSsaVar, 
 	let block = func.get(block_id);
 
 	for succ_block in block.term.successors() {
-		if dst_set.live_range.0.get(&succ_block).unwrap().live_in {
+		if dst_set.live_range.0.get(succ_block).unwrap().live_in {
 			// This variable isn't actually defined by the terminator, so don't try to coalesce it.
 			return
 		}
@@ -330,7 +330,7 @@ fn try_merge(sets: &mut RegisterSet, block_id: BlockId, instr_idx: usize, dst: &
 	//print_live_ranges(&[dst_set.live_range.clone(), src_set.live_range.clone()], func);
 
 	if overlap.is_empty() {
-		let dst_block_live_range = dst_set.live_range.0.get(&block_id).unwrap();
+		let dst_block_live_range = dst_set.live_range.0.get(block_id).unwrap();
 		if !dst_block_live_range.body.iter().any(|r| r.contains(&(instr_idx + 1))) {
 			panic!();
 		}

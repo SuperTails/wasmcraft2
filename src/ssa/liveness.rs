@@ -1,4 +1,6 @@
-use std::{collections::{HashSet, HashMap}, ops::RangeInclusive};
+use std::{collections::HashSet, ops::RangeInclusive};
+
+use crate::block_id_map::LocalBlockMap;
 
 use super::{TypedSsaVar, SsaFunction, BlockId, SsaBasicBlock};
 
@@ -126,7 +128,7 @@ impl BlockLiveRange {
 }
 
 #[derive(Debug, Clone)]
-pub struct LiveRange(pub HashMap<BlockId, BlockLiveRange>);
+pub struct LiveRange(pub LocalBlockMap<BlockLiveRange>);
 
 impl LiveRange {
 	pub fn is_empty(&self) -> bool {
@@ -135,7 +137,7 @@ impl LiveRange {
 
 	pub fn merge(&mut self, other: LiveRange) {
 		for (id, range) in other.0 {
-			if let Some(r1) = self.0.get_mut(&id) {
+			if let Some(r1) = self.0.get_mut(id) {
 				r1.merge(&range);
 			} else {
 				self.0.insert(id, range);
@@ -166,11 +168,11 @@ impl LiveRange {
 
 impl LiveRange {
 	pub fn overlap(&self, other: &LiveRange) -> LiveRange {
-		let mut result = HashMap::new();
+		let mut result = LocalBlockMap::new(self.0.func_id());
 
 		for (id, r1) in self.0.iter() {
 			if let Some(r2) = other.0.get(id) {
-				result.insert(*id, r1.overlap(r2));
+				result.insert(id, r1.overlap(r2));
 			}
 		}
 
@@ -248,19 +250,19 @@ impl SimpleBlockLivenessInfo {
 	}
 }
 
-pub struct SimpleLivenessInfo(HashMap<BlockId, SimpleBlockLivenessInfo>);
+pub struct SimpleLivenessInfo(LocalBlockMap<SimpleBlockLivenessInfo>);
 
 impl LivenessInfo for SimpleLivenessInfo {
 	fn analyze(func: &SsaFunction) -> Self {
 		let dom_tree = DomTree::analyze(func);
 		
-		let mut result = HashMap::new();
+		let mut result = LocalBlockMap::new(func.func_id() as usize);
 
 		let entry_id = func.entry_point_id();
 		let mut queue = vec![(entry_id, HashSet::new())];
 
 		while let Some((next_block_id, next_block_ins)) = queue.pop() {
-			let node = dom_tree.0.get(&next_block_id).unwrap();
+			let node = dom_tree.0.get(next_block_id).unwrap();
 
 			let info = SimpleBlockLivenessInfo::new(func.get(next_block_id), next_block_ins);
 
@@ -275,7 +277,7 @@ impl LivenessInfo for SimpleLivenessInfo {
 	}
 
 	fn live_in_body(&self, block: BlockId, instr: usize) -> HashSet<TypedSsaVar> {
-		let block_info = if let Some(bi) = self.0.get(&block) {
+		let block_info = if let Some(bi) = self.0.get(block) {
 			bi
 		} else {
 			return HashSet::new();
@@ -285,7 +287,7 @@ impl LivenessInfo for SimpleLivenessInfo {
 	}
 
 	fn live_out_body(&self, block: BlockId, instr: usize) -> HashSet<TypedSsaVar> {
-		let block_info = if let Some(bi) = self.0.get(&block) {
+		let block_info = if let Some(bi) = self.0.get(block) {
 			bi
 		} else {
 			return HashSet::new();
@@ -305,7 +307,7 @@ impl LivenessInfo for SimpleLivenessInfo {
 pub struct FullBlockLivenessInfo {
 	/// Each entry is the set of variables used as parameters from the corresponding control-flow edge.
 	/// The key is the predecessor of the edge.
-	pub live_in_params: HashMap<BlockId, HashSet<TypedSsaVar>>,
+	pub live_in_params: LocalBlockMap<HashSet<TypedSsaVar>>,
 
 	/// Variables that are live-in from every control-flow edge,
 	/// i.e. ones that are not solely used as parameter inputs.
@@ -359,7 +361,7 @@ impl FullBlockLivenessInfo {
 	/// Returns the set of all live-in variables when coming from a specific predecessor block.
 	pub fn all_live_in_from(&self, pred_id: BlockId) -> HashSet<TypedSsaVar> {
 		let empty = HashSet::new();
-		self.live_in_all.union(self.live_in_params.get(&pred_id).unwrap_or(&empty)).copied().collect()
+		self.live_in_all.union(self.live_in_params.get(pred_id).unwrap_or(&empty)).copied().collect()
 	}
 
 	pub fn live_in_body(&self, instr: usize) -> HashSet<TypedSsaVar> {
@@ -377,7 +379,7 @@ impl FullBlockLivenessInfo {
 	pub fn live_range(&self, var: TypedSsaVar) -> BlockLiveRange {
 		let live_in_params = self.live_in_params.iter().filter_map(|(pred, vars)| {
 			if vars.contains(&var) {
-				Some(*pred)
+				Some(pred)
 			} else {
 				None
 			}
@@ -408,14 +410,14 @@ impl FullBlockLivenessInfo {
 }
 
 #[derive(Debug)]
-pub struct FullLivenessInfo(pub HashMap<BlockId, FullBlockLivenessInfo>);
+pub struct FullLivenessInfo(pub LocalBlockMap<FullBlockLivenessInfo>);
 
 impl LivenessInfo for FullLivenessInfo {
 	fn analyze(func: &SsaFunction) -> Self {
 		let dom_tree = DomTree::analyze(func);
 		let postorder = dom_tree.get_postorder();
 
-		let mut result = HashMap::new();
+		let mut result = LocalBlockMap::new(func.func_id() as usize);
 
 		let pred_info = PredInfo::new(func);
 
@@ -432,11 +434,11 @@ impl LivenessInfo for FullLivenessInfo {
 
 				let mut live_out = HashSet::new();
 				for succ in block.term.successors() {
-					let succ_liveness = result.get(&succ).unwrap();
+					let succ_liveness = result.get(succ).unwrap();
 					live_out.extend(succ_liveness.all_live_in_from(block_id));
 				}
 
-				let block_info = result.get(&block_id).unwrap();
+				let block_info = result.get(block_id).unwrap();
 				if block_info.live_out != live_out {
 					changed = true;
 					let new_info = FullBlockLivenessInfo::new(block_id, block, func, live_out, &pred_info);
@@ -449,7 +451,7 @@ impl LivenessInfo for FullLivenessInfo {
 	}
 
 	fn live_in_body(&self, block: BlockId, instr: usize) -> HashSet<TypedSsaVar> {
-		let block_info = if let Some(bi) = self.0.get(&block) {
+		let block_info = if let Some(bi) = self.0.get(block) {
 			bi
 		} else {
 			return HashSet::new();
@@ -459,7 +461,7 @@ impl LivenessInfo for FullLivenessInfo {
 	}
 
 	fn live_out_body(&self, block: BlockId, instr: usize) -> HashSet<TypedSsaVar> {
-		let block_info = if let Some(bi) = self.0.get(&block) {
+		let block_info = if let Some(bi) = self.0.get(block) {
 			bi
 		} else {
 			return HashSet::new();
@@ -469,14 +471,14 @@ impl LivenessInfo for FullLivenessInfo {
 	}
 
 	fn live_range(&self, var: TypedSsaVar) -> LiveRange {
-		let blocks = self.0.iter().map(|(id, block)| (*id, block.live_range(var))).collect();
+		let blocks = self.0.iter().map(|(id, block)| (id, block.live_range(var))).collect();
 		LiveRange(blocks)
 	}
 }
 
 pub fn print_liveness_info(li: &FullLivenessInfo, func: &SsaFunction) {
 	for (id, block) in func.iter() {
-		let block_info = li.0.get(&id).unwrap();
+		let block_info = li.0.get(id).unwrap();
 		assert_eq!(block_info.live_in.len(), block.body.len() + 1);
 		println!("---- block {id:?} ---- ");
 		for (live_in, instr) in block_info.live_in.iter().zip(block.body.iter()) {
@@ -494,19 +496,19 @@ pub fn print_live_ranges(lr: &[LiveRange], func: &SsaFunction) {
 		println!("------- block {:?} ------", block_id);
 
 		for r in lr.iter() {
-			print!("{:?}, ", r.0.get(&block_id).unwrap().live_in_params);
+			print!("{:?}, ", r.0.get(block_id).unwrap().live_in_params);
 		}
 		println!();
 
 		for r in lr.iter() {
-			let r = r.0.get(&block_id).unwrap();
+			let r = r.0.get(block_id).unwrap();
 			if r.live_in { print!(" + "); } else { print!("   "); }
 		}
 		println!("parameters: {:?}", block.params);
 		
 		for (idx, instr) in block.body.iter().enumerate() {
 			for r in lr.iter() {
-				let r = r.0.get(&block_id).unwrap();
+				let r = r.0.get(block_id).unwrap();
 				let is_live = r.body.iter().any(|r2| r2.contains(&idx));
 				if is_live { print!(" + ") } else { print!("   "); }
 			}
@@ -514,7 +516,7 @@ pub fn print_live_ranges(lr: &[LiveRange], func: &SsaFunction) {
 		}
 
 		for r in lr.iter() {
-			let r = r.0.get(&block_id).unwrap();
+			let r = r.0.get(block_id).unwrap();
 			let is_live = r.body.iter().any(|r2| r2.contains(&block.body.len()));
 			if is_live { print!(" + "); } else { print!("   "); }
 		}
@@ -548,11 +550,11 @@ pub fn get_postorder_impl(func: &SsaFunction, node: BlockId, visited: &mut HashS
 }
 
 #[derive(Debug)]
-pub struct PredInfo(HashMap<BlockId, Vec<BlockId>>);
+pub struct PredInfo(LocalBlockMap<Vec<BlockId>>);
 
 impl PredInfo {
 	pub fn new(func: &SsaFunction) -> Self {
-		let mut result = HashMap::new();
+		let mut result = LocalBlockMap::new(func.func_id() as usize);
 
 		for (block_id, _) in func.iter() {
 			// Make sure all blocks have a default.
@@ -561,7 +563,7 @@ impl PredInfo {
 
 		for (pred_id, block) in func.iter() {
 			for succ_id in block.term.successors() {
-				let v = result.entry(succ_id).or_insert_with(Vec::new);
+				let v = result.entry(succ_id).get_or_insert_with(Vec::new);
 				if !v.contains(&pred_id) {
 					v.push(pred_id);
 				}
@@ -572,7 +574,7 @@ impl PredInfo {
 	}
 
 	pub fn get_predecessors(&self, block_id: BlockId) -> &[BlockId] {
-		self.0.get(&block_id).unwrap()
+		self.0.get(block_id).unwrap()
 	}
 }
 
@@ -597,19 +599,19 @@ pub struct DomTreeNode {
 }
 
 #[derive(Debug)]
-pub struct DomTree(HashMap<BlockId, DomTreeNode>);
+pub struct DomTree(LocalBlockMap<DomTreeNode>);
 
 impl DomTree {
 	/// Gets a postorder traversal of the tree, so it will start at the leaf nodes.
 	pub fn get_postorder(&self) -> Vec<BlockId> {
-		let entry_node = *self.0.keys().find(|b| b.block == 0).unwrap();
+		let entry_node = self.0.keys().find(|b| b.block == 0).unwrap();
 
 		let mut stack = vec![(entry_node, 0)];
 
 		let mut result = Vec::new();
 
 		while let Some((node_id, state)) = stack.last_mut() {
-			let node = self.0.get(node_id).unwrap();
+			let node = self.0.get(*node_id).unwrap();
 			if node.children.len() == *state {
 				result.push(*node_id);
 				stack.pop();
@@ -628,7 +630,7 @@ impl DomTree {
 			return true
 		}
 
-		if !self.0.contains_key(&parent) {
+		if !self.0.contains_key(parent) {
 			// Anywhere else in the function this should panic
 			return false
 		}
@@ -638,7 +640,7 @@ impl DomTree {
 			if node == child {
 				return true;
 			}
-			to_visit.extend(self.0.get(&node).unwrap().children.iter().copied())
+			to_visit.extend(self.0.get(node).unwrap().children.iter().copied())
 		}
 
 		false
@@ -648,7 +650,7 @@ impl DomTree {
 		let postorder = get_postorder(func);
 		assert_eq!(postorder.last(), Some(&func.entry_point_id()));
 
-		let mut doms = HashMap::new();
+		let mut doms = LocalBlockMap::new(func.func_id() as usize);
 
 		for id in postorder.iter() {
 			doms.insert(*id, None);
@@ -663,7 +665,7 @@ impl DomTree {
 			changed = false;
 			for (b_idx, b) in postorder.iter().enumerate().rev().skip(1) {
 				// Make sure we only consider reachable blocks
-				let preds = pred_info.get_predecessors(*b).iter().filter(|p| doms.contains_key(p)).copied().collect::<Vec<_>>();
+				let preds = pred_info.get_predecessors(*b).iter().filter(|p| doms.contains_key(**p)).copied().collect::<Vec<_>>();
 
 				let mut new_idom = *preds.iter().find(|p| {
 					let other_idx = postorder.iter().enumerate().find(|(_, p2)| p2 == p).unwrap().0;
@@ -677,19 +679,19 @@ impl DomTree {
 						continue
 					}
 
-					if let Some(dom) = doms.get(p).unwrap() {
+					if let Some(dom) = doms.get(*p).unwrap() {
 						new_idom = intersect(*dom, new_idom, &doms, &postorder);
 					}
 				}
 
-				if *doms.get(b).unwrap() != Some(new_idom) {
+				if *doms.get(*b).unwrap() != Some(new_idom) {
 					doms.insert(*b, Some(new_idom));
 					changed = true;
 				}
 			}
 		}
 
-		fn intersect(mut finger1: BlockId, mut finger2: BlockId, doms: &HashMap<BlockId, Option<BlockId>>, postorder: &[BlockId]) -> BlockId {
+		fn intersect(mut finger1: BlockId, mut finger2: BlockId, doms: &LocalBlockMap<Option<BlockId>>, postorder: &[BlockId]) -> BlockId {
 			let get_idx = |id: BlockId| -> usize {
 				postorder.iter().enumerate().find(|(_, i)| **i == id).unwrap().0
 			};
@@ -699,11 +701,11 @@ impl DomTree {
 
 			while finger1 != finger2 {
 				while finger1_idx < finger2_idx {
-					finger1 = doms.get(&finger1).unwrap().unwrap();
+					finger1 = doms.get(finger1).unwrap().unwrap();
 					finger1_idx = get_idx(finger1);
 				}
 				while finger2_idx < finger1_idx {
-					finger2 = doms.get(&finger2).unwrap().unwrap();
+					finger2 = doms.get(finger2).unwrap().unwrap();
 					finger2_idx = get_idx(finger2);
 				}
 			}
@@ -711,19 +713,19 @@ impl DomTree {
 			finger1
 		}
 
-		let doms = doms.into_iter().map(|(k, v)| (k, v.unwrap())).collect::<HashMap<_, _>>();
+		let doms = doms.into_iter().map(|(k, v)| (k, v.unwrap())).collect::<LocalBlockMap<_>>();
 
 		let mut tree = doms.iter().map(|(c, p)| {
 			let node = DomTreeNode {
-				parent: if c == p { None } else { Some(*p) },
+				parent: if c == *p { None } else { Some(*p) },
 				children: Vec::new()
 			};
-			(*c, node)
-		}).collect::<HashMap<_, _>>();
+			(c, node)
+		}).collect::<LocalBlockMap<_>>();
 
-		for (c, p) in doms.iter() {
+		for (c, p) in doms.into_iter() {
 			if c != p {
-				tree.get_mut(p).unwrap().children.push(*c);
+				tree.get_mut(p).unwrap().children.push(c);
 			}
 		}
 
@@ -735,14 +737,14 @@ impl DomTree {
 		self.print_impl(entry_node, 0);
 	}
 
-	fn print_impl(&self, key: &BlockId, indent: u32) {
+	fn print_impl(&self, key: BlockId, indent: u32) {
 		let node = self.0.get(key).unwrap();
 		for _ in 0..indent {
 			print!("  ");
 		}
 		println!("{:?} (parent: {:?})", key, node.parent);
 		for child in node.children.iter() {
-			self.print_impl(child, indent + 1);
+			self.print_impl(*child, indent + 1);
 		}
 	}
 }

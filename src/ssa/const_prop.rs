@@ -2,7 +2,7 @@ use std::{collections::HashMap, hash::Hash};
 
 use wasmparser::ValType;
 
-use crate::ssa::liveness::{NoopLivenessInfo, LivenessInfo};
+use crate::{ssa::liveness::{NoopLivenessInfo, LivenessInfo}, block_id_map::LocalBlockMap};
 
 use super::{SsaProgram, SsaBasicBlock, TypedSsaVar, interp::TypedValue, SsaInstr, SsaVarOrConst, BlockId, SsaFunction, liveness::{DomTree, PredInfo}};
 
@@ -231,8 +231,8 @@ fn print_state_diff(before: &StaticState, after: &StaticState) {
 	}
 }
 
-pub fn get_func_constants(func: &SsaFunction) -> HashMap<BlockId, StaticState> {
-	println!("started const prop for function {}", func.func_id);
+pub fn get_func_constants(func: &SsaFunction) -> LocalBlockMap<StaticState> {
+	println!("started const prop for function {}", func.func_id());
 
 	let pred_info = PredInfo::new(func);
 
@@ -240,7 +240,7 @@ pub fn get_func_constants(func: &SsaFunction) -> HashMap<BlockId, StaticState> {
 	let mut reverse_postorder = dom_tree.get_postorder();
 	reverse_postorder.reverse();
 
-	let mut states = HashMap::<BlockId, StaticState>::new();
+	let mut states = LocalBlockMap::<StaticState>::new(func.func_id() as usize);
 
 	let all_vars = NoopLivenessInfo::analyze(func).vars;
 
@@ -261,7 +261,7 @@ pub fn get_func_constants(func: &SsaFunction) -> HashMap<BlockId, StaticState> {
 		//println!("\nNew iteration");
 
 		for node in reverse_postorder.iter() {
-			let mut entry_state = states.entry(*node).or_insert_with(StaticState::new).clone();
+			let mut entry_state = states.entry(*node).get_or_insert_with(StaticState::new).clone();
 
 			let preds = pred_info.get_predecessors(*node);
 			for pred in preds {
@@ -269,7 +269,7 @@ pub fn get_func_constants(func: &SsaFunction) -> HashMap<BlockId, StaticState> {
 
 				let this_block = func.get(*node);
 
-				let pred_state = states.get(pred).unwrap_or(&empty_state);
+				let pred_state = states.get(*pred).unwrap_or(&empty_state);
 
 				for (var, val) in pred_state.iter() {
 					merge_var(&mut entry_state, *var, *val);
@@ -330,7 +330,7 @@ pub fn get_func_constants(func: &SsaFunction) -> HashMap<BlockId, StaticState> {
 			let new_exit_state = entry_state;
 
 
-			let old_exit_state = states.get(node).unwrap();
+			let old_exit_state = states.get(*node).unwrap();
 			if old_exit_state != &new_exit_state {
 				changed = true;
 				//println!("Block {:?} changed", node);
@@ -359,16 +359,16 @@ pub fn get_func_constants(func: &SsaFunction) -> HashMap<BlockId, StaticState> {
 	states
 }
 
-pub fn do_func_const_prop(func: &mut SsaFunction) -> HashMap<BlockId, StaticState> {
+pub fn do_func_const_prop(func: &mut SsaFunction) -> LocalBlockMap<StaticState> {
 	let states = get_func_constants(func);
 
 	for (block_id, block) in func.iter_mut() {
-		if let Some(state) = states.get(&block_id) {
+		if let Some(state) = states.get(block_id) {
 			do_strength_reduction(block, state);
 		}
 	}
 
-	println!("finished const prop for function {}", func.func_id);
+	println!("finished const prop for function {}", func.func_id());
 
 	states
 }

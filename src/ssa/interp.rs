@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use wasmparser::{ValType, MemoryImmediate};
 
-use crate::ssa::{TypedSsaVar, const_prop::state_matches};
+use crate::{ssa::{TypedSsaVar, const_prop::state_matches}, block_id_map::LocalBlockMap};
 
 use super::{BlockId, SsaBasicBlock, SsaVar, SsaProgram, Memory, Table, SsaVarOrConst, const_prop::StaticState};
 
@@ -165,7 +165,7 @@ pub struct SsaInterpreter {
 	memory: Vec<Memory>,
 	tables: Vec<Table>,
 	program: HashMap<BlockId, SsaBasicBlock>,
-	constants: HashMap<BlockId, StaticState>,
+	constants: LocalBlockMap<StaticState>,
 	call_stack: CallStack,
 	steps: u64,
 }
@@ -322,7 +322,7 @@ impl SsaInterpreter {
 			let mut incr_pc = true;
 
 			if /*frame.pc.instr == 0*/ true {
-				let consts = self.constants.get(&frame.pc.block).unwrap_or_else(|| panic!("{:?}", frame.pc));
+				let consts = self.constants.get(frame.pc.block).unwrap_or_else(|| panic!("{:?}", frame.pc));
 
 				//println!("{:?}", &block.body[frame.pc.instr]);
 

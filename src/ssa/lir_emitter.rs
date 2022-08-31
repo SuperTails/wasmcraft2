@@ -2,7 +2,7 @@ use std::{collections::{HashSet, HashMap}, fmt};
 
 use wasmparser::{MemoryImmediate, ValType};
 
-use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half, LirJumpTarget}, ssa::{TypedSsaVar, SsaVarOrConst, liveness::{FullLivenessInfo, DomTree}, const_prop::{StaticState, self}}, jump_mode, JumpMode, CompileContext};
+use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half, LirJumpTarget}, ssa::{TypedSsaVar, SsaVarOrConst, liveness::{FullLivenessInfo, DomTree}, const_prop::{StaticState, self}}, jump_mode, JumpMode, CompileContext, block_id_map::LocalBlockMap};
 
 use super::{SsaProgram, SsaFunction, SsaBasicBlock, BlockId, reg_alloc::*, liveness::{LivenessInfo, SimpleLivenessInfo}, call_graph::CallGraph, Table, const_prop::StaticValue, interp::TypedValue};
 
@@ -862,7 +862,7 @@ fn lower_block<L>(
 
 				let mut needs_save = false;
 				for func in compat_funcs.clone().flatten() {
-					if func == parent_func.func_id || call_graph.may_call(func as u32, parent_func.func_id as u32) {
+					if func == parent_func.func_id() as usize || call_graph.may_call(func as u32, parent_func.func_id()) {
 						needs_save = true;
 						break;
 					}
@@ -1349,7 +1349,7 @@ fn lower(ctx: &CompileContext, ssa_func: &SsaFunction, ssa_program: &SsaProgram,
 	let func_static_values = if ctx.do_const_prop {
 		const_prop::get_func_constants(ssa_func)
 	} else {
-		HashMap::new()
+		LocalBlockMap::new(ssa_func.func_id() as usize)
 	};
 
 	let empty_static_values = HashMap::new();
@@ -1359,7 +1359,7 @@ fn lower(ctx: &CompileContext, ssa_func: &SsaFunction, ssa_program: &SsaProgram,
 	let dom_tree = DomTree::analyze(ssa_func);
 
 	for (block_id, block) in ssa_func.iter() {
-		let static_values = func_static_values.get(&block_id).unwrap_or(&empty_static_values);
+		let static_values = func_static_values.get(block_id).unwrap_or(&empty_static_values);
 		lower_block(ssa_program, ssa_func, block_id, block, &mut *reg_alloc, &liveness_info, call_graph, &mut builder, static_values, &dom_tree);
 	}
 

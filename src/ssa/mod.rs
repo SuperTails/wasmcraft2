@@ -10,6 +10,8 @@ use std::collections::{HashMap, HashSet};
 
 use wasmparser::{MemoryImmediate, ValType};
 
+use crate::block_id_map::LocalBlockMap;
+
 use self::interp::TypedValue;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
@@ -788,9 +790,7 @@ impl SsaTerminator {
 }
 
 pub struct SsaFunction {
-	pub func_id: usize,
-	/// A sparse array, where each basic block's ID is represented as its index in the list.
-	pub code: Vec<Option<SsaBasicBlock>>,
+	pub code: LocalBlockMap<SsaBasicBlock>,
 	pub params: Box<[ValType]>,
 	pub returns: Box<[ValType]>,
 }
@@ -799,56 +799,29 @@ impl SsaFunction {
 	pub fn new<C>(blocks: C, params: Box<[ValType]>, returns: Box<[ValType]>) -> Self
 		where C: IntoIterator<Item=(BlockId, SsaBasicBlock)>
 	{
-		let mut code = Vec::new();
+		let code = blocks.into_iter().collect();
 
-		let mut func_id = None;
-
-		for (block_id, block) in blocks.into_iter() {
-			if let Some(func_id) = func_id {
-				assert_eq!(func_id, block_id.func);
-			} else {
-				func_id = Some(block_id.func);
-			}
-
-			if block_id.block >= code.len() {
-				code.resize_with(block_id.block + 1, || None);
-			}
-
-			assert!(code[block_id.block].is_none());
-			code[block_id.block] = Some(block);
-		}
-
-		let func_id = func_id.unwrap();
-
-		SsaFunction { func_id, code, params, returns }
+		SsaFunction { code, params, returns }
 	}
 
 	pub fn iter<'a>(&'a self) -> impl Iterator<Item=(BlockId, &'a SsaBasicBlock)> + 'a {
-		self.code.iter().enumerate().filter_map(|(idx, block)| {
-			let block_id = BlockId { func: self.func_id, block: idx };
-			block.as_ref().map(|block| (block_id, block))
-		})
+		self.code.iter()
 	}
 
 	pub fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item=(BlockId, &'a mut SsaBasicBlock)> + 'a {
-		self.code.iter_mut().enumerate().filter_map(|(idx, block)| {
-			let block_id = BlockId { func: self.func_id, block: idx };
-			block.as_mut().map(|block| (block_id, block))
-		})
+		self.code.iter_mut()
 	}
 
 	pub fn get(&self, block_id: BlockId) -> &SsaBasicBlock {
-		assert_eq!(block_id.func, self.func_id);
-		self.code[block_id.block].as_ref().unwrap()
+		self.code.get(block_id).unwrap()
 	}
 
 	pub fn get_mut(&mut self, block_id: BlockId) -> &mut SsaBasicBlock {
-		assert_eq!(block_id.func, self.func_id);
-		self.code[block_id.block].as_mut().unwrap()
+		self.code.get_mut(block_id).unwrap()
 	}
 
 	pub fn func_id(&self) -> u32 {
-		self.func_id as u32
+		self.code.func_id() as u32
 	}
 
 	pub fn entry_point_id(&self) -> BlockId {
