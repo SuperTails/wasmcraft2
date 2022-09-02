@@ -49,11 +49,11 @@ pub struct Args {
 	opt_level: u8,
 
     /// Which form of register allocation to use.
-    #[clap(short = 'a', long, value_enum)]
+    #[clap(long, value_enum)]
     regalloc: Option<RegAllocMode>,
 
 	/// Perform SSA constant propogation
-	#[clap(short = 'a', long = "do-const-prop", action = clap::ArgAction::Set)]
+	#[clap(long = "do-const-prop", action = clap::ArgAction::Set)]
 	do_const_prop: Option<bool>,
 
 	/// Perform SSA dead code elimination.
@@ -80,6 +80,11 @@ pub struct Args {
     /// Any files previously in this directory will be deleted.
     #[clap(short = 'o', value_parser, value_hint = clap::ValueHint::DirPath)]
     output: std::path::PathBuf,
+
+	/// Flags to be passed to the GUI simulator.
+	/// Only used with the GUI feature and the --run-output flag.
+	#[clap(long, default_value_t)]
+	sim_flags: String,
 }
 
 /// A more-parsed form of the command line arguments
@@ -108,6 +113,9 @@ pub struct CompileContext {
 	dump_lir: bool,
 	/// Print the compiled datapack functions to stdout
 	dump_datapack: bool,
+
+	/// Flags to be passed to the GUI simulator.
+	sim_flags: Vec<String>,
 }
 
 impl CompileContext {
@@ -134,11 +142,18 @@ impl CompileContext {
 		let do_const_prop = args.do_const_prop.unwrap_or(default_const_prop);
 		let do_dead_code_elim = args.do_dead_code_elim.unwrap_or(default_dead_code_elim);
 
+		let sim_flags = if args.sim_flags.is_empty() {
+			Vec::new()
+		} else {
+			args.sim_flags.split(' ').map(|s| s.to_owned()).collect()
+		};
+
 		CompileContext {
 			input: args.input, output: args.output,
 			run_output: args.run_output, persist_output: !args.no_persist_output,
 			regalloc, do_const_prop, do_dead_code_elim,
-			dump_wasm: args.dump_wasm, dump_lir: args.dump_lir, dump_datapack: args.dump_datapack
+			dump_wasm: args.dump_wasm, dump_lir: args.dump_lir, dump_datapack: args.dump_datapack,
+			sim_flags,
 		}
 	}
 
@@ -166,6 +181,7 @@ impl CompileContext {
 			run_output: true, persist_output: true,
 			regalloc, do_const_prop, do_dead_code_elim,
 			dump_wasm: false, dump_lir: false, dump_datapack: false,
+			sim_flags: Vec::new(),
 		}
 
 	}
@@ -259,11 +275,11 @@ pub fn run(args: Args) {
 	}
 
 	if ctx.run_output {
-		run_datapack_output(datapack);
+		run_datapack_output(&ctx, datapack);
 	}
 }
 
-fn run_datapack_output(datapack: Vec<Function>) {
+fn run_datapack_output(_ctx: &CompileContext, datapack: Vec<Function>) {
 	let indiv_time = vec![0; datapack.len()];
 	let intrin_cum_times = vec![0; datapack.len()];
 	let intrin_visited = vec![false; datapack.len()];
@@ -290,7 +306,14 @@ fn run_datapack_output(datapack: Vec<Function>) {
 
 	#[cfg(feature = "gui")]
 	{
-		let (sdl, state) = datapack_vm::gui::setup(&mut interp);
+		let vm_cfg = datapack_vm::gui::Cfg::new(&_ctx.sim_flags);
+		let vm_cfg = vm_cfg.unwrap_or_else(|_| {
+			eprintln!("invalid simulator flags passed!");
+			datapack_vm::gui::print_usage();
+			std::process::exit(1);
+		});
+
+		let (sdl, state) = datapack_vm::gui::setup(&mut interp, vm_cfg);
 
 		std::thread::spawn(move || {
 			run_interp(indiv_time, intrin_cum_times, intrin_visited, intrin_funcs, interp);

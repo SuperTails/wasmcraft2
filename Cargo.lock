@@ -441,8 +441,9 @@ dependencies = [
 [[package]]
 name = "datapack_vm"
 version = "0.1.0"
-source = "git+https://github.com/SuperTails/datapackvm.git?branch=interning#ede753991d85fe2e3388f1f50bed88a08be1f902"
+source = "git+https://github.com/SuperTails/datapackvm.git?branch=interning#acce1601f5dc167ed9225f7e1a621915e2d10b95"
 dependencies = [
+ "command_parser",
  "datapack_common",
  "lazy_static",
  "pixels",

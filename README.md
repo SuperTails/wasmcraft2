@@ -30,6 +30,7 @@ Alternatively, [here is a video](https://youtu.be/jrMrde9tQlg) of the CHIP-8 Emu
   * Register allocation
 * No game modification required
   * Compatible with vanilla Java Edition Minecraft 1.16+ (tested on 1.19+)
+* Simulation and debugging tools for datapack developers
 
 ## Usage
 
@@ -132,10 +133,32 @@ projects can be compiled with the Newlib C stdlib implementation.
 
 An example of how to do that can be found [here](https://github.com/SuperTails/wasmcraft-newlib-example)
 
-## Related Tools
+## Simulation
 
-The [Wasmcraft Preview Simulator](https://github.com/SuperTails/wasmcraft-simulator) is useful for prototyping
-and quickly testing programs before actually providing them to the Wasmcraft compiler.
+Minecraft will silently ignore most unintended datapack behaviors
+(e.g. accessing undefined variables, division by zero, etc), which makes debugging difficult.
+In addition, Wasmcraft's compile times can make iterating and bugfixing more tedious.
+
+For the first stage of development, the [Wasmcraft Preview Simulator](https://github.com/SuperTails/wasmcraft-simulator)
+is useful for prototyping and quickly testing programs before actually providing them to the Wasmcraft compiler.
+See its repository for details on how to use it.
+
+Once programs work under the preview simulator, they can also be tested using Wasmcraft itself.
+This interprets the actual generated commands, so it should behave almost identically to the program
+in a real Minecraft world. The Wasmcraft simulator can be used by passing the `--run-output` flag:
+
+```bash
+# --no-persist-output doesn't save the datapack to disk, so it makes testing a bit faster
+cargo run --release -- /my/input/file.wasm --no-persist-output -o /ignored --run-output
+```
+
+By default, the Wasmcraft simulator runs in text mode.
+Setting the `gui` feature flag will cause it to also display a window that shows placed blocks.
+The GUI mode supports most of the same flags as the Preview Simulator, which can be passed using `--sim-flags`:
+
+```bash
+cargo run --release --features gui -- <same as above> --sim-flags="--z-plane=-5 --frame-sleep=100"
+```
 
 ## Limitations
 

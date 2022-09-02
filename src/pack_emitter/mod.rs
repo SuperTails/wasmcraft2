@@ -216,15 +216,13 @@ fn create_nested_return_func(cond: Register, values: &[(usize, BlockId)], funcs:
 			create_nested_return_func(cond, &values[..values.len() / 2], funcs);
 			let func_name_lesser = format!("wasmrunner:__return_to_saved_{}", funcs.len() - 1);
 
-			create_nested_return_func(cond, &values[values.len() / 2 + 1..], funcs);
+			create_nested_return_func(cond, &values[values.len() / 2..], funcs);
 			let func_name_greater = format!("wasmrunner:__return_to_saved_{}", funcs.len() - 1);
 
-			let (addr_mid, block_id_mid) = values[values.len() / 2];
-			let func_mid = get_mc_id(block_id_mid);
+			let (addr_mid, _block_id_mid) = values[values.len() / 2];
 
 			code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches ..{} run function {func_name_lesser}", addr_mid - 1));
-			code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {} run function {func_mid}", addr_mid));
-			code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {}.. run function {func_name_greater}", addr_mid + 1));
+			code.push(format!("execute if score {cond_taken} matches 0 if score {cond} matches {}.. run function {func_name_greater}", addr_mid));
 		}
 	}
 
@@ -2533,6 +2531,7 @@ pub fn load_intrinsics() -> Vec<Function> {
 	result
 }
 
+// make_export_func returns a datapack function 
 pub fn make_export_func(name: &str, id: BlockId) -> Function {
 	let wrapper_name = format!("wasmrunner:{name}");
 	let wrapper_id = wrapper_name.parse().unwrap();
@@ -2554,6 +2553,7 @@ pub fn add_export_funcs(exports: &HashMap<String, BlockId>, code: &mut Vec<Funct
 
 static INSERT_FUNC_PRINTS: bool = false;
 
+/// Converts an LIR program to a list of Minecraft datapack functions.
 pub fn emit_program(lir_program: &LirProgram) -> Vec<Function> {
 	let mut result = Vec::new();
 	let mut constants = lir_program.constants.clone();

@@ -1,6 +1,10 @@
+//! Converts a WebAssembly file into an SSA-form program.
+//! 
+//! WebAssembly local variables are entirely removed in this stage.
+
 use std::{ops::{Index, IndexMut}, collections::HashMap};
 
-use wasmparser::{Operator, MemoryImmediate, DataKind, ElementKind, ElementItem, ExternalKind, ValType};
+use wasmparser::{Operator, MemoryImmediate, DataKind, ElementKind, ElementItem, ExternalKind, ValType, FuncType};
 
 use crate::{wasm_file::{WasmFile, eval_const_expr_single}, ssa::{SsaBasicBlock, BlockId, SsaTerminator, TypedSsaVar, SsaInstr, SsaVarAlloc, JumpTarget, SsaProgram, SsaFunction, Memory, Table, SsaVarOrConst}, CompileContext};
 
@@ -1238,23 +1242,10 @@ impl ValidationState<'_> {
 	}
 }
 
-pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
-	let func_ty = wasm_file.func_type(func);
-	let func_body = wasm_file.func_body(func);
-
-	let mut builder = SsaFuncBuilder::new(func);
-
-	let mut alloc = SsaVarAlloc::new();
-
-	let locals = wasm_file.func_locals(func);
-
-	let start_block = builder.alloc_block_with_locals(&locals, &mut alloc);
-	let end_block = builder.alloc_block_with_locals(&locals, &mut alloc);
-
-	builder.set_block(start_block);
-
-	builder.current_block_mut().params = Vec::new();
-
+/// Adds the prologue to the given SSA function. See [validate] for usage.
+/// 
+/// The prologue fetches the function parameters and initializes the other locals to zero.
+fn add_prologue(builder: &mut SsaFuncBuilder, func_ty: &FuncType) {
 	let start_locals = builder.current_locals.clone();
 
 	let params = start_locals.iter().copied().zip(func_ty.params.iter().copied());
@@ -1275,6 +1266,27 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 			_ => todo!("{:?}", local),
 		}
 	}
+}
+
+/// Converts a single function (the one with ID `func`) from WebAssembly into an SSA function.
+pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
+	let func_ty = wasm_file.func_type(func);
+	let func_body = wasm_file.func_body(func);
+
+	let mut builder = SsaFuncBuilder::new(func);
+
+	let mut alloc = SsaVarAlloc::new();
+
+	let locals = wasm_file.func_locals(func);
+
+	let start_block = builder.alloc_block_with_locals(&locals, &mut alloc);
+	let end_block = builder.alloc_block_with_locals(&locals, &mut alloc);
+
+	builder.set_block(start_block);
+
+	builder.current_block_mut().params = Vec::new();
+
+	add_prologue(&mut builder, func_ty);
 
 	let mut validator = Validator::default();
 
@@ -1343,6 +1355,7 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 	SsaFunction::new(blocks, func_ty.params.clone(), func_ty.returns.clone())
 }
 
+/// Converts an entire WebAssembly file into an SSA-form program.
 pub fn wasm_to_ssa(ctx: &CompileContext, wasm_file: &WasmFile) -> SsaProgram {
 	let mut code = Vec::new();
 

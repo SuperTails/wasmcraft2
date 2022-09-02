@@ -393,11 +393,12 @@ impl<'a> From<&'a [u8]> for WasmFile<'a> {
             functions.add_function(f.ty);
         }
 
-        let func_reader = func_reader.unwrap();
-        for func in func_reader {
-            let func = func.unwrap();
+        if let Some(func_reader) = func_reader {
+            for func in func_reader {
+                let func = func.unwrap();
 
-            functions.add_function(func);
+                functions.add_function(func);
+            }
         }
 
         println!("{:?}", exports);
