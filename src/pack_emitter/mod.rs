@@ -110,8 +110,7 @@ fn create_memory_init(memory: &[Memory], code: &mut Vec<String>) {
 
 			if data != 0 {
 				let (x, y, z) = get_address_pos(word_idx as i32 * 4);
-				code.push(format!("setblock {x} {y} {z} minecraft:air replace"));
-				code.push(format!("setblock {x} {y} {z} minecraft:jukebox{{RecordItem:{{id:\"minecraft:stone\",Count:1b,tag:{{Memory:{data}}}}}}} replace"))
+				code.push(format!("data modify block {x} {y} {z} RecordItem.tag.Memory set value {data}"))
 			}
 		}
 	}
