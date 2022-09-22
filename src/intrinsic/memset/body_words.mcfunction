@@ -44,19 +44,19 @@
 #   } while (bytes >= 4);
 # }
 
-execute at @e[tag=memoryptr] store result block ~ ~ ~ RecordItem.tag.Memory int 1 run scoreboard players get %mst_value_word reg
+execute at @s store result block ~ ~ ~ RecordItem.tag.Memory int 1 run scoreboard players get %mst_value_word reg
 
 scoreboard players add %mst_z reg 1
 execute if score %mst_z reg = %%PAGE_SPAN_Z reg run scoreboard players add %mst_y reg 1
 execute if score %mst_y reg = %%PAGE_SPAN_Y reg run scoreboard players add %mst_x reg 1
 
-execute if score %mst_y reg = %%PAGE_SPAN_Y reg as @e[tag=memoryptr] store result entity @s Pos[0] double 1 run scoreboard players get %mst_x reg
+execute if score %mst_y reg = %%PAGE_SPAN_Y reg store result entity @s Pos[0] double 1 run scoreboard players get %mst_x reg
 execute if score %mst_y reg = %%PAGE_SPAN_Y reg run scoreboard players set %mst_y reg 0
 
-execute if score %mst_z reg = %%PAGE_SPAN_Z reg as @e[tag=memoryptr] store result entity @s Pos[1] double 1 run scoreboard players get %mst_y reg
+execute if score %mst_z reg = %%PAGE_SPAN_Z reg store result entity @s Pos[1] double 1 run scoreboard players get %mst_y reg
 execute if score %mst_z reg = %%PAGE_SPAN_Z reg run scoreboard players set %mst_z reg 0
 
-execute as @e[tag=memoryptr] store result entity @s Pos[2] double 1 run scoreboard players get %mst_z reg
+execute store result entity @s Pos[2] double 1 run scoreboard players get %mst_z reg
 
 scoreboard players remove %mst_length reg 4
 scoreboard players add %param0%0 reg 4

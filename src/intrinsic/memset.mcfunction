@@ -26,9 +26,9 @@ scoreboard players operation %ptr reg = %param0%0 reg
 function intrinsic:setptr
 
 # Handle special cases for a memset that occurs within a single word
-execute if score %mst_bytes_left reg matches 2 if score %mst_length reg matches 1 run function intrinsic:memset/mid_hi_byte
-execute if score %mst_bytes_left reg matches 3 if score %mst_length reg matches 1 run function intrinsic:memset/mid_lo_byte
-execute if score %mst_bytes_left reg matches 3 if score %mst_length reg matches 2 run function intrinsic:memset/mid_2_byte
+execute as 44453000-0-0-0-1 at @s if score %mst_bytes_left reg matches 2 if score %mst_length reg matches 1 run function intrinsic:memset/mid_hi_byte
+execute as 44453000-0-0-0-1 at @s if score %mst_bytes_left reg matches 3 if score %mst_length reg matches 1 run function intrinsic:memset/mid_lo_byte
+execute as 44453000-0-0-0-1 at @s if score %mst_bytes_left reg matches 3 if score %mst_length reg matches 2 run function intrinsic:memset/mid_2_byte
 
 # Otherwise, do a normal memset
-execute if score %mst_bytes_left reg <= %mst_length reg run function intrinsic:memset/normal
+execute as 44453000-0-0-0-1 if score %mst_bytes_left reg <= %mst_length reg run function intrinsic:memset/normal

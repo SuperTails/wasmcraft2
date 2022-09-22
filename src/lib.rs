@@ -340,17 +340,17 @@ fn run_interp(
 			*v = false;
 		}
 
-		if let Some((func_idx, _)) = interp.call_stack_raw().iter().rev().next() {
-			indiv_time[*func_idx] += 1;
+		if let Some(frame) = interp.call_stack.iter().rev().next() {
+			indiv_time[frame.func] += 1;
 		}
 
-		for &(func_idx, _) in interp.call_stack_raw().iter().rev() {
-			if !intrin_visited[func_idx] {
-				intrin_visited[func_idx] = true;
-				intrin_cum_times[func_idx] += 1;
+		for frame in interp.call_stack.iter().rev() {
+			if !intrin_visited[frame.func] {
+				intrin_visited[frame.func] = true;
+				intrin_cum_times[frame.func] += 1;
 			}
 
-			if !intrin_funcs[func_idx] {
+			if !intrin_funcs[frame.func] {
 				break
 			}
 		}

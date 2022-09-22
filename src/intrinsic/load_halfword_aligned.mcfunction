@@ -4,7 +4,7 @@
 
 function intrinsic:setptr
 
-execute at @e[tag=memoryptr] store result score %param0%0 reg run data get block ~ ~ ~ RecordItem.tag.Memory 1
+execute at 44453000-0-0-0-1 store result score %param0%0 reg run data get block ~ ~ ~ RecordItem.tag.Memory 1
 
 scoreboard players operation %param1%0 reg = %ptr reg
 scoreboard players operation %param1%0 reg %= %%4 reg

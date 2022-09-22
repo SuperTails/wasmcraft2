@@ -1,10 +1,16 @@
 use std::{collections::{HashSet, HashMap}, path::Path, ops::Range};
 
 use command_parser::parse_command;
-use datapack_common::functions::{Function, Command, command_components::FunctionIdent};
+use datapack_common::functions::{Function, Command, command_components::{FunctionIdent, Uuid, SNbt}};
 use wasmparser::ValType;
 
 use crate::{lir::{LirProgram, LirFunction, LirBasicBlock, LirInstr, Register, LirTerminator, Condition, Half, DoubleRegister}, ssa::{BlockId, Memory, interp::TypedValue, const_prop::{StaticValue, BitMask}, lir_emitter::RegisterWithInfo}, jump_mode, JumpMode};
+
+// "44453000-0-0-0-1"
+pub static MEM_PTR_UUID: Uuid = Uuid([0x44453000, 0, 0, 1]);
+
+// "44453000-0-0-0-2"
+pub static TURTLE_UUID: Uuid = Uuid([0x44453000, 0, 0, 2]);
 
 /// This variable keeps track of how many commands have been run so far
 pub static CMDS_RUN_VAR: &str = "%%commands_run reg";
@@ -47,14 +53,17 @@ fn create_stdout_init(code: &mut Vec<String>) {
 
 fn create_pointers_init(code: &mut Vec<String>) {
 	code.push("# Remove old armor stand pointers".to_string());
-	code.push("kill @e[tag=memoryptr]".to_string());
-	code.push("kill @e[tag=turtle]".to_string());
-	code.push("kill @e[tag=nextchain]".to_string());
+	code.push(format!("kill {MEM_PTR_UUID}"));
+	code.push(format!("kill {TURTLE_UUID}"));
+
+	let mem_ptr_uuid = SNbt::from(MEM_PTR_UUID);
+	let turtle_uuid = SNbt::from(TURTLE_UUID);
 
 	code.push("# Add armor stand pointers".to_string());
-	code.push("summon minecraft:armor_stand 0 0 8 {Marker:1b,Tags:[\"memoryptr\"],CustomName:'\"memoryptr\"',CustomNameVisible:1b}".to_string());
-	code.push("summon minecraft:armor_stand 0 0 -2 {Marker:1b,Tags:[\"turtle\"],CustomName:'\"turtle\"',CustomNameVisible:1b}".to_string());
-	code.push("summon minecraft:armor_stand 1 1 -1 {Marker:1b,Tags:[\"nextchain\"],CustomName:'\"nextchain\"',CustomNameVisible:1b}".to_string());
+	code.push(format!("summon minecraft:marker 0 0 8 {{UUID:{turtle_uuid}}}"));
+	code.push(format!("summon minecraft:marker 0 0 -2 {{UUID:{mem_ptr_uuid}}}"));
+
+	code.push("data modify storage wasm:scratch Pos set value [0d, 0d, 0d]".to_string());
 }
 
 fn create_constants_init(constants: &HashSet<i32>, code: &mut Vec<String>) {
@@ -379,13 +388,13 @@ fn mem_store_32(src: Register, addr: RegisterWithInfo, code: &mut Vec<String>, c
 		if let (Some(0), None, None, None) = (o, z, y, x) {
 			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 			code.push("function intrinsic:setptr".to_string());
-			code.push(format!("execute at @e[tag=memoryptr] store result block ~ ~ ~ RecordItem.tag.Memory int 1 run scoreboard players get {src}"));
+			code.push(format!("execute at {MEM_PTR_UUID} store result block ~ ~ ~ RecordItem.tag.Memory int 1 run scoreboard players get {src}"));
 		} else if let (Some(0), None, Some(y), Some(x)) = (o, z, y, x) {
 			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 			code.push("scoreboard players operation %ptr reg /= %%4 reg".to_string());
 			code.push("scoreboard players operation %ptr reg %= %%8 reg".to_string());
-			code.push("execute as @e[tag=memoryptr] store result entity @s Pos[2] double 1 run scoreboard players get %ptr reg".to_string());
-			code.push(format!("execute at @e[tag=memoryptr] store result block {x} {y} ~ RecordItem.tag.Memory int 1 run scoreboard players get {src}"));
+			code.push(format!("execute store result entity {MEM_PTR_UUID} Pos[2] double 1 run scoreboard players get %ptr reg"));
+			code.push(format!("execute at {MEM_PTR_UUID} store result block {x} {y} ~ RecordItem.tag.Memory int 1 run scoreboard players get {src}"));
 		} else {
 			todo!("{:X?} {:X?} {:X?} {:X?} {:X?}", addr.1, o, z, y, x);
 		}
@@ -403,12 +412,12 @@ fn mem_store_32(src: Register, addr: RegisterWithInfo, code: &mut Vec<String>, c
 			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 			code.push("scoreboard players operation %ptr reg /= %%4 reg".to_string());
 			code.push("scoreboard players operation %ptr reg %= %%32 reg".to_string());
-			code.push("execute as @e[tag=memoryptr] store result entity @s Pos[2] double 1 run scoreboard players get %ptr reg".to_string());
-			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block {x} {y} ~ RecordItem.tag.Memory 1"));
+			code.push("execute as {MEM_PTR_UUID} store result entity @s Pos[2] double 1 run scoreboard players get %ptr reg".to_string());
+			code.push(format!("execute at {MEM_PTR_UUID} store result score {dst} run data get block {x} {y} ~ RecordItem.tag.Memory 1"));
 		} else if let (Some(0), None, None, None) = (o, z, y, x) {
 			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 			code.push("function intrinsic:setptr".to_string());
-			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block ~ ~ ~ RecordItem.tag.Memory 1"));
+			code.push(format!("execute at {MEM_PTR_UUID} store result score {dst} run data get block ~ ~ ~ RecordItem.tag.Memory 1"));
 		} else {*/
 	} else {
 		code.push(format!("scoreboard players operation %ptr reg = {addr}"));
@@ -555,14 +564,14 @@ fn mem_store_8 (src: Register, addr: RegisterWithInfo, code: &mut Vec<String>) {
 
 			code.push(format!("scoreboard players operation %param2%0 reg = {src}"));
 			code.push("scoreboard players operation %param2%0 reg %= %%256 reg".to_string());
-			code.push("execute at @e[tag=memoryptr] store result score %param0%0 reg run data get block ~ ~ ~ RecordItem.tag.Memory 1".to_string());
+			code.push(format!("execute at {MEM_PTR_UUID} store result score %param0%0 reg run data get block ~ ~ ~ RecordItem.tag.Memory 1"));
 			code.push("scoreboard players operation %return%0 reg = %param0%0 reg".to_string());
 
 			code.push("scoreboard players operation %param0%0 reg %= %%256 reg".to_string());
 			code.push("scoreboard players operation %return%0 reg -= %param0%0 reg".to_string());
 
 			code.push("scoreboard players operation %return%0 reg += %param2%0 reg".to_string());
-			code.push("execute at @e[tag=memoryptr] store result block ~ ~ ~ RecordItem.tag.Memory int 1 run scoreboard players get %return%0 reg".to_string());
+			code.push(format!("execute at {MEM_PTR_UUID} store result block ~ ~ ~ RecordItem.tag.Memory int 1 run scoreboard players get %return%0 reg"));
 		} else {
 			todo!("{:X?} {:X?} {:X?} {:X?} {:X?}", addr.1, o, z, y, x);
 		}
@@ -746,21 +755,21 @@ fn mem_load_32(dst: Register, addr: RegisterWithInfo, code: &mut Vec<String>, co
 			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 			code.push("scoreboard players operation %ptr reg /= %%4 reg".to_string());
 			code.push("scoreboard players operation %ptr reg %= %%8 reg".to_string());
-			code.push("execute as @e[tag=memoryptr] store result entity @s Pos[2] double 1 run scoreboard players get %ptr reg".to_string());
-			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block {x} {y} ~ RecordItem.tag.Memory 1"));
+			code.push(format!("execute store result entity {MEM_PTR_UUID} Pos[2] double 1 run scoreboard players get %ptr reg"));
+			code.push(format!("execute at {MEM_PTR_UUID} store result score {dst} run data get block {x} {y} ~ RecordItem.tag.Memory 1"));
 		} else if let (Some(0), Some(z), None, None) = (o, z, y, x) {
 			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 			code.push("scoreboard players operation %ptr reg /= %%32 reg".to_string());
 			code.push("scoreboard players operation %%y reg = %ptr reg".to_string());
 			code.push("scoreboard players operation %%y reg %= %%256 reg".to_string());
 			code.push("scoreboard players operation %ptr reg /= %%256 reg".to_string());
-			code.push("execute as @e[tag=memoryptr] store result entity @s Pos[0] double 1 run scoreboard players get %ptr reg".to_string());
-			code.push("execute as @e[tag=memoryptr] store result entity @s Pos[1] double 1 run scoreboard players get %%y reg".to_string());
-			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block ~ ~ {z} RecordItem.tag.Memory 1"));
+			code.push(format!("execute store result entity {MEM_PTR_UUID} Pos[0] double 1 run scoreboard players get %ptr reg"));
+			code.push(format!("execute store result entity {MEM_PTR_UUID} Pos[1] double 1 run scoreboard players get %%y reg"));
+			code.push(format!("execute at {MEM_PTR_UUID} store result score {dst} run data get block ~ ~ {z} RecordItem.tag.Memory 1"));
 		} else if let (Some(0), None, None, None) = (o, z, y, x) {
 			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 			code.push("function intrinsic:setptr".to_string());
-			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block ~ ~ ~ RecordItem.tag.Memory 1"));
+			code.push(format!("execute at {MEM_PTR_UUID} store result score {dst} run data get block ~ ~ ~ RecordItem.tag.Memory 1"));
 		} else {
 			println!("TODO: {:X?} {:X?} {:X?} {:X?} {:X?}", addr.1, o, z, y, x);
 
@@ -838,7 +847,7 @@ fn mem_load_16(dst: Register, addr: RegisterWithInfo, code: &mut Vec<String>) {
 		} else if let (Some(0), None, None, None) = (o, z, y, x) {
 			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 			code.push("function intrinsic:setptr".to_string());
-			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block ~ ~ ~ RecordItem.tag.Memory 1"));
+			code.push(format!("execute at {MEM_PTR_UUID} store result score {dst} run data get block ~ ~ ~ RecordItem.tag.Memory 1"));
 			code.push(format!("scoreboard players operation {dst} %= %%65536 reg"));
 		} else if let (Some(0), None, None, Some(x)) = (o, z, y, x) {
 			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
@@ -847,8 +856,8 @@ fn mem_load_16(dst: Register, addr: RegisterWithInfo, code: &mut Vec<String>) {
 			code.push("scoreboard players operation %%z reg %= %%8 reg".to_string());
 			code.push("scoreboard players operation %ptr reg /= %%8 reg".to_string());
 			code.push("scoreboard players operation %ptr reg %= %%256 reg".to_string());
-			code.push("execute as @e[tag=memoryptr] store result entity @s Pos[2] double 1 run scoreboard players get %%z reg".to_string());
-			code.push("execute as @e[tag=memoryptr] store result entity @s Pos[1] double 1 run scoreboard players get %ptr reg".to_string());
+			code.push(format!("execute store result entity {MEM_PTR_UUID} Pos[2] double 1 run scoreboard players get %%z reg"));
+			code.push(format!("execute store result entity {MEM_PTR_UUID} Pos[1] double 1 run scoreboard players get %ptr reg"));
 			code.push(format!("execute store result score {dst} run data get block {x} ~ ~ RecordItem.tag.Memory 1"));
 			code.push(format!("scoreboard players operation {dst} %= %%65536 reg"));
 		} else {
@@ -890,7 +899,7 @@ fn mem_load_8 (dst: Register, addr: RegisterWithInfo, code: &mut Vec<String>) {
 		if let (Some(0), None, None, None) = (o, z, y, x) {
 			code.push(format!("scoreboard players operation %ptr reg = {addr}"));
 			code.push("function intrinsic:setptr".to_string());
-			code.push(format!("execute at @e[tag=memoryptr] store result score {dst} run data get block ~ ~ ~ RecordItem.tag.Memory 1"));
+			code.push(format!("execute at {MEM_PTR_UUID} store result score {dst} run data get block ~ ~ ~ RecordItem.tag.Memory 1"));
 			code.push(format!("scoreboard players operation {dst} %= %%256 reg"));
 		} else {
 			todo!("{:X?} {:X?} {:X?} {:X?} {:X?}", addr.1, o, z, y, x);
@@ -1349,7 +1358,7 @@ static BLOCKS: [&str; 15] = [
 fn turtle_set_block(reg: Register, code: &mut Vec<String>) {
 	for (idx, block) in BLOCKS.iter().enumerate() {
 		// TODO: Replace or destroy?
-		code.push(format!("execute at @e[tag=turtle] if score {reg} matches {idx} run setblock ~ ~ ~ {block} replace"));
+		code.push(format!("execute at {TURTLE_UUID} if score {reg} matches {idx} run setblock ~ ~ ~ {block} replace"));
 	}
 
 	let reg_name = reg.scoreboard_pair().0;
@@ -1366,11 +1375,11 @@ fn turtle_fill_block(block: Register, x_span: Register, y_span: Register, z_span
 	if let (Some(x_span), Some(y_span), Some(z_span)) = (x_span.get_const(), y_span.get_const(), z_span.get_const()) {
 		if let Some(block) = block.get_const() {
 			let block = BLOCKS[block as usize];
-			code.push(format!("execute at @e[tag=turtle] run fill ~ ~ ~ ~{x_span} ~{y_span} ~{z_span} {block} replace"));
+			code.push(format!("execute at {TURTLE_UUID} run fill ~ ~ ~ ~{x_span} ~{y_span} ~{z_span} {block} replace"));
 		} else {
 			for (idx, block_name) in BLOCKS.iter().enumerate() {
 				// TODO: Replace or destroy?
-				code.push(format!("execute at @e[tag=turtle] if score {block} matches {idx} run fill ~ ~ ~ ~{x_span} ~{y_span} ~{z_span} {block_name} replace"));
+				code.push(format!("execute at {TURTLE_UUID} if score {block} matches {idx} run fill ~ ~ ~ ~{x_span} ~{y_span} ~{z_span} {block_name} replace"));
 			}
 		}
 	} else {
@@ -1380,7 +1389,7 @@ fn turtle_fill_block(block: Register, x_span: Register, y_span: Register, z_span
 	/*
 	for (idx, block) in BLOCKS.iter().enumerate() {
 		// TODO: Replace or destroy?
-		code.push(format!("execute at @e[tag=turtle] if score {reg} matches {idx} run setblock ~ ~ ~ {block} replace"));
+		code.push(format!("execute at {TURTLE_UUID} if score {reg} matches {idx} run setblock ~ ~ ~ {block} replace"));
 	}
 
 	let reg_name = reg.scoreboard_pair().0;
@@ -1399,7 +1408,7 @@ fn turtle_paste_region_masked(x_span: Register, y_span: Register, z_span: Regist
 		let x_end = x_span;
 		let y_end = y_span;
 		let z_end = -1 + z_span;
-		code.push(format!("execute at @e[tag=turtle] run clone 0 0 -1 {x_end} {y_end} {z_end} ~ ~ ~ masked"));
+		code.push(format!("execute at {TURTLE_UUID} run clone 0 0 -1 {x_end} {y_end} {z_end} ~ ~ ~ masked"));
 	} else {
 		todo!()
 	}
@@ -1407,7 +1416,7 @@ fn turtle_paste_region_masked(x_span: Register, y_span: Register, z_span: Regist
 
 fn turtle_copy_region(x_span: Register, y_span: Register, z_span: Register, code: &mut Vec<String>) {
 	if let (Some(x_span), Some(y_span), Some(z_span)) = (x_span.get_const(), y_span.get_const(), z_span.get_const()) {
-		code.push(format!("execute at @e[tag=turtle] run clone ~ ~ ~ ~{x_span} ~{y_span} ~{z_span} 0 0 -1"));
+		code.push(format!("execute at {TURTLE_UUID} run clone ~ ~ ~ ~{x_span} ~{y_span} ~{z_span} 0 0 -1"));
 	} else {
 		todo!()
 	}
@@ -1415,7 +1424,7 @@ fn turtle_copy_region(x_span: Register, y_span: Register, z_span: Register, code
 	/*
 	for (idx, block) in BLOCKS.iter().enumerate() {
 		// TODO: Replace or destroy?
-		code.push(format!("execute at @e[tag=turtle] if score {reg} matches {idx} run setblock ~ ~ ~ {block} replace"));
+		code.push(format!("execute at {TURTLE_UUID} if score {reg} matches {idx} run setblock ~ ~ ~ {block} replace"));
 	}
 
 	let reg_name = reg.scoreboard_pair().0;
@@ -1434,7 +1443,7 @@ fn turtle_copy_region(x_span: Register, y_span: Register, z_span: Register, code
 fn turtle_get_block(reg: Register, code: &mut Vec<String>) {
 	code.push(format!("scoreboard players set {reg} 0"));
 	for (idx, block) in BLOCKS.iter().enumerate() {
-		code.push(format!("execute at @e[tag=turtle] run execute if block ~ ~ ~ {block} run scoreboard players set {reg} {idx}"));
+		code.push(format!("execute at {TURTLE_UUID} run execute if block ~ ~ ~ {block} run scoreboard players set {reg} {idx}"));
 	}
 }
 
@@ -2287,13 +2296,13 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 		}
 
 		LirInstr::TurtleSetX(x) => {
-			code.push(format!("execute as @e[tag=turtle] store result entity @s Pos[0] double 1 run scoreboard players get {x}"));
+			code.push(format!("execute store result entity {TURTLE_UUID} Pos[0] double 1 run scoreboard players get {x}"));
 		}
 		LirInstr::TurtleSetY(y) => {
-			code.push(format!("execute as @e[tag=turtle] store result entity @s Pos[1] double 1 run scoreboard players get {y}"));
+			code.push(format!("execute store result entity {TURTLE_UUID} Pos[1] double 1 run scoreboard players get {y}"));
 		}
 		LirInstr::TurtleSetZ(z) => {
-			code.push(format!("execute as @e[tag=turtle] store result entity @s Pos[2] double 1 run scoreboard players get {z}"));
+			code.push(format!("execute store result entity {TURTLE_UUID} Pos[2] double 1 run scoreboard players get {z}"));
 		}
 		&LirInstr::TurtleSetBlock(r) => turtle_set_block(r, code),
 		&LirInstr::TurtleFillBlock { block, x_span, y_span, z_span } => turtle_fill_block(block, x_span, y_span, z_span, code),
@@ -2301,10 +2310,10 @@ fn emit_instr(instr: &LirInstr, parent: &LirProgram, code: &mut Vec<String>, con
 		&LirInstr::TurtleCopyRegion { x_span, y_span, z_span } => turtle_copy_region(x_span, y_span, z_span, code),
 		&LirInstr::TurtlePasteRegionMasked { x_span, y_span, z_span } => turtle_paste_region_masked(x_span, y_span, z_span, code),
 		LirInstr::TurtleCopy => {
-			code.push("execute at @e[tag=turtle] run clone ~ ~ ~ ~ ~ ~ -1 -1 -1".to_string());
+			code.push(format!("execute at {TURTLE_UUID} run clone ~ ~ ~ ~ ~ ~ -1 -1 -1"));
 		}
 		LirInstr::TurtlePaste => {
-			code.push("execute at @e[tag=turtle] run clone -1 -1 -1 -1 -1 -1 ~ ~ ~".to_string());
+			code.push(format!("execute at {TURTLE_UUID} run clone -1 -1 -1 -1 -1 -1 ~ ~ ~"));
 		}
 		LirInstr::PrintInt(i) => {
 			let mut s = String::new();
@@ -2954,6 +2963,13 @@ mod test {
 			interp.execute_cmd(&cmd).unwrap();
 		}
 
+		let uuid_nbt = SNbt::from(MEM_PTR_UUID);
+		let cmd = format!("summon minecraft:marker 0 0 0 {{UUID:{uuid_nbt}}}").parse::<Command>().unwrap();
+		interp.execute_cmd(&cmd).unwrap();
+
+		let cmd = "data modify storage wasm:scratch Pos set value [0d, 0d, 0d]".parse::<Command>().unwrap();
+		interp.execute_cmd(&cmd).unwrap();
+
 		let (addr_holder, addr_obj) = addr.scoreboard_pair();	
 		interp.set_named_score(&addr_holder, &addr_obj, offset);
 
@@ -3149,7 +3165,11 @@ mod test {
 	}
 
 	fn memset_tester(addr: i32, value: u8, num_bytes: i32) {
+		let uuid_nbt = SNbt::from(MEM_PTR_UUID);
+
 		let code = vec![
+			format!("summon minecraft:marker 0 0 0 {{UUID:{uuid_nbt}}}"),
+			"data modify storage wasm:scratch Pos set value [0d, 0d, 0d]".to_string(),
 			format!("scoreboard players set %param0%0 reg {addr}"),
 			format!("scoreboard players set %param1%0 reg {value}"),
 			format!("scoreboard players set %param2%0 reg {num_bytes}"),
