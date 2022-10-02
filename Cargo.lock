@@ -428,10 +428,11 @@ dependencies = [
 [[package]]
 name = "datapack_common"
 version = "0.1.0"
-source = "git+https://github.com/SuperTails/datapack_common.git#98fd13bb81281f78a44002cac081928f1c8fe052"
+source = "git+https://github.com/SuperTails/datapack_common.git#d810c7a85aec415de80ca04a624b99137452a73f"
 dependencies = [
  "command_parser",
  "itertools",
+ "ordered-float",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -441,7 +442,7 @@ dependencies = [
 [[package]]
 name = "datapack_vm"
 version = "0.1.0"
-source = "git+https://github.com/SuperTails/datapackvm.git?branch=interning#acce1601f5dc167ed9225f7e1a621915e2d10b95"
+source = "git+https://github.com/SuperTails/datapackvm.git?branch=interning#57a9d9d0677156690478dfadcd37900b99516ed1"
 dependencies = [
  "command_parser",
  "datapack_common",
@@ -876,6 +877,15 @@ name = "once_cell"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "074864da206b4973b84eb91683020dbefd6a8c3f0f38e054d93954e891935e4e"
+
+[[package]]
+name = "ordered-float"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98ffdb14730ed2ef599c65810c15b000896e21e8776b512de0db0c3d7335cc2a"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "os_str_bytes"
