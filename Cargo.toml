@@ -26,6 +26,7 @@ datapack_common = { git = "https://github.com/SuperTails/datapack_common.git" }
 command_parser = { git = "https://github.com/Inky-developer/command-parser" }
 hashers = "*"
 clap = { version = "3.2.11", features = ["derive"] }
+bit-set = "0.5.3"
 
 [dev-dependencies]
 rcon = { version = "0", features = ["rt-async-std"] }

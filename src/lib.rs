@@ -15,6 +15,8 @@ pub mod ssa;
 pub mod lir;
 pub mod pack_emitter;
 pub mod block_id_map;
+pub mod set;
+mod graph;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CodegenStage {

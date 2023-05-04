@@ -1,8 +1,12 @@
 use std::collections::HashSet;
 
-use super::{SsaProgram, liveness::{LivenessInfo, FullLivenessInfo}, BlockId, SsaBasicBlock, SsaTerminator};
+use super::{SsaProgram, liveness::{FullLivenessInfo}, BlockId, SsaBasicBlock, SsaTerminator};
 
-pub fn do_dead_code_elim(program: &mut SsaProgram) {
+pub fn do_dead_code_elim(_program: &mut SsaProgram) {
+	println!("TODO: Dead code elimination")
+}
+
+/*pub fn do_dead_code_elim(program: &mut SsaProgram) {
 	for func in program.code.iter_mut() {
 		let mut reachable_blocks = HashSet::new();
 
@@ -160,3 +164,4 @@ fn apply_changes(block: &mut SsaBasicBlock, mut changes: &[usize]) {
 
 	assert!(changes.is_empty());
 }
+*/

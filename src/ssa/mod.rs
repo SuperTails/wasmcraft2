@@ -5,8 +5,9 @@ pub mod call_graph;
 pub mod const_prop;
 pub mod dce;
 pub mod reg_alloc;
+pub mod opt;
 
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, fmt};
 
 use wasmparser::{MemoryImmediate, ValType};
 
@@ -69,6 +70,16 @@ impl SsaVar {
 	pub fn into_typed(self, ty: ValType) -> TypedSsaVar {
 		TypedSsaVar(self.0, ty)
 	}
+}
+
+impl crate::set::Enumerable for SsaVar {
+    fn to_usize(self) -> usize {
+        self.0 as usize
+    }
+
+    fn from_usize(index: usize) -> Self {
+        SsaVar(u32::try_from(index).unwrap())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,6 +148,12 @@ impl TypedSsaVar {
 	}
 }
 
+impl fmt::Display for TypedSsaVar {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "V{}:{:?}", self.0, self.1)
+    }
+}
+
 fn get_ty_index(ty: ValType) -> u32 {
 	match ty {
 		ValType::I32 => 0,
@@ -160,6 +177,123 @@ impl Ord for TypedSsaVar {
 		self.partial_cmp(other).unwrap()
 	}
 }
+
+#[derive(Default, Clone)]
+pub struct TypedSsaVarSet(HashMap<SsaVar, ValType>);
+
+impl TypedSsaVarSet {
+	pub fn new() -> Self {
+		Self::default()
+	}
+
+	/// Returns whether the value was newly inserted.
+	pub fn insert(&mut self, var: TypedSsaVar) -> Result<bool, ValType> {
+		let old_type = self.0.insert(var.into_untyped(), var.ty());
+		if let Some(old_type) = old_type {
+			if old_type == var.ty() {
+				Ok(false)
+			} else {
+				Err(old_type)
+			}
+		} else {
+			Ok(true)
+		}
+	}
+
+	pub fn extend_typed<I>(&mut self, iter: I) -> Result<(), ()>
+	where
+		I: IntoIterator<Item = TypedSsaVar>
+	{
+		for elem in iter {
+			self.insert(elem).map_err(|_| ())?;
+		}
+		Ok(())
+	}
+
+	pub fn remove_typed(&mut self, var: TypedSsaVar) -> Result<bool, ValType> {
+		if let Some(old_type) = self.0.remove(&var.into_untyped()) {
+			if var.ty() == old_type {
+				Ok(true)
+			} else {
+				Err(old_type)
+			}
+		} else {
+			Ok(false)
+		}
+	}
+
+	pub fn remove_untyped(&mut self, var: SsaVar) -> Option<ValType> {
+		self.0.remove(&var)
+	}
+
+    /// Equivalent to calling `remove_typed` on all elements in the iterator.
+    pub fn remove_typed_from<I>(&mut self, iter: I) -> Result<(), ()>
+    where
+        I: IntoIterator<Item = TypedSsaVar>,
+    {
+        for elem in iter {
+            self.remove_typed(elem).map_err(|_| ())?;
+        }
+
+		Ok(())
+    }
+
+	pub fn iter<'a>(&'a self) -> impl Iterator<Item = TypedSsaVar> + 'a {
+		self.0.iter().map(|(k, v)| k.into_typed(*v))
+	}
+
+	pub fn contains(&self, var: TypedSsaVar) -> bool {
+		if let Some(ty) = self.0.get(&var.into_untyped()) {
+			assert_eq!(*ty, var.ty());
+			true
+		} else {
+			false
+		}
+	}
+
+	pub fn contains_untyped(&self, var: SsaVar) -> bool {
+		self.0.get(&var).is_some()
+	}
+}
+
+impl fmt::Debug for TypedSsaVarSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let i = self.0.iter().map(|(v, t)| v.into_typed(*t));
+		f.debug_set().entries(i).finish()
+    }
+}
+
+impl PartialEq for TypedSsaVarSet {
+    fn eq(&self, other: &Self) -> bool {
+		if self.0.len() != other.0.len() {
+			return false;
+		}
+
+		for (v1, t1) in self.0.iter() {
+			let Some(t2) = other.0.get(v1) else {
+				return false;
+			};
+
+			if t1 != t2 {
+				return false;
+			}
+		}
+
+		for (v1, t1) in other.0.iter() {
+			let Some(t2) = self.0.get(v1) else {
+				return false;
+			};
+
+			if t1 != t2 {
+				return false;
+			}
+		}
+
+		true
+    }
+}
+
+impl Eq for TypedSsaVarSet {}
 
 #[derive(Debug, Clone)]
 pub enum SsaInstr {
@@ -669,6 +803,18 @@ impl SsaInstr {
 	}
 }
 
+impl fmt::Display for SsaInstr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			SsaInstr::I32Set(dst, val) => write!(f, "{dst} <- {val}_i32"),
+			SsaInstr::I64Set(dst, val) => write!(f, "{dst} <- {val}_i32"),
+			SsaInstr::Assign(dst, src) => write!(f, "{dst} <- {src:?}"),
+			SsaInstr::ParamGet(dst, idx) => write!(f, "{dst} <- parameter {idx}"),
+			_ => todo!(),
+		}
+    }
+}
+
 fn is_simple_and_mask(i: i32) -> bool {
 	i == 0 || i.leading_zeros() + i.trailing_ones() == 32
 }
@@ -677,6 +823,19 @@ fn is_simple_and_mask(i: i32) -> bool {
 pub struct JumpTarget {
 	pub label: BlockId,
 	pub params: Vec<TypedSsaVar>,
+}
+
+impl fmt::Display for JumpTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		write!(f, "<{}.{}>(", self.label.func, self.label.block)?;
+		for (idx, p) in self.params.iter().enumerate() {
+			write!(f, "{p}")?;
+			if idx + 1 != self.params.len() {
+				write!(f, ", ")?;
+			}
+		}
+		write!(f, ")")
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -730,6 +889,24 @@ impl SsaTerminator {
 				result
 			}
 		}
+	}
+
+	pub fn no_param_uses(&self) -> Vec<TypedSsaVar> {
+		match self {
+			SsaTerminator::Unreachable => vec![],
+			SsaTerminator::ScheduleJump(..) => Vec::new(),
+			SsaTerminator::Jump(_) => Vec::new(),
+			SsaTerminator::BranchIf { cond, .. } => {
+				let mut result = vec![*cond];
+				result
+			}
+			SsaTerminator::BranchTable { cond, .. } => {
+				let mut result = vec![*cond];
+				result
+			}
+			SsaTerminator::Return(vars) => vars.clone(),
+		}
+
 	}
 
 	pub fn uses(&self) -> Vec<TypedSsaVar> {
@@ -787,6 +964,47 @@ impl SsaTerminator {
 			SsaTerminator::Return(_) => Vec::new(),
 		}
 	}
+
+	pub fn targets(&self) -> Vec<JumpTarget> {
+		match self {
+			SsaTerminator::Unreachable | SsaTerminator::Return(_) => Vec::new(),
+			SsaTerminator::ScheduleJump(target, _) |
+			SsaTerminator::Jump(target) => vec![target.clone()],
+			SsaTerminator::BranchIf { cond: _, true_target, false_target } => {
+				vec![true_target.clone(), false_target.clone()]
+			}
+			SsaTerminator::BranchTable { cond: _, default, arms } => {
+				let mut result = vec![default.clone()];
+				result.extend(arms.iter().cloned());
+				result
+			}
+		}
+	}
+
+}
+
+impl fmt::Display for SsaTerminator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			SsaTerminator::Unreachable => write!(f, "unreachable"),
+			SsaTerminator::ScheduleJump(target, delay) => write!(f, "delay {delay} jump {target}"),
+			SsaTerminator::Jump(target) => write!(f, "jump {target}"),
+			SsaTerminator::BranchIf { cond, true_target, false_target } => {
+				write!(f, "if {cond} then {true_target} else {false_target}")
+			}
+			SsaTerminator::BranchTable { .. } => todo!(),
+			SsaTerminator::Return(args) => {
+				write!(f, "return (")?;
+				for (idx, a) in args.iter().enumerate() {
+					write!(f, "{a}")?;
+					if idx + 1 != args.len() {
+						write!(f, ", ")?;
+					}
+				}
+				write!(f, ")")
+			}
+		}
+    }
 }
 
 pub struct SsaFunction {

@@ -4,7 +4,7 @@ use wasmparser::{MemoryImmediate, ValType};
 
 use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half, LirJumpTarget}, ssa::{TypedSsaVar, SsaVarOrConst, liveness::{FullLivenessInfo, DomTree}, const_prop::{StaticState, self}}, jump_mode, JumpMode, CompileContext, block_id_map::LocalBlockMap};
 
-use super::{SsaProgram, SsaFunction, SsaBasicBlock, BlockId, reg_alloc::*, liveness::{LivenessInfo, SimpleLivenessInfo}, call_graph::CallGraph, Table, const_prop::StaticValue, interp::TypedValue};
+use super::{SsaProgram, SsaFunction, SsaBasicBlock, BlockId, reg_alloc::*, call_graph::CallGraph, Table, const_prop::StaticValue, interp::TypedValue};
 
 
 struct LirFuncBuilder {
@@ -103,20 +103,18 @@ impl fmt::Display for RegisterWithInfo {
     }
 }
 
-fn lower_block<L>(
+fn lower_block(
 	parent: &SsaProgram,
 	parent_func: &SsaFunction,
 	mut block_id: BlockId,
 	ssa_block: &SsaBasicBlock,
 	ra: &mut dyn RegAlloc,
-	li: &L,
+	li: &FullLivenessInfo,
 	call_graph: &CallGraph,
 	builder: &mut LirFuncBuilder,
 	static_values: &HashMap<TypedSsaVar, StaticValue>,
 	dom_tree: &DomTree,
-)
-	where L: LivenessInfo
-{
+) {
 	let ssa_block_id = block_id;
 
 	let mut b = ssa_block.clone();
@@ -812,11 +810,11 @@ fn lower_block<L>(
 			super::SsaInstr::Call { function_index, params, returns } => {
 				emit_copy_to_params(&mut block, params, ra);
 
-				let mut to_save = li.live_out_body(block_id, instr_idx);
-				for return_var in returns.iter() {
-					to_save.remove(return_var);
+				let mut to_save = li.live_out_body(block_id, instr_idx).clone();
+				for &return_var in returns.iter() {
+					to_save.remove_typed(return_var).unwrap();
 				}
-				let to_save = to_save.into_iter().collect::<Vec<_>>();
+				let to_save = to_save.iter().collect::<Vec<_>>();
 
 				let needs_save = call_graph.may_call(*function_index, block_id.func as u32);
 
@@ -851,11 +849,11 @@ fn lower_block<L>(
 			super::SsaInstr::CallIndirect { table_index, table_entry, params, returns } => {
 				emit_copy_to_params(&mut block, params, ra);
 
-				let mut to_save = li.live_out_body(block_id, instr_idx);
-				for return_var in returns.iter() {
-					to_save.remove(return_var);
+				let mut to_save = li.live_out_body(block_id, instr_idx).clone();
+				for &return_var in returns.iter() {
+					to_save.remove_typed(return_var).unwrap();
 				}
-				let to_save = to_save.into_iter().collect::<Vec<_>>();
+				let to_save = to_save.iter().collect::<Vec<_>>();
 
 				let table = &parent.tables[*table_index as usize];
 				let compat_funcs = get_compatible_functions(parent, table, params, returns);
@@ -1337,14 +1335,14 @@ fn gen_prologue(ssa_func: &SsaFunction, ssa_program: &SsaProgram, ra: &mut dyn R
 }
 
 fn lower(ctx: &CompileContext, ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &CallGraph, constant_pool: &mut HashSet<i32>) -> LirFunction {
+	let liveness_info = FullLivenessInfo::analyze(ssa_func);
+
 	let mut reg_alloc: Box<dyn RegAlloc> = match ctx.regalloc {
 		crate::RegAllocMode::Noop => Box::new(NoopRegAlloc::analyze(ssa_func)),
-		crate::RegAllocMode::Full => Box::new(FullRegAlloc::analyze(ssa_func)),
+		crate::RegAllocMode::Full => Box::new(FullRegAlloc::analyze(ssa_func, &liveness_info)),
 	};
 
 	let mut builder = LirFuncBuilder::new(ssa_func);
-
-	let liveness_info = FullLivenessInfo::analyze(ssa_func);
 
 	let func_static_values = if ctx.do_const_prop {
 		const_prop::get_func_constants(ssa_func)

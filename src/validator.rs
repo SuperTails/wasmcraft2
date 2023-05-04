@@ -1352,7 +1352,11 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 		}
 	}*/
 
-	SsaFunction::new(blocks, func_ty.params.clone(), func_ty.returns.clone())
+	let mut func = SsaFunction::new(blocks, func_ty.params.clone(), func_ty.returns.clone());
+
+	crate::ssa::opt::dead_block_removal::dead_block_removal(&mut func);
+
+	func
 }
 
 /// Converts an entire WebAssembly file into an SSA-form program.

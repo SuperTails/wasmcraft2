@@ -2,7 +2,7 @@ use std::{collections::HashMap, hash::Hash};
 
 use wasmparser::ValType;
 
-use crate::{ssa::liveness::{NoopLivenessInfo, LivenessInfo}, block_id_map::LocalBlockMap};
+use crate::{ssa::liveness::NoopLivenessInfo, block_id_map::LocalBlockMap};
 
 use super::{SsaProgram, SsaBasicBlock, TypedSsaVar, interp::TypedValue, SsaInstr, SsaVarOrConst, BlockId, SsaFunction, liveness::{DomTree, PredInfo}};
 
