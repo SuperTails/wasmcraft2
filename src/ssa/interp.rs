@@ -235,7 +235,8 @@ impl SsaInterpreter {
 				super::SsaTerminator::Unreachable => unreachable!(),
 				super::SsaTerminator::Jump(jump) |
 				super::SsaTerminator::ScheduleJump(jump, _) => {
-					let target_block = self.program.get(&jump.label).unwrap();
+					todo!("schedule jump");
+					/*let target_block = self.program.get(&jump.label).unwrap();
 					assert_eq!(target_block.params.len(), jump.params.len());
 					for (&dst, &src) in target_block.params.iter().zip(jump.params.iter()) {
 						assert_eq!(dst.ty(), src.ty());
@@ -246,10 +247,11 @@ impl SsaInterpreter {
 
 					frame.pc = Pc { block: jump.label, instr: 0 };
 
-					None
+					None*/
 				}
 				super::SsaTerminator::BranchIf { cond, true_target, false_target } => {
-					let cond = frame.var_context.get_typed(*cond).unwrap();
+					todo!("schedule branch if");
+					/*let cond = frame.var_context.get_typed(*cond).unwrap();
 					let cond = cond.into_i32().unwrap();
 
 					let target = if cond != 0 { true_target } else { false_target };
@@ -267,10 +269,11 @@ impl SsaInterpreter {
 
 					frame.pc = Pc { block: target.label, instr: 0 };
 
-					None
+					None*/
 				}
 				super::SsaTerminator::BranchTable { cond, default, arms } => {
-					let cond = frame.var_context.get_typed(*cond).unwrap();
+					todo!("branch table");
+					/*let cond = frame.var_context.get_typed(*cond).unwrap();
 					let cond = cond.into_i32().unwrap() as usize;
 
 					let target = if arms.len() <= cond {
@@ -290,7 +293,7 @@ impl SsaInterpreter {
 
 					frame.pc = Pc { block: target.label, instr: 0 };
 
-					None
+					None*/
 				}
 				super::SsaTerminator::Return(values) => {
 					let return_vals = values.iter().map(|v| frame.var_context.get_typed(*v).unwrap()).collect::<Vec<_>>();

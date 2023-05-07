@@ -1,10 +1,10 @@
-use std::{collections::{HashSet, HashMap}, fmt};
+use std::{collections::{HashSet, HashMap, VecDeque, BTreeSet}, fmt};
 
 use wasmparser::{MemoryImmediate, ValType};
 
-use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half, LirJumpTarget}, ssa::{TypedSsaVar, SsaVarOrConst, liveness::{FullLivenessInfo, DomTree}, const_prop::{StaticState, self}}, jump_mode, JumpMode, CompileContext, block_id_map::LocalBlockMap};
+use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half, LirJumpTarget, DynRegister}, ssa::{TypedSsaVar, SsaVarOrConst, liveness::{FullLivenessInfo, DomTree, PredInfo}, const_prop::{StaticState, self}, SsaTerminator, no_critical_edges, phi_nodes_are_coherent}, jump_mode, JumpMode, CompileContext, block_id_map::LocalBlockMap};
 
-use super::{SsaProgram, SsaFunction, SsaBasicBlock, BlockId, reg_alloc::*, call_graph::CallGraph, Table, const_prop::StaticValue, interp::TypedValue};
+use super::{SsaProgram, SsaFunction, SsaBasicBlock, BlockId, reg_alloc::*, call_graph::CallGraph, Table, const_prop::StaticValue, interp::TypedValue, PhiNode};
 
 
 struct LirFuncBuilder {
@@ -1005,27 +1005,39 @@ fn lower_block(
 		}
 	}
 
+	// FIXME: Can this overwrite the terminator condition?
+
+	// Resolve all phi nodes before emitting the block terminator.
+	// This funny business with the set is required because a block may have multiple edges
+	// that all go to a single successor, in which case we should still consider the block to have
+	// a single successor.
+	let successors = ssa_block.term.successors().into_iter().collect::<BTreeSet<_>>();
+	let successors = successors.into_iter().collect::<Vec<_>>();
+	if let [succ] = successors[..] {
+		let phi_node = &parent_func.get(succ).phi_node;
+
+		if !phi_node.is_empty() {
+			let instrs = convert_phi_to_lir(phi_node, block_id, ra);
+
+			block.extend(instrs);
+		}
+	}
+
 	match &ssa_block.term {
-		crate::ssa::SsaTerminator::Unreachable => {
+		SsaTerminator::Unreachable => {
 			// TODO: PRINT A WARNING
 
 			builder.push(block_id, block, LirTerminator::Return);
 		},
-		crate::ssa::SsaTerminator::ScheduleJump(target, delay) => {
-			assert!(target.params.is_empty());
-			assert!(parent_func.get(target.label).params.is_empty());
-			
+		SsaTerminator::ScheduleJump(target, delay) => {
 			builder.push(block_id, block, LirTerminator::ScheduleJump(target.label, *delay));
 		}
-		crate::ssa::SsaTerminator::Jump(target) => {
-			let out_params = &parent_func.get(target.label).params;
-			emit_copy(&mut block, &target.params, out_params, ra, &[]);
-
+		SsaTerminator::Jump(target) => {
 			let is_back_edge = dom_tree.dominates(target.label, ssa_block_id);
 
 			builder.push(block_id, block, LirTerminator::Jump(LirJumpTarget { label: target.label, cmd_check: is_back_edge }));
 		}
-		crate::ssa::SsaTerminator::BranchIf { cond, true_target, false_target } => {
+		SsaTerminator::BranchIf { cond, true_target, false_target } => {
 			if jump_mode() != JumpMode::Direct {
 				todo!()
 			}
@@ -1036,21 +1048,9 @@ fn lower_block(
 			let cond = ra.get_temp();
 			block.push(LirInstr::Assign(cond, cond2));
 
-			let true_out_params = &parent_func.get(true_target.label).params;
-			let false_out_params = &parent_func.get(false_target.label).params;
-
-			let true_conds = &[Condition::eq_zero(Register::cond_taken()), Condition::neq_zero(cond)];
-			let false_conds = &[Condition::eq_zero(Register::cond_taken()), Condition::eq_zero(cond)];
-
-			for param in true_out_params.iter().chain(false_out_params.iter()) {
-				assert_ne!(cond, ra.get(param.into_untyped()));
-			}
-
 			// FIXME: Make sure cond is not overwritten!
 
 			block.push(LirInstr::Set(Register::cond_taken(), 0));
-			emit_copy(&mut block, &true_target.params, true_out_params, ra, true_conds);
-			emit_copy(&mut block, &false_target.params, false_out_params, ra, false_conds);
 
 			let true_is_back_edge = dom_tree.dominates(true_target.label, ssa_block_id);
 			let true_label = LirJumpTarget { label: true_target.label, cmd_check: true_is_back_edge };
@@ -1058,57 +1058,28 @@ fn lower_block(
 			let false_label = LirJumpTarget { label: false_target.label, cmd_check: false_is_back_edge };
 			builder.push(block_id, block, LirTerminator::JumpIf { true_label, false_label, cond });
 		}
-		crate::ssa::SsaTerminator::BranchTable { cond, default, arms } => {
+		SsaTerminator::BranchTable { cond, default, arms } => {
 			if jump_mode() != JumpMode::Direct {
 				todo!()
 			}
 
 			if arms.is_empty() {
-				let out_params = &parent_func.get(default.label).params;
-				emit_copy(&mut block, &default.params, out_params, ra, &[]);
-
 				builder.push(block_id, block, LirTerminator::Jump(LirJumpTarget{ label: default.label, cmd_check: false }));
 			} else {
 				assert_eq!(cond.ty(), ValType::I32);
 				let mut cond = ra.get(cond.into_untyped());
-
-				let default_out_params = &parent_func.get(default.label).params;
-				let other_out_params = arms.iter().flat_map(|arm| &parent_func.get(arm.label).params);
-
-				let mut needs_new_cond = false;
-				for out_param in other_out_params.chain(default_out_params.iter()) {
-					if cond == ra.get(out_param.into_untyped()) {
-						needs_new_cond = true;
-						break;
-					}
-				}
-
-				if needs_new_cond {
-					let new_cond = ra.get_temp();
-					block.push(LirInstr::Assign(new_cond, cond));
-					cond = new_cond;
-				}
 
 				block.push(LirInstr::Set(Register::cond_taken(), 0));
 
 				assert!(!arms.is_empty());
 				let range = 0..=(arms.len() as i32 - 1);
 
-				let default_conds = &[Condition::eq_zero(Register::cond_taken()), Condition::NotMatches(cond, range)];
-				emit_copy(&mut block, &default.params, default_out_params, ra, default_conds);
-
-				for (i, arm) in arms.iter().enumerate() {
-					let out_params = &parent_func.get(arm.label).params;
-					let conds = &[Condition::eq_zero(Register::cond_taken()), Condition::eq_const(cond, i as i32)];
-					emit_copy(&mut block, &arm.params, out_params, ra, conds);
-				}
-
 				let arm_labels = arms.iter().map(|arm| Some(arm.label)).collect();
 
 				builder.push(block_id, block, LirTerminator::JumpTable { default: Some(default.label), arms: arm_labels, cond });
 			}
 		}
-		crate::ssa::SsaTerminator::Return(return_vars) => {
+		SsaTerminator::Return(return_vars) => {
 			for (idx, var) in return_vars.iter().enumerate() {
 				match var.ty() {
 					ValType::I32 => {
@@ -1335,6 +1306,10 @@ fn gen_prologue(ssa_func: &SsaFunction, ssa_program: &SsaProgram, ra: &mut dyn R
 }
 
 fn lower(ctx: &CompileContext, ssa_func: &SsaFunction, ssa_program: &SsaProgram, call_graph: &CallGraph, constant_pool: &mut HashSet<i32>) -> LirFunction {
+	let pred_info = PredInfo::new(ssa_func);
+	phi_nodes_are_coherent(ssa_func, &pred_info).unwrap();
+	no_critical_edges(ssa_func, &pred_info).unwrap();
+
 	let liveness_info = FullLivenessInfo::analyze(ssa_func);
 
 	let mut reg_alloc: Box<dyn RegAlloc> = match ctx.regalloc {
@@ -1399,4 +1374,175 @@ pub fn convert(ctx: &CompileContext, ssa_program: SsaProgram) -> LirProgram {
 	}
 
 	LirProgram { code, memory: ssa_program.memory, tables: ssa_program.tables, globals: ssa_program.globals, constants, exports: ssa_program.exports }
+}
+
+fn convert_phi_to_lir(
+    phi_node: &PhiNode,
+    source: BlockId,
+	ra: &mut dyn RegAlloc,
+) -> Vec<LirInstr> {
+	use std::iter::zip;
+
+    // We can interpret the parallel assignment as a graph.
+    // Each vertex is a color,
+    // and an edge between two vertices represents one pairwise copy.
+    //
+    // Because of how register coloring works,
+    // each connected component of this graph either is a cycle or a tree.
+
+	let emit_move = |result: &mut Vec<_>, dst: DynRegister, src: DynRegister| {
+		match (dst, src) {
+			(DynRegister::Double(dst), DynRegister::Double(src)) => {
+				result.push(LirInstr::Assign(dst.hi(), src.hi()));
+				result.push(LirInstr::Assign(dst.lo(), src.lo()));
+			}
+			(DynRegister::Single(dst), DynRegister::Single(src)) => {
+				result.push(LirInstr::Assign(dst, src));
+
+			}
+			_ => panic!(),
+		}
+	};
+
+    //println!("SOURCE BLOCK IS {source}");
+
+	println!("{:?}", phi_node);
+	println!("{:?}", source);
+
+	let dests = phi_node.dests.iter().map(|reg| ra.get_typed(*reg));
+	let sources = phi_node.vars_from(source.block).unwrap().iter().map(|reg| ra.get_typed(*reg));
+
+	let pairs = zip(dests, sources).collect::<Vec<_>>();
+
+    println!("PAIRS:");
+    for p in &pairs {
+        println!("{:?} <- {:?}", p.0, p.1);
+    }
+
+    let mut edges = HashMap::<_, HashSet<_>>::new();
+    for (d, s) in pairs.iter() {
+        edges.entry(*d).or_default();
+        edges.entry(*s).or_default().insert(*d);
+    }
+
+    let mut idx_to_color = pairs.iter().flat_map(|(d, s)| [*d, *s]).collect::<Vec<_>>();
+    idx_to_color.sort();
+    idx_to_color.dedup();
+    let idx_to_color = idx_to_color;
+
+    let color_to_idx = idx_to_color
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (*c, i))
+        .collect::<HashMap<_, _>>();
+
+    // Each connected component of the graph can be converted separately.
+    // In order to find the connected components,
+    // we start by finding the roots of any trees that exist.
+
+    let mut could_be_root = vec![true; idx_to_color.len()];
+
+    let mut visited = vec![false; idx_to_color.len()];
+
+    // Any vertex pointed to by an edge is definitely not the root of a tree.
+    for (d, _s) in pairs.iter() {
+        let idx = *color_to_idx.get(d).unwrap();
+        could_be_root[idx] = false;
+    }
+
+    let mut result = Vec::new();
+
+    for root_idx in 0..could_be_root.len() {
+        if !could_be_root[root_idx] || visited[root_idx] {
+            continue;
+        }
+
+        // root_idx is the root of a tree.
+        // We can explore this tree with a BFS.
+        // The BFS is important so that the ordering of the copies is correct.
+
+        let mut tree = Vec::new();
+        let mut queue: VecDeque<_> = Some(root_idx).into_iter().collect();
+
+        while let Some(node_idx) = queue.pop_front() {
+            assert!(!visited[node_idx], "transfer graph was not a tree");
+            visited[node_idx] = true;
+
+            let node_color = idx_to_color[node_idx];
+            let children = edges.get(&node_color).unwrap();
+            for child in children {
+                let child_idx = *color_to_idx.get(child).unwrap();
+                tree.push((child_idx, node_idx));
+                queue.push_back(child_idx);
+            }
+        }
+
+        // Ensure that copies are done from the "bottom up"
+        tree.reverse();
+
+        for (dest, src) in tree {
+            let dest = idx_to_color[dest];
+            let src = idx_to_color[src];
+
+			emit_move(&mut result, dest, src);
+        }
+    }
+
+    for cycle_idx in 0..visited.len() {
+        if !visited[cycle_idx] {
+            let src = idx_to_color[cycle_idx];
+            let dests = edges.get(&src).unwrap();
+            assert_eq!(
+                dests.len(),
+                1,
+                "multiple edges from source {src:?} in a cycle, phi node {phi_node:?}",
+            );
+            let dest = *dests.iter().next().unwrap();
+            if src == dest {
+                // The location is transferred to itself.
+                // This is a no-op.
+                visited[cycle_idx] = true;
+            } else {
+                let mut cycle = vec![cycle_idx];
+                let mut next_idx = cycle_idx;
+
+                loop {
+                    assert!(!visited[next_idx]);
+                    visited[next_idx] = true;
+
+                    let color = idx_to_color[next_idx];
+                    let dests = edges.get(&color).unwrap();
+                    assert_eq!(dests.len(), 1);
+                    next_idx = *color_to_idx.get(dests.iter().next().unwrap()).unwrap();
+                    if next_idx == cycle[0] {
+                        break;
+                    }
+                    cycle.push(next_idx);
+                }
+
+                cycle.reverse();
+
+                // [0 <- 1 <- 2 <- ... <- n <- 0]
+
+                let save_slot = ra.get_temp();
+
+				emit_move(&mut result, save_slot.into(), idx_to_color[cycle[0]]);
+
+                for pair in cycle.windows(2) {
+                    let dest = idx_to_color[pair[0]];
+                    let src = idx_to_color[pair[1]];
+
+					emit_move(&mut result, dest, src);
+                }
+
+				emit_move(&mut result, idx_to_color[*cycle.last().unwrap()], save_slot.into());
+            }
+        }
+    }
+
+    assert!(visited.iter().all(|v| *v));
+
+    // TODO: Use our existing Graph type for this?
+
+    result
 }

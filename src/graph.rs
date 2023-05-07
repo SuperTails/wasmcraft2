@@ -16,7 +16,7 @@ impl Graph {
         for (block_id, block_info) in lv_info.0.iter() {
             let block = func.get(block_id);
 
-            for &d in &block.params {
+            for &d in &block.phi_node.dests {
                 graph.add_vertex(d.into_untyped());
             }
             for instr in &block.body {
@@ -42,7 +42,7 @@ impl Graph {
 
             let mut live_out = block_info.iter_live_out();
 
-            let defs = Some(block.params.clone()).into_iter().chain(
+            let defs = Some(block.phi_node.dests.clone()).into_iter().chain(
                 block.body.iter().map(|i| i.defs())
             ).chain(
                 Vec::new() // terminators do not define vars

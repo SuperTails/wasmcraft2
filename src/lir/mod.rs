@@ -7,7 +7,7 @@ use wasmparser::ValType;
 
 use crate::ssa::{BlockId, Memory, interp::TypedValue, Table, lir_emitter::RegisterWithInfo};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Half {
 	Hi,
 	Lo,
@@ -22,7 +22,7 @@ impl fmt::Display for Half {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DoubleRegister {
 	/// function id, register id
 	Work(u32, u32),
@@ -69,7 +69,7 @@ impl DoubleRegister {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Register {
 	double: DoubleRegister,
 	half: Half,
@@ -167,6 +167,25 @@ impl fmt::Display for Register {
 
 		write!(f, " {OBJECTIVE_NAME}")
 	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum DynRegister {
+	Double(DoubleRegister),
+	Single(Register),
+}
+
+impl From<DoubleRegister> for DynRegister {
+    fn from(value: DoubleRegister) -> Self {
+		DynRegister::Double(value)
+    }
+}
+
+impl From<Register> for DynRegister {
+    fn from(value: Register) -> Self {
+		DynRegister::Single(value)
+        
+    }
 }
 
 /// by default:

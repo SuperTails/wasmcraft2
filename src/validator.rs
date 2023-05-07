@@ -6,7 +6,7 @@ use std::{ops::{Index, IndexMut}, collections::HashMap};
 
 use wasmparser::{Operator, MemoryImmediate, DataKind, ElementKind, ElementItem, ExternalKind, ValType, FuncType};
 
-use crate::{wasm_file::{WasmFile, eval_const_expr_single}, ssa::{SsaBasicBlock, BlockId, SsaTerminator, TypedSsaVar, SsaInstr, SsaVarAlloc, JumpTarget, SsaProgram, SsaFunction, Memory, Table, SsaVarOrConst}, CompileContext};
+use crate::{wasm_file::{WasmFile, eval_const_expr_single}, ssa::{SsaBasicBlock, BlockId, SsaTerminator, TypedSsaVar, SsaInstr, SsaVarAlloc, JumpTarget, SsaProgram, SsaFunction, Memory, Table, SsaVarOrConst, PhiNode, phi_nodes_are_coherent, liveness::PredInfo, split_critical_edges, remove_redundant_phi_nodes}, CompileContext};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UncertainVar {
@@ -242,11 +242,16 @@ impl PartialBasicBlock {
 		}
 	}
 
-	pub fn new_with_locals(locals: &[ValType], alloc: &mut SsaVarAlloc) -> Self {
+	pub fn new_with_locals(locals: &[ValType], end_types: &[ValType], alloc: &mut SsaVarAlloc) -> Self {
 		let new_locals = locals.iter().map(|&ty| alloc.new_typed(ty)).collect::<Vec<_>>();
 
-		let mut block = SsaBasicBlock::default();
-		block.params.extend(new_locals.iter().copied());
+		let mut new_dests = new_locals.clone();
+		new_dests.extend(end_types.iter().map(|&ty| alloc.new_typed(ty)));
+
+		let block = SsaBasicBlock {
+			phi_node: PhiNode::new_with_dests(new_dests),
+			..SsaBasicBlock::default()
+		};
 
 		PartialBasicBlock { block, finished: false, count: -1, starting_locals: new_locals }
 	}
@@ -283,9 +288,16 @@ impl SsaFuncBuilder {
 
 	pub fn alloc_block_with_locals(&mut self, locals: &[ValType], var_alloc: &mut SsaVarAlloc) -> BlockId {
 		let block = self.blocks.len();
-		self.blocks.push(PartialBasicBlock::new_with_locals(locals, var_alloc));
+		self.blocks.push(PartialBasicBlock::new_with_locals(locals, &[], var_alloc));
 		BlockId { func: self.func, block }
 	}
+
+	pub fn alloc_block_with_locals_and_end_types(&mut self, locals: &[ValType], end_types: &[ValType], var_alloc: &mut SsaVarAlloc) -> BlockId {
+		let block = self.blocks.len();
+		self.blocks.push(PartialBasicBlock::new_with_locals(locals, end_types, var_alloc));
+		BlockId { func: self.func, block }
+	}
+
 
 	pub fn set_block(&mut self, block_id: BlockId) {
 		assert_eq!(self.func, block_id.func);
@@ -325,6 +337,16 @@ impl SsaFuncBuilder {
 		let block = &mut self.blocks[block_id.block];
 		assert!(!block.finished);
 		&mut block.block
+	}
+
+	pub fn add_phi_to(&mut self, dest: BlockId, params: Vec<TypedSsaVar>) {
+		let block = &mut self.blocks[dest.block];
+		block.block.phi_node.add_source(self.current_block, params.clone()).unwrap_or_else(|err| {
+			println!("source: {:?}", self.current_block);
+			println!("dest: {:?}", dest);
+			println!("params: {:?}", params);
+			panic!("{err}");
+		});
 	}
 
 	pub fn finish_block(&mut self, term: SsaTerminator) {
@@ -417,10 +439,11 @@ fn make_params(builder: &mut SsaFuncBuilder, validator: &mut Validator, t: &[Val
 	//assert!(builder.current_block_mut().params.is_empty());
 
 	validator.pop_values(t);
-	for &ty in t {
-		let val = alloc.new_typed(ty);
+
+	let phi_node = &mut builder.current_block_mut().phi_node;
+	let params = &phi_node.dests[phi_node.var_count() - t.len()..];
+	for (&val, &ty) in params.iter().zip(t) {
 		validator.push_value(val);
-		builder.current_block_mut().params.push(val);
 	}
 }
 
@@ -897,7 +920,7 @@ impl ValidationState<'_> {
 
 								let next_block = builder.alloc_block();
 
-								let target = JumpTarget { label: next_block, params: Vec::new() };
+								let target = JumpTarget { label: next_block };
 								builder.finish_block(SsaTerminator::ScheduleJump(target, 1));
 
 								builder.set_block(next_block);
@@ -950,10 +973,11 @@ impl ValidationState<'_> {
 				}
 			}
 			Operator::Block { ty } => {
-				let block = builder.alloc_block_with_locals(&locals, alloc);
-
 				let start_types = wasm_file.types.start_types(*ty);
 				let end_types = wasm_file.types.end_types(*ty);
+
+				let block = builder.alloc_block_with_locals_and_end_types(&locals, &end_types, alloc);
+
 				let control_op = ControlOp::Block(block);
 
 				let start_vals = validator.pop_values(&start_types);
@@ -961,10 +985,11 @@ impl ValidationState<'_> {
 				validator.push_ctrl(control_op, &start_vals, start_types, end_types);
 			}
 			Operator::Loop { ty } => {
-				let block = builder.alloc_block_with_locals(&locals, alloc);
-
 				let start_types = wasm_file.types.start_types(*ty);
 				let end_types = wasm_file.types.end_types(*ty);
+
+				let block = builder.alloc_block_with_locals_and_end_types(&locals, &start_types, alloc);
+
 				let control_op = ControlOp::Loop(block);
 
 				let start_vals = validator.pop_values(&start_types);
@@ -975,7 +1000,8 @@ impl ValidationState<'_> {
 				if let Some(start_vals_known) = start_vals_known {
 					let mut params = builder.current_locals.clone();
 					params.extend(start_vals_known);
-					let target = JumpTarget { label: block, params };
+					builder.add_phi_to(block, params.clone());
+					let target = JumpTarget { label: block };
 					builder.finish_block(SsaTerminator::Jump(target));
 				} else {
 					builder.finish_block(SsaTerminator::Unreachable);
@@ -990,7 +1016,7 @@ impl ValidationState<'_> {
 				let end_types = wasm_file.types.end_types(*ty);
 
 				let false_label = builder.alloc_block();
-				let next_label = builder.alloc_block_with_locals(&locals, alloc);
+				let next_label = builder.alloc_block_with_locals_and_end_types(&locals, &end_types, alloc);
 
 				let cond: Option<_> = validator.pop_value_ty(ValType::I32.into()).into();
 
@@ -1005,12 +1031,10 @@ impl ValidationState<'_> {
 
 					let true_target = JumpTarget {
 						label: true_label,
-						params: Vec::new(),
 					};
 
 					let false_target = JumpTarget {
 						label: false_label,
-						params: Vec::new(), 
 					};
 
 					builder.finish_block(SsaTerminator::BranchIf { cond, true_target, false_target });
@@ -1026,7 +1050,7 @@ impl ValidationState<'_> {
 			Operator::Else => {
 				let (end_vals, frame) = validator.pop_ctrl();
 
-				let (start_vars, false_label, next_label) = if let ControlOp::If { start_vars, false_label, next_label } = frame.operator {
+				let (start_vars, false_label, next_label) = if let ControlOp::If { start_vars, false_label, next_label } = frame.operator.clone() {
 					(start_vars, false_label, next_label)
 				} else {
 					panic!();
@@ -1038,9 +1062,10 @@ impl ValidationState<'_> {
 					let mut params = builder.current_locals.clone();
 					params.extend(end_vals_known);
 
+					builder.add_phi_to(next_label, params.clone());
+
 					let target = JumpTarget {
 						label: next_label,
-						params,
 					};
 
 					builder.finish_block(SsaTerminator::Jump(target));
@@ -1056,7 +1081,6 @@ impl ValidationState<'_> {
 			}
 			Operator::End => {
 				if matches!(validator.control_stack.top().unwrap().operator, ControlOp::If { .. }) {
-					// TODO: Optimize for ifs without an else
 					self.visit_operator(&Operator::Else);
 				}
 
@@ -1076,7 +1100,8 @@ impl ValidationState<'_> {
 						if let Some(end_vals_known) = end_vals_known {
 							let mut params = builder.current_locals.clone();
 							params.extend(end_vals_known);
-							let target = JumpTarget { label, params };
+							builder.add_phi_to(label, params.clone());
+							let target = JumpTarget { label };
 							builder.finish_block(SsaTerminator::Jump(target));
 
 						} else {
@@ -1095,7 +1120,8 @@ impl ValidationState<'_> {
 						if let Some(end_vals) = end_vals_known {
 							let mut params = builder.current_locals.clone();
 							params.extend(end_vals);
-							let target = JumpTarget { label: next_label, params };
+							builder.add_phi_to(next_label, params.clone());
+							let target = JumpTarget { label: next_label };
 							builder.finish_block(SsaTerminator::Jump(target));
 						} else {
 							builder.finish_block(SsaTerminator::Unreachable);
@@ -1125,7 +1151,8 @@ impl ValidationState<'_> {
 				if let Some(label_vals) = label_vals {
 					let mut params = builder.current_locals.clone();
 					params.extend(label_vals);
-					let target = JumpTarget { label: target_label, params };
+					builder.add_phi_to(target_label, params.clone());
+					let target = JumpTarget { label: target_label };
 					builder.finish_block(SsaTerminator::Jump(target));
 				} else {
 					builder.finish_block(SsaTerminator::Unreachable);
@@ -1147,9 +1174,10 @@ impl ValidationState<'_> {
 					let mut params = builder.current_locals.clone();
 					params.extend(label_vals);
 
+					builder.add_phi_to(default_label, params.clone());
+
 					let default = JumpTarget {
 						label: default_label, 
-						params: params.clone()
 					};
 
 					let arms = table.targets().map(|arm| {
@@ -1158,9 +1186,9 @@ impl ValidationState<'_> {
 						let arm_label_types = arm_frame.label_types();
 						assert_eq!(arm_label_types, default_label_types);
 						let label = arm_frame.operator.target_label();
+						builder.add_phi_to(label, params.clone());
 						JumpTarget {
 							label,
-							params: params.clone(),
 						}
 					}).collect::<Vec<_>>();
 
@@ -1194,21 +1222,20 @@ impl ValidationState<'_> {
 					let mut true_params = builder.current_locals.clone();
 					true_params.extend(label_vals.iter().copied());
 
-					let mut false_params = builder.current_locals.clone();
-					false_params.extend(label_vals.iter().copied());
+					let false_params = builder.current_locals.clone();
 
-					assert_eq!(true_params, false_params);
+					builder.add_phi_to(true_label, true_params.clone());
+					builder.add_phi_to(next_block, false_params.clone());
 
 					let true_target = JumpTarget {
 						label: true_label,
-						params: true_params,
 					};
 
 
 					let false_target = JumpTarget {
 						label: next_block,
-						params: false_params,
 					};
+
 
 					builder.finish_block(SsaTerminator::BranchIf { cond, true_target, false_target });
 				} else {
@@ -1216,10 +1243,6 @@ impl ValidationState<'_> {
 				}
 
 				builder.set_block(next_block);
-
-				// TODO: There's only one way to reach this block, so this seems unnecessary,
-				// but the block *has* to have parameters, right...?
-				make_params(builder, validator, &label_types, alloc);
 			}
 
 			&Operator::MemoryGrow { mem, mem_byte } => {
@@ -1280,11 +1303,11 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 	let locals = wasm_file.func_locals(func);
 
 	let start_block = builder.alloc_block_with_locals(&locals, &mut alloc);
-	let end_block = builder.alloc_block_with_locals(&locals, &mut alloc);
+	let end_block = builder.alloc_block_with_locals_and_end_types(&locals, &func_ty.returns, &mut alloc);
 
 	builder.set_block(start_block);
 
-	builder.current_block_mut().params = Vec::new();
+	builder.current_block_mut().phi_node = PhiNode::default();
 
 	add_prologue(&mut builder, func_ty);
 
@@ -1317,7 +1340,7 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 
 	for (_block_idx, (block_id, block)) in blocks.iter().enumerate() {
 		println!("==== block {:?} ==== ", block_id);
-		println!("parameters: {:?}", block.params);
+		println!("{:?}", block.phi_node);
 		for instr in block.body.iter() {
 			println!("{:?}", instr);
 		}
@@ -1454,10 +1477,6 @@ pub fn wasm_to_ssa(ctx: &CompileContext, wasm_file: &WasmFile) -> SsaProgram {
 		}
 	}).collect();
 
-	for func in code.iter() {
-		validate_ssa_jump_params(func);
-	}
-
 	let mut program = SsaProgram {
 		local_types,
 		globals,
@@ -1466,6 +1485,11 @@ pub fn wasm_to_ssa(ctx: &CompileContext, wasm_file: &WasmFile) -> SsaProgram {
 		code,
 		exports,
 	};
+
+	for func in program.code.iter_mut() {
+		remove_redundant_phi_nodes(func);
+		split_critical_edges(func);
+	}
 
 	if ctx.do_const_prop {
 		for func in program.code.iter_mut() {
@@ -1478,42 +1502,9 @@ pub fn wasm_to_ssa(ctx: &CompileContext, wasm_file: &WasmFile) -> SsaProgram {
 	}
 
 	for func in program.code.iter() {
-		validate_ssa_jump_params(func);
+		let preds = PredInfo::new(func);
+		phi_nodes_are_coherent(func, &preds).unwrap();
 	}
 	
 	program
-}
-
-pub fn validate_ssa_jump_params(func: &SsaFunction) {
-	fn types_match(a: &[TypedSsaVar], b: &[TypedSsaVar]) -> bool {
-		a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.ty() == b.ty())
-
-	}
-
-	for (source_id, source) in func.iter() {
-		match &source.term {
-			SsaTerminator::Unreachable => {},
-			SsaTerminator::ScheduleJump(t, _) |
-			SsaTerminator::Jump(t) => {
-				let target = func.get(t.label);
-				assert!(types_match(&t.params, &target.params), "{:?} {:?}", source_id, t.label);
-			}
-			SsaTerminator::BranchIf { cond: _, true_target, false_target } => {
-				let t_target = func.get(true_target.label);
-				let f_target = func.get(false_target.label);
-				assert!(types_match(&t_target.params, &true_target.params), "{:?} {:?}", source_id, true_target.label);
-				assert!(types_match(&f_target.params, &false_target.params), "{:?} {:?}", source_id, false_target.label);
-			}
-			SsaTerminator::BranchTable { cond: _, default, arms } => {
-				let d_target = func.get(default.label);
-				assert!(types_match(&d_target.params, &default.params), "{:?} {:?}", source_id, default.label);
-
-				for arm in arms.iter() {
-					let target = func.get(arm.label);
-					assert!(types_match(&target.params, &arm.params), "{:?} {:?}", source_id, arm.label);
-				}
-			},
-			SsaTerminator::Return(_) => {},
-		}
-	}
 }

@@ -1,6 +1,6 @@
 use std::collections::{HashSet, HashMap};
 
-use crate::{lir::{Register, DoubleRegister}, ssa::liveness::print_live_ranges, graph::Graph};
+use crate::{lir::{Register, DoubleRegister, DynRegister}, ssa::liveness::print_live_ranges, graph::Graph};
 
 use super::{SsaFunction, SsaVar, liveness::{NoopLivenessInfo, FullLivenessInfo}, TypedSsaVar, BlockId};
 
@@ -18,6 +18,16 @@ pub trait RegAlloc {
 	fn get_temp(&mut self) -> Register;
 
 	fn get_temp_double(&mut self) -> DoubleRegister;
+
+	fn get_typed(&self, var: TypedSsaVar) -> DynRegister {
+		match var.ty() {
+			wasmparser::ValType::I32 => self.get(var.into_untyped()).into(),
+			wasmparser::ValType::I64 => self.get_double(var.into_untyped()).into(),
+			wasmparser::ValType::F32 => todo!(),
+			wasmparser::ValType::F64 => todo!(),
+			_ => unreachable!(),
+		}
+	}
 
 	fn const_pool(&self) -> &HashSet<i32>;
 }
@@ -207,7 +217,7 @@ impl FullRegAlloc {
 
 		println!("Register sets created for {}", func.func_id());
 
-		for (block_id, block) in func.iter() {
+		/*for (block_id, block) in func.iter() {
 			for (instr_idx, instr) in block.body.iter().enumerate() {
 				for (dst, src) in instr.coalescable_vars() {
 					let uses = instr.uses();
@@ -219,12 +229,12 @@ impl FullRegAlloc {
 				}
 			}
 
-			for (dst, src) in func.coalescable_term_vars(block_id) {
+			/*for (dst, src) in func.coalescable_term_vars(block_id) {
 				try_merge(&mut sets, &dst, &src, &interf_graph);
-			}
+			}*/
 		}
 
-		println!("Coalesced into {} registers", sets.len());
+		println!("Coalesced into {} registers", sets.len());*/
 
 
 		FullRegAlloc { const_pool: HashSet::new(), map: sets.to_map(), func: func.func_id(), temp: 1000 }
@@ -296,67 +306,7 @@ mod test {
 		};
 	}*/
 
-	#[test]
-	#[ignore]
-	fn no_coalesce_dead_register() {
-		// TODO: Also use the palette test for this.
-
-		let r0 = TypedSsaVar(0, ValType::I32);
-		let r1 = TypedSsaVar(1, ValType::I32);
-
-		let r2 = TypedSsaVar(2, ValType::I32);
-		let r3 = TypedSsaVar(3, ValType::I32);
-
-		let r4 = TypedSsaVar(4, ValType::I32);
-
-		let b1 = SsaBasicBlock {
-			params: Vec::new(),
-			body: vec![
-				SsaInstr::I32Set(r0, 42),
-				SsaInstr::I32Set(r1, 17),
-			],
-			term: SsaTerminator::Jump(JumpTarget {
-				label: BlockId { func: 0, block: 0 },
-				params: vec![r0, r1],
-			})
-		};
-
-		let b0 = SsaBasicBlock {
-			params: vec![r2, r3],
-			body: vec![
-				SsaInstr::Assign(r3, r2.into()), // This convinces the regalloc to try coalescing r3 and r2, which triggers the bug.
-				SsaInstr::Or(r4, r3, r3.into()), // Use this instruction so that it doesn't try to coalesce r4 and r3
-			],
-			term: SsaTerminator::Return(vec![r2]),
-		};
-
-		let func = SsaFunction::new(
-			vec![
-				// It's also order-dependent, too.
-				(BlockId { func: 0, block: 0 }, b0),
-				(BlockId { func: 0, block: 1 }, b1),
-			],
-			Box::new([]),
-			Box::new([ValType::I32]),
-		);
-
-		let lv = FullLivenessInfo::analyze(&func);
-
-		let reg_alloc = FullRegAlloc::analyze(&func, &lv);
-
-		let reg0 = reg_alloc.get(r0.into_untyped());
-		let reg1 = reg_alloc.get(r1.into_untyped());
-		let reg2 = reg_alloc.get(r2.into_untyped());
-		let reg3 = reg_alloc.get(r3.into_untyped());
-
-		assert_eq!(reg0, reg2);
-		assert_eq!(reg1, reg3);
-		assert_ne!(reg0, reg1);
-
-		panic!("{:?}", reg_alloc.map);
-	}
-
-	#[test]
+	/*#[test]
 	#[ignore]
 	fn coalesce_jump_param() {
 		let r0 = TypedSsaVar(0, ValType::I32);
@@ -407,5 +357,5 @@ mod test {
 		println!("{:?}\n", r1_range);
 		println!("{:?}\n", overlap);
 		panic!();*/
-	}
+	}*/
 }

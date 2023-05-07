@@ -11,9 +11,9 @@ use std::{collections::{HashMap, HashSet}, fmt};
 
 use wasmparser::{MemoryImmediate, ValType};
 
-use crate::block_id_map::LocalBlockMap;
+use crate::{block_id_map::LocalBlockMap, set::PairMap};
 
-use self::interp::TypedValue;
+use self::{interp::TypedValue, liveness::PredInfo};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct BlockId {
@@ -21,9 +21,127 @@ pub struct BlockId {
 	pub block: usize
 }
 
+#[derive(Clone, Copy)]
+pub struct PhiArm<'a> {
+	node: &'a PhiNode,
+	index: usize,
+}
+
+impl<'a> PhiArm<'a> {
+	pub fn dest(&self) -> TypedSsaVar {
+		self.node.dests[self.index]
+	}
+
+	pub fn sources(&'a self) -> impl Iterator<Item = (usize, TypedSsaVar)> + 'a {
+		self.node.srcs.iter().map(|(k, v)| (*k, v[self.index]))
+	}
+}
+
+pub struct PhiArmMut<'a> {
+	node: &'a mut PhiNode,
+	index: usize,
+}
+
+impl<'a> PhiArmMut<'a> {
+	pub fn dest(&self) -> TypedSsaVar {
+		self.node.dests[self.index]
+	}
+
+	pub fn sources(&'a self) -> impl Iterator<Item = (usize, TypedSsaVar)> + 'a {
+		self.node.srcs.iter().map(|(k, v)| (*k, v[self.index]))
+	}
+
+	pub fn sources_mut(&'a mut self) -> impl Iterator<Item = (usize, &'a mut TypedSsaVar)> + 'a {
+		self.node.srcs.iter_mut().map(|(k, v)| (*k, &mut v[self.index]))
+	}
+}
+
+
+#[derive(Clone, Default, Debug)]
+pub struct PhiNode {
+	pub dests: Vec<TypedSsaVar>,
+	srcs: PairMap<usize, Vec<TypedSsaVar>>,
+}
+
+impl PhiNode {
+	pub fn new_with_dests(dests: Vec<TypedSsaVar>) -> Self {
+		PhiNode {
+			dests,
+			srcs: PairMap::new(),
+		}
+	}
+
+	pub fn arms<'a>(&'a self) -> impl Iterator<Item = PhiArm<'a>> + 'a {
+		(0..self.dests.len()).map(|index| PhiArm { node: self, index })
+	}
+
+	pub fn arm_mut(&mut self, index: usize) -> PhiArmMut {
+		PhiArmMut {
+			node: self, 
+			index,
+		}
+	}
+
+	pub fn swap_remove_arm(&mut self, arm: usize) {
+		self.dests.swap_remove(arm);
+		for (_, source) in self.srcs.iter_mut() {
+			source.swap_remove(arm);
+		}
+	}
+
+	pub fn sources<'a>(&'a self) -> impl Iterator<Item = (usize, &'a [TypedSsaVar])> + 'a {
+		self.srcs.iter().map(|(k, v)| (*k, &v[..]))
+	}
+
+	pub fn remove_source(&mut self, block: usize) -> Option<Vec<TypedSsaVar>> {
+		self.srcs.remove(&block)
+	}
+
+	pub fn add_source(&mut self, block: usize, vars: Vec<TypedSsaVar>) -> Result<(), String> {
+		if self.dests.len() != vars.len() {
+			return Err(format!(
+				"length of dests {} did not match length of new vars {}",
+				self.dests.len(),
+				vars.len()
+			));
+		}
+
+		if let Some(src) = self.srcs.get(&block) {
+			if *src != vars {
+				return Err(format!("block {block} was already set"));
+			}
+		}
+
+		self.srcs.insert(block, vars);
+
+		Ok(())
+	}
+
+	pub fn rename_source(&mut self, old: usize, new: usize) {
+		if let Some(vars) = self.srcs.remove(&old) {
+			let conflict = self.srcs.insert(new, vars);
+			if conflict.is_some() {
+				todo!();
+			}
+		}
+	}
+
+	pub fn vars_from(&self, block: usize) -> Option<&[TypedSsaVar]> {
+		self.srcs.get(&block).map(|s| &s[..])
+	}
+
+	pub fn var_count(&self) -> usize {
+		self.dests.len()
+	}
+
+	pub fn is_empty(&self) -> bool {
+		self.dests.is_empty()
+	}
+}
+
 #[derive(Clone)]
 pub struct SsaBasicBlock {
-	pub params: Vec<TypedSsaVar>,
+	pub phi_node: PhiNode,
 	pub body: Vec<SsaInstr>,
 	pub term: SsaTerminator,
 }
@@ -31,7 +149,7 @@ pub struct SsaBasicBlock {
 impl Default for SsaBasicBlock {
 	fn default() -> Self {
 		SsaBasicBlock {
-			params: Vec::new(), body: Default::default(), term: SsaTerminator::Unreachable,
+			phi_node: PhiNode::default(), body: Default::default(), term: SsaTerminator::Unreachable,
 		}
 	}
 }
@@ -801,6 +919,206 @@ impl SsaInstr {
 			_ => Vec::new(), 
 		}
 	}
+
+	pub fn renumber_uses(&mut self, old: SsaVar, new: SsaVar) {
+		match self {
+			SsaInstr::I32Set(_, _) => {}
+			SsaInstr::I64Set(_, _) => {}
+
+			SsaInstr::TurtleSetX(src) |
+			SsaInstr::TurtleSetY(src) |
+			SsaInstr::TurtleSetZ(src) |
+			SsaInstr::Load64(_, _, src) |
+			SsaInstr::Load32S(_, _, src) |
+			SsaInstr::Load32U(_, _, src) |
+			SsaInstr::Load16S(_, _, src) |
+			SsaInstr::Load16U(_, _, src) |
+			SsaInstr::Load8S(_, _, src) |
+			SsaInstr::Load8U(_, _, src) |
+			SsaInstr::Assign(_, src) => {
+				if let SsaVarOrConst::Var(v) = src {
+					if v.0 == old.0 {
+						v.0 = new.0;
+					}
+				}
+			}
+
+			SsaInstr::Add(_, lhs, rhs) |
+			SsaInstr::Sub(_, lhs, rhs) |
+			SsaInstr::GtS(_, lhs, rhs) |
+			SsaInstr::GtU(_, lhs, rhs) |
+			SsaInstr::GeS(_, lhs, rhs) |
+			SsaInstr::GeU(_, lhs, rhs) |
+			SsaInstr::LtS(_, lhs, rhs) |
+			SsaInstr::LtU(_, lhs, rhs) |
+			SsaInstr::LeS(_, lhs, rhs) |
+			SsaInstr::LeU(_, lhs, rhs) |
+			SsaInstr::Eq(_, lhs, rhs) |
+			SsaInstr::Ne(_, lhs, rhs) => {
+				if let SsaVarOrConst::Var(v) = lhs {
+					if v.0 == old.0 {
+						v.0 = new.0;
+					}
+				}
+
+				if let SsaVarOrConst::Var(v) = rhs {
+					if v.0 == old.0 {
+						v.0 = new.0;
+					}
+				}
+			}
+
+			SsaInstr::TurtleSetBlock(src) |
+			SsaInstr::GlobalSet(_, src) |
+			SsaInstr::LocalSet(_, src) |
+			SsaInstr::PrintInt(src) |
+			SsaInstr::PutChar(src) |
+			SsaInstr::Extend8S(_, src) |
+			SsaInstr::Extend16S(_, src) |
+			SsaInstr::Extend32S(_, src) |
+			SsaInstr::Extend32U(_, src) |
+			SsaInstr::Clz(_, src) |
+			SsaInstr::Ctz(_, src) |
+			SsaInstr::Eqz(_, src) |
+			SsaInstr::Wrap(_, src) |
+			SsaInstr::Popcnt(_, src) => {
+				if src.0 == old.0 {
+					src.0 = new.0;
+				}
+			}
+
+			SsaInstr::Store64(_, lhs, rhs) |
+			SsaInstr::Store32(_, lhs, rhs) |
+			SsaInstr::Store16(_, lhs, rhs) |
+			SsaInstr::Store8(_, lhs, rhs) |
+			SsaInstr::Mul(_, lhs, rhs) |
+			SsaInstr::DivS(_, lhs, rhs) |
+			SsaInstr::DivU(_, lhs, rhs) |
+			SsaInstr::RemS(_, lhs, rhs) |
+			SsaInstr::RemU(_, lhs, rhs) |
+			SsaInstr::Shl(_, lhs, rhs) |
+			SsaInstr::ShrS(_, lhs, rhs) |
+			SsaInstr::ShrU(_, lhs, rhs) |
+			SsaInstr::Xor(_, lhs, rhs) |
+			SsaInstr::And(_, lhs, rhs) |
+			SsaInstr::Or(_, lhs, rhs) => {
+				if lhs.0 == old.0 {
+					lhs.0 = new.0;
+				}
+
+				if let SsaVarOrConst::Var(v) = rhs {
+					if v.0 == old.0 {
+						v.0 = new.0;
+					}
+				}
+			}
+
+			SsaInstr::Rotl(_, lhs, _) => todo!(),
+			SsaInstr::Rotr(_, lhs, _) => todo!(),
+
+			SsaInstr::GlobalGet(_, _) => {}
+			SsaInstr::LocalGet(_, _) => {}
+			SsaInstr::ParamGet(_, _) => {}
+			SsaInstr::TurtleGetBlock(_) => {}
+			SsaInstr::TurtleCopy => {}
+			SsaInstr::TurtlePaste => {}
+
+			SsaInstr::Select { dst: _, true_var, false_var, cond } => {
+				if cond.0 == old.0 {
+					cond.0 = new.0;
+				}
+
+				if let SsaVarOrConst::Var(v) = true_var {
+					if v.0 == old.0 {
+						v.0 = new.0;
+					}
+				}
+
+				if let SsaVarOrConst::Var(v) = false_var {
+					if v.0 == old.0 {
+						v.0 = new.0;
+					}
+				}
+			}
+
+			SsaInstr::CallIndirect { params, table_entry, .. } => {
+				for param in params {
+					if param.0 == old.0 {
+						param.0 = new.0;
+					}
+				}
+
+				if table_entry.0 == old.0 {
+					table_entry.0 = new.0;
+				}
+			}
+
+			SsaInstr::Call { params, .. } => {
+				for param in params {
+					if param.0 == old.0 {
+						param.0 = new.0;
+					}
+				}
+			}
+
+			SsaInstr::Memset { dest, value, length, result: _ } => {
+				if dest.0 == old.0 {
+					dest.0 = new.0;
+				}
+
+				if value.0 == old.0 {
+					value.0 = new.0;
+				}
+
+				if length.0 == old.0 {
+					length.0 = new.0;
+				}
+			}
+
+			SsaInstr::TurtleFillBlock { block, x_span, y_span, z_span } => {
+				if let SsaVarOrConst::Var(v) = block {
+					if v.0 == old.0 {
+						v.0 = new.0;
+					}
+				}
+				if let SsaVarOrConst::Var(v) = x_span {
+					if v.0 == old.0 {
+						v.0 = new.0;
+					}
+				}
+				if let SsaVarOrConst::Var(v) = y_span {
+					if v.0 == old.0 {
+						v.0 = new.0;
+					}
+				}
+				if let SsaVarOrConst::Var(v) = z_span {
+					if v.0 == old.0 {
+						v.0 = new.0;
+					}
+				}
+			}
+			SsaInstr::TurtleCopyRegion { x_span, y_span, z_span } |
+			SsaInstr::TurtlePasteRegionMasked { x_span, y_span, z_span } => {
+				if let SsaVarOrConst::Var(v) = x_span {
+					if v.0 == old.0 {
+						v.0 = new.0;
+					}
+				}
+				if let SsaVarOrConst::Var(v) = y_span {
+					if v.0 == old.0 {
+						v.0 = new.0;
+					}
+				}
+				if let SsaVarOrConst::Var(v) = z_span {
+					if v.0 == old.0 {
+						v.0 = new.0;
+					}
+				}
+
+			}
+		}
+
+	}
 }
 
 impl fmt::Display for SsaInstr {
@@ -822,19 +1140,11 @@ fn is_simple_and_mask(i: i32) -> bool {
 #[derive(Debug, Clone)]
 pub struct JumpTarget {
 	pub label: BlockId,
-	pub params: Vec<TypedSsaVar>,
 }
 
 impl fmt::Display for JumpTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		write!(f, "<{}.{}>(", self.label.func, self.label.block)?;
-		for (idx, p) in self.params.iter().enumerate() {
-			write!(f, "{p}")?;
-			if idx + 1 != self.params.len() {
-				write!(f, ", ")?;
-			}
-		}
-		write!(f, ")")
+		write!(f, "B{}.{}", self.label.func, self.label.block)
     }
 }
 
@@ -849,102 +1159,19 @@ pub enum SsaTerminator {
 }
 
 impl SsaTerminator {
-	/// Returns a set of the variables that are used as parameters when jumping to the given successor block.
-	pub fn params_on_edge(&self, succ_id: BlockId) -> HashSet<TypedSsaVar> {
-		match self {
-			SsaTerminator::Unreachable | SsaTerminator::Return(_) => panic!("cannot jump to block {succ_id:?}"),
-			SsaTerminator::ScheduleJump(target, _) |
-			SsaTerminator::Jump(target) => {
-				assert_eq!(target.label, succ_id);
-				target.params.iter().copied().collect()
-			}
-			SsaTerminator::BranchIf { cond: _, true_target, false_target } => {
-				let mut result = HashSet::new();
-				let mut is_ok = false;
-				if true_target.label == succ_id {
-					result.extend(true_target.params.iter().copied());
-					is_ok = true;
-				}
-				if false_target.label == succ_id {
-					result.extend(false_target.params.iter().copied());
-					is_ok = true;
-				}
-				assert!(is_ok, "cannot jump to block {succ_id:?}");
-				result
-			}
-			SsaTerminator::BranchTable { cond: _, default, arms } => {
-				let mut result = HashSet::new();
-				let mut is_ok = false;
-				if default.label == succ_id {
-					result.extend(default.params.iter().copied());
-					is_ok = true;
-				}
-				for arm in arms.iter() {
-					if arm.label == succ_id {
-						result.extend(arm.params.iter().copied());
-						is_ok = true;
-					}
-				}
-				assert!(is_ok, "cannot jump to block {succ_id:?}");
-				result
-			}
-		}
-	}
-
-	pub fn no_param_uses(&self) -> Vec<TypedSsaVar> {
+	pub fn uses(&self) -> Vec<TypedSsaVar> {
 		match self {
 			SsaTerminator::Unreachable => vec![],
 			SsaTerminator::ScheduleJump(..) => Vec::new(),
 			SsaTerminator::Jump(_) => Vec::new(),
 			SsaTerminator::BranchIf { cond, .. } => {
-				let mut result = vec![*cond];
-				result
+				vec![*cond]
 			}
 			SsaTerminator::BranchTable { cond, .. } => {
-				let mut result = vec![*cond];
-				result
+				vec![*cond]
 			}
 			SsaTerminator::Return(vars) => vars.clone(),
 		}
-
-	}
-
-	pub fn uses(&self) -> Vec<TypedSsaVar> {
-		match self {
-			SsaTerminator::Unreachable => vec![],
-			SsaTerminator::ScheduleJump(target, _) => {
-				target.params.clone()
-			}
-			SsaTerminator::Jump(target) => {
-				target.params.clone()
-			}
-			SsaTerminator::BranchIf { cond, true_target, false_target } => {
-				let mut result = vec![*cond];
-				result.extend(true_target.params.iter());
-				result.extend(false_target.params.iter());
-				result
-			}
-			SsaTerminator::BranchTable { cond, default, arms } => {
-				let mut result = vec![*cond];
-				result.extend(default.params.iter());
-				for arm in arms.iter() {
-					result.extend(arm.params.iter());
-				}
-				result
-			}
-			SsaTerminator::Return(vars) => vars.clone(),
-		}
-	}
-
-	pub fn defs(&self, parent: &SsaFunction) -> Vec<TypedSsaVar> {
-		let mut result = Vec::new();
-
-		for succ in self.successors() {
-			let block = parent.get(succ);
-			result.extend(block.params.iter().copied());
-		}
-
-		result
 
 	}
 
@@ -977,6 +1204,60 @@ impl SsaTerminator {
 				let mut result = vec![default.clone()];
 				result.extend(arms.iter().cloned());
 				result
+			}
+		}
+	}
+
+	pub fn renumber_target(&mut self, old: usize, new: usize) {
+		match self {
+			SsaTerminator::Unreachable => {},
+			SsaTerminator::ScheduleJump(t, _) |
+			SsaTerminator::Jump(t) => {
+				if t.label.block == old {
+					t.label.block = new;
+				}
+			}
+			SsaTerminator::BranchIf { cond: _, true_target, false_target } => {
+				if true_target.label.block == old {
+					true_target.label.block = new;
+				}
+
+				if false_target.label.block == old {
+					false_target.label.block = new;
+				}
+			}
+			SsaTerminator::BranchTable { cond:_ , default, arms } => {
+				if default.label.block == old {
+					default.label.block = new;
+				}
+
+				for arm in arms {
+					if arm.label.block == old {
+						arm.label.block = new;
+					}
+				}
+			}
+			SsaTerminator::Return(_) => {},
+		}
+	}
+
+	pub fn renumber_uses(&mut self, old: SsaVar, new: SsaVar) {
+		match self {
+			SsaTerminator::Unreachable => {}
+			SsaTerminator::ScheduleJump(_, _) => {}
+			SsaTerminator::Jump(_) => {}
+			SsaTerminator::BranchIf { cond, .. } |
+			SsaTerminator::BranchTable { cond, .. } => {
+				if cond.0 == old.0 {
+					cond.0 = new.0;
+				}
+			}
+			SsaTerminator::Return(vars) => {
+				for var in vars {
+					if var.0 == old.0 {
+						var.0 = new.0;
+					}
+				}
 			}
 		}
 	}
@@ -1047,7 +1328,22 @@ impl SsaFunction {
 		BlockId { func, block: 0 }
 	}
 
-	pub fn coalescable_term_vars(&self, source_id: BlockId) -> Vec<(TypedSsaVar, TypedSsaVar)> {
+	pub fn add_block(&mut self) -> BlockId {
+		let b = self.iter().map(|(id, _)| id.block + 1).max().unwrap_or(0);
+
+		let block_id = BlockId {
+			func: self.func_id() as usize,
+			block: b,
+		};
+
+		let block = SsaBasicBlock::default();
+
+		self.code.insert(block_id, block);
+
+		block_id
+	}
+
+	/*pub fn coalescable_term_vars(&self, source_id: BlockId) -> Vec<(TypedSsaVar, TypedSsaVar)> {
 		let mut result = Vec::new();
 		let source = self.get(source_id);
 		match &source.term {
@@ -1075,7 +1371,7 @@ impl SsaFunction {
 			SsaTerminator::Return(_) => {},
 		}
 		result
-	}
+	}*/
 }
 
 pub struct SsaProgram {
@@ -1120,4 +1416,167 @@ impl Memory {
 pub struct Table {
 	pub max: Option<usize>,
 	pub elements: Vec<Option<usize>>,
+}
+
+
+/// Determines if an SSA-form function has any critical edges.
+/// Returns the first critical edge found, if any.
+///
+/// A critical edge is an edge from blocks A -> B,
+/// where A has multiple successors and B has multiple predecessors.
+pub fn no_critical_edges(func: &SsaFunction, preds: &PredInfo) -> Result<(), (BlockId, BlockId)> {
+    for (block_b_index, block_b) in func.iter() {
+        let num_predecessors = preds.get_predecessors(block_b_index).len();
+        if num_predecessors <= 1 {
+            // This block can't end a critical edge because it doesn't have multiple predecessors.
+            continue;
+        }
+
+		let predecessors = preds.get_predecessors(block_b_index);
+        for &block_a_index in predecessors {
+            let block_a = func.get(block_a_index);
+			if block_a.term.successors().len() > 1 {
+				// A -> B is a critical edge.
+                return Err((block_a_index, block_b_index));
+			}
+        }
+    }
+
+    Ok(())
+}
+
+pub fn split_critical_edges(func: &mut SsaFunction) {
+	loop {
+		let preds = PredInfo::new(func);
+		let Err((src, dst)) = no_critical_edges(func, &preds) else { break };
+
+		let split_block_id = func.add_block();
+
+		func.get_mut(src).term.renumber_target(dst.block, split_block_id.block);
+
+		func.get_mut(dst).phi_node.rename_source(src.block, split_block_id.block);
+
+		let split_block = func.get_mut(split_block_id);
+
+		split_block.term = SsaTerminator::Jump(JumpTarget {
+			label: dst,
+		});
+	}
+}
+
+/// Checks that phi nodes have exactly the edges corresponding to their actual predecessors.
+///
+/// For example, block 2 in the following case must have phi node edges 0 and 1.
+/// No more, no less.
+/// ```
+/// 0       1
+/// |       |
+/// |       |
+/// +-> 2 <-+
+/// ```
+pub fn phi_nodes_are_coherent(func: &SsaFunction, preds: &PredInfo) -> Result<(), BlockId> {
+    for (block_id, block) in func.iter() {
+        let predecessors = &preds.get_predecessors(block_id);
+
+		if block.phi_node.is_empty() {
+			continue;
+		}
+
+        if predecessors.len() <= 1 {
+            // Blocks with only a single predecessor cannot have phi nodes.
+            return Err(block_id);
+        }
+
+		if block.phi_node.sources().count() != predecessors.len() {
+			todo!("{:?} {:?}", block.phi_node.sources().count(), predecessors.len());
+			return Err(block_id);
+		}
+
+        for (source, _) in block.phi_node.sources() {
+			if !predecessors.iter().any(|p| p.block == source) {
+				return Err(block_id);
+			}
+        }
+    }
+
+    Ok(())
+}
+
+pub fn remove_redundant_phi_nodes(func: &mut SsaFunction) {
+	let keys = func.code.keys().collect::<Vec<_>>();
+    for block_id in keys {
+        let mut renumber_time = std::time::Duration::default();
+
+        let mut phi_node_idx = 0;
+        while phi_node_idx != func.get(block_id).phi_node.dests.len() {
+            let node = func.get(block_id).phi_node.arms().nth(phi_node_idx).unwrap();
+            let (other_temp, is_redundant) = phi_arm_is_redundant(node);
+            if !is_redundant {
+                phi_node_idx += 1;
+                continue;
+            }
+
+            // Swap remove is okay here because it
+            // replaces the removed element with an element we haven't seen yet,
+            // so we'll still visit all the nodes exactly once.
+
+            if let Some(other_temp) = other_temp {
+                let redundant_temp = node.dest();
+                func.get_mut(block_id).phi_node.swap_remove_arm(phi_node_idx);
+
+                let t1 = std::time::SystemTime::now();
+
+                //func.renumber_temp(redundant_temp, other_temp);
+
+                for (_, block) in func.iter_mut() {
+					for arm in 0..block.phi_node.dests.len() {
+						let mut arm = block.phi_node.arm_mut(arm);
+                        for (_, source) in arm.sources_mut() {
+							if *source == redundant_temp {
+								*source = other_temp;
+							}
+                        }
+                    }
+
+                    for instr in block.body.iter_mut() {
+                        instr.renumber_uses(redundant_temp.into_untyped(), other_temp.into_untyped());
+                    }
+
+                    block.term.renumber_uses(redundant_temp.into_untyped(), other_temp.into_untyped());
+                }
+
+                renumber_time += t1.elapsed().unwrap();
+            } else {
+                // The phi node is of the form `x1 <- phi(x1, x1, ..., x1)`
+                // and thus can be completely deleted.
+                func.get_mut(block_id).phi_node.swap_remove_arm(phi_node_idx);
+            }
+        }
+
+        //println!("Renumbering {} vars", renames.len());
+
+        /*for (redundant_temp, other_temp) in renames {
+            func.renumber_temp(redundant_temp, other_temp);
+        }*/
+
+        //println!("renumber time: {} us", renumber_time.as_micros());
+    }
+}
+
+pub fn phi_arm_is_redundant(node: PhiArm) -> (Option<TypedSsaVar>, bool) {
+    let mut other = None;
+
+    for (_, source) in node.sources() {
+		if source != node.dest() {
+			if let Some(other) = other {
+				if other != source {
+					return (None, false);
+				}
+			} else {
+				other = Some(source);
+			}
+		}
+    }
+
+    (other, true)
 }

@@ -301,6 +301,15 @@ impl<K: PartialEq + Eq, V> PairMap<K, V> {
         }
     }
 
+    pub fn remove(&mut self, k: &K) -> Option<V> {
+        let prev = self.values.iter_mut().enumerate().find(|(_, (key, _))| key == k);
+        if let Some((prev, _)) = prev {
+            Some(self.values.swap_remove(prev).1)
+        } else {
+            None
+        }
+    }
+
     pub fn get(&self, k: &K) -> Option<&V> {
         self.values.iter().find(|(key, _)| key == k).map(|(_, v)| v)
     }
@@ -309,7 +318,7 @@ impl<K: PartialEq + Eq, V> PairMap<K, V> {
         self.values.iter_mut().find(|(key, _)| key == k).map(|(_, v)| v)
     }
 
-    pub fn contains(&self, k: &K) -> bool {
+    pub fn contains_key(&self, k: &K) -> bool {
         self.get(k).is_some()
     }
 
