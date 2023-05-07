@@ -3,18 +3,18 @@ use std::collections::{BinaryHeap, HashMap};
 use union_find_rs::{prelude::DisjointSets, traits::UnionFind};
 use wasmparser::ValType;
 
-type Color = Register;
+type Color = DynRegister;
 
-use crate::{set::{Set, DenseMap}, ssa::{SsaVar, SsaFunction, SsaInstr, SsaVarOrConst, is_simple_and_mask, liveness::PredInfo}, graph::Graph, lir::Register};
+use crate::{set::{Set, DenseMap}, ssa::{SsaVar, SsaFunction, SsaInstr, SsaVarOrConst, is_simple_and_mask, liveness::PredInfo, reg_alloc::FullRegAlloc, TypedSsaVar, TypedSsaVarSet}, graph::Graph, lir::{Register, DynRegister, DoubleRegister}};
 
 #[derive(Debug, Clone, Default)]
 struct AffinityEdges(HashMap<SsaVar, Vec<(SsaVar, u32)>>);
 
 impl AffinityEdges {
-    pub fn from_list(affinity_edges: &[(u32, (SsaVar, SsaVar))]) -> Self {
+    pub fn from_list(affinity_edges: &[(u32, (TypedSsaVar, TypedSsaVar))]) -> Self {
         let mut result = AffinityEdges::default();
         for &(cost, (a, b)) in affinity_edges {
-            result.insert_edge(a, b, cost);
+            result.insert_edge(a.into_untyped(), b.into_untyped(), cost);
         }
         result
     }
@@ -43,7 +43,7 @@ impl AffinityEdges {
 /// # Returns
 ///
 /// The list of affinity edges and their costs, sorted from highest cost to lowest.
-fn compute_affinity_edges(func: &SsaFunction) -> Vec<(u32, (SsaVar, SsaVar))> {
+fn compute_affinity_edges(func: &SsaFunction) -> Vec<(u32, (TypedSsaVar, TypedSsaVar))> {
     // TODO: We could increase the cost of moves that occur inside of loops.
 
     let mut result = Vec::new();
@@ -103,9 +103,7 @@ fn compute_affinity_edges(func: &SsaFunction) -> Vec<(u32, (SsaVar, SsaVar))> {
     // Sort from high to low instead of low to high
     result.sort_by_key(|(cost, _)| std::cmp::Reverse(*cost));
 
-    todo!()
-
-    //result
+    result
 }
 
 #[derive(Clone)]
@@ -144,6 +142,7 @@ struct Chunk {
     cost: u32,
     rep: SsaVar,
     temps: Vec<SsaVar>,
+    ty: ValType,
 }
 
 impl PartialEq for Chunk {
@@ -168,7 +167,7 @@ impl Ord for Chunk {
 
 fn compute_chunks(
     mut if_graph: IFGraph,
-    affinity_edges: &[(u32, (SsaVar, SsaVar))],
+    affinity_edges: &[(u32, (TypedSsaVar, TypedSsaVar))],
     coloring: &DenseMap<SsaVar, Color>,
 ) -> BinaryHeap<Chunk> {
     // Place each node in a separate chunk.
@@ -179,6 +178,15 @@ fn compute_chunks(
     let mut chunks = DisjointSets::new();
     for temp in coloring.keys() {
         chunks.make_set(temp).unwrap();
+    }
+
+    let mut types = TypedSsaVarSet::new();
+
+    for (temp, t) in coloring.iter() {
+        match t {
+            DynRegister::Double(_) => types.insert(temp.into_typed(ValType::I64)).unwrap(),
+            DynRegister::Single(_) => types.insert(temp.into_typed(ValType::I32)).unwrap(),
+        };
     }
 
     let num_temps = coloring.keys().map(|k| k.0 as usize + 1).max().unwrap_or(0);
@@ -196,8 +204,12 @@ fn compute_chunks(
     //          chunks.merge(x, y)
 
     for (cost, (temp1, temp2)) in affinity_edges {
-        let temp1 = chunks.find_set(temp1).unwrap();
-        let temp2 = chunks.find_set(temp2).unwrap();
+        types.insert(*temp1).unwrap();
+        types.insert(*temp2).unwrap();
+        assert_eq!(temp1.ty(), temp2.ty());
+
+        let temp1 = chunks.find_set(&temp1.into_untyped()).unwrap();
+        let temp2 = chunks.find_set(&temp2.into_untyped()).unwrap();
         if temp1 == temp2 {
             continue;
         }
@@ -230,6 +242,7 @@ fn compute_chunks(
                 cost: costs[rep.0 as usize],
                 rep,
                 temps: vec![temp],
+                ty: types.get(rep).unwrap(),
             })
         }
     }
@@ -239,13 +252,14 @@ fn compute_chunks(
 
 pub struct Coloring {
     pub colors: DenseMap<SsaVar, Color>,
-    /// Precolored temps cannot be recolored because of x86 rules.
-    precolors: HashMap<SsaVar, Color>,
+    pub precolors: HashMap<SsaVar, Color>,
+    pub func_id: u32,
+    pub next_temp: u32,
 }
 
 impl Coloring {
-    pub fn is_admissible(&self, node: SsaVar, color: Color) -> bool {
-        if let Some(precolor) = self.precolors.get(&node) {
+    pub fn is_admissible(&self, node: TypedSsaVar, color: Color) -> bool {
+        if let Some(precolor) = self.precolors.get(&node.into_untyped()) {
             if *precolor != color {
                 return false;
             }
@@ -260,6 +274,17 @@ impl Coloring {
 
     pub fn set_color(&mut self, node: SsaVar, color: Color) -> Color {
         self.colors.insert(node, color).unwrap()
+    }
+
+    pub fn get_dyn_temp(&mut self, ty: ValType) -> DynRegister {
+        let num = self.next_temp;
+        self.next_temp += 1;
+
+        match ty {
+            ValType::I32 => Register::work_lo(self.func_id, num).into(),
+            ValType::I64 => DoubleRegister::Work(self.func_id, num).into(),
+            _ => todo!(),
+        }
     }
 }
 
@@ -317,21 +342,21 @@ fn avoid_color(
 
 fn recolor(
     if_graph: &IFGraph,
-    node: SsaVar,
+    node: TypedSsaVar,
     color: Color,
     fixed_nodes: &mut Set<SsaVar>,
     coloring: &mut Coloring,
 ) {
-    if coloring.is_admissible(node, color) && !fixed_nodes.contains(node) {
+    if coloring.is_admissible(node, color) && !fixed_nodes.contains(node.into_untyped()) {
         let mut old_colors = HashMap::new();
 
         // Optimistically set the node to our desired color.
-        fixed_nodes.insert(node);
-        let old_color = coloring.set_color(node, color);
-        old_colors.insert(node, old_color);
+        fixed_nodes.insert(node.into_untyped());
+        let old_color = coloring.set_color(node.into_untyped(), color);
+        old_colors.insert(node.into_untyped(), old_color);
 
         // Then, try to recolor neighbors so that they don't conflict with the new color.
-        for neighbor in if_graph.neighbors(node) {
+        for neighbor in if_graph.neighbors(node.into_untyped()) {
             let neighbor_color = coloring.get_color(neighbor);
             if neighbor_color == color {
                 let ok = avoid_color(
@@ -449,16 +474,17 @@ fn recolor_chunk(
 
     // Try all the different possible colors to see which one works best.
 
-	let color = todo!("any unused color");
+	let color = coloring.get_dyn_temp(chunk.ty);
 
 	// Unfix all nodes in chunk
 	fixed_nodes.remove_from(chunk.temps.iter().copied());
 
 	// Attempt to recolor all nodes in the chunk to the current color
 	for &node in &chunk.temps {
+        let typed_node = node.into_typed(chunk.ty);
 		recolor(
 			if_graph,
-			node,
+			typed_node,
 			color,
 			fixed_nodes,
 			coloring,
@@ -468,7 +494,7 @@ fn recolor_chunk(
 
 	// It may not have been possible to recolor all of the nodes in the chunk.
 	// So, pick the best part of the chunk that actually did get recolored, and just use that.
-	let (cost, best_affine_subset) =
+	let (_, best_affine_subset) =
 		best_affine_subset(&chunk, affinity_edges, color, coloring);
 
     // We tried all the colors and found the best color for this chunk,
@@ -500,6 +526,7 @@ fn recolor_chunk(
             cost,
             rep: failed_nodes[0], // Not used
             temps: failed_nodes,
+            ty: chunk.ty,
         };
         chunk_queue.push(chunk);
     }
@@ -510,8 +537,7 @@ pub fn coalesce(
     if_graph: &IFGraph,
     coloring: &mut Coloring,
 ) {
-    //let affinity_edges = compute_affinity_edges(func);
-	let affinity_edges = Vec::new();
+    let affinity_edges = compute_affinity_edges(func);
 
     // Place all chunks into a priority queue (first element has highest cost).
     // While the priority queue is not empty:

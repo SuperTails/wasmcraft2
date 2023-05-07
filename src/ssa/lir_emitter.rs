@@ -1388,9 +1388,6 @@ fn convert_phi_to_lir(
     // We can interpret the parallel assignment as a graph.
     // Each vertex is a color,
     // and an edge between two vertices represents one pairwise copy.
-    //
-    // Because of how register coloring works,
-    // each connected component of this graph either is a cycle or a tree.
 
 	let emit_move = |result: &mut Vec<_>, dst: DynRegister, src: DynRegister| {
 		match (dst, src) {
@@ -1435,80 +1432,50 @@ fn convert_phi_to_lir(
         .map(|(i, c)| (*c, i))
         .collect::<HashMap<_, _>>();
 
-    // Each connected component of the graph can be converted separately.
-    // In order to find the connected components,
-    // we start by finding the roots of any trees that exist.
-
-    let mut could_be_root = vec![true; idx_to_color.len()];
-
-    let mut visited = vec![false; idx_to_color.len()];
-
-    // Any vertex pointed to by an edge is definitely not the root of a tree.
-    for (d, _s) in pairs.iter() {
-        let idx = *color_to_idx.get(d).unwrap();
-        could_be_root[idx] = false;
-    }
-
     let mut result = Vec::new();
 
-    for root_idx in 0..could_be_root.len() {
-        if !could_be_root[root_idx] || visited[root_idx] {
-            continue;
-        }
+	// First, we emit all moves where we can freely overwrite the destination.
+	// This is any move from p -> q where q has an out-degree of zero.
 
-        // root_idx is the root of a tree.
-        // We can explore this tree with a BFS.
-        // The BFS is important so that the ordering of the copies is correct.
+	let mut changed = true;
+	while changed {
+		changed = false;
 
-        let mut tree = Vec::new();
-        let mut queue: VecDeque<_> = Some(root_idx).into_iter().collect();
+		for &src in &idx_to_color {
+			let dests = edges.get(&src).unwrap();
+			let dest = dests.iter().find(|d| edges.get(d).unwrap().is_empty()).copied();
+			if let Some(dest) = dest {
+				changed = true;
+				edges.get_mut(&src).unwrap().remove(&dest);
+				emit_move(&mut result, dest, src);
+			}
+		}
+	}
 
-        while let Some(node_idx) = queue.pop_front() {
-            assert!(!visited[node_idx], "transfer graph was not a tree");
-            visited[node_idx] = true;
+	let mut changed = true;
+	while changed {
+		changed = false;
 
-            let node_color = idx_to_color[node_idx];
-            let children = edges.get(&node_color).unwrap();
-            for child in children {
-                let child_idx = *color_to_idx.get(child).unwrap();
-                tree.push((child_idx, node_idx));
-                queue.push_back(child_idx);
-            }
-        }
-
-        // Ensure that copies are done from the "bottom up"
-        tree.reverse();
-
-        for (dest, src) in tree {
-            let dest = idx_to_color[dest];
-            let src = idx_to_color[src];
-
-			emit_move(&mut result, dest, src);
-        }
-    }
-
-    for cycle_idx in 0..visited.len() {
-        if !visited[cycle_idx] {
+		for cycle_idx in 0..idx_to_color.len() {
             let src = idx_to_color[cycle_idx];
+
+			let is_done = edges.get(&src).unwrap().is_empty();
+			if is_done {
+				continue;
+			}
+
             let dests = edges.get(&src).unwrap();
-            assert_eq!(
-                dests.len(),
-                1,
-                "multiple edges from source {src:?} in a cycle, phi node {phi_node:?}",
-            );
+            assert_eq!(dests.len(), 1);
             let dest = *dests.iter().next().unwrap();
             if src == dest {
                 // The location is transferred to itself.
                 // This is a no-op.
-                visited[cycle_idx] = true;
+				edges.get_mut(&src).unwrap().remove(&src);
             } else {
                 let mut cycle = vec![cycle_idx];
                 let mut next_idx = cycle_idx;
 
                 loop {
-                    assert!(!visited[next_idx]);
-                    visited[next_idx] = true;
-
                     let color = idx_to_color[next_idx];
                     let dests = edges.get(&color).unwrap();
                     assert_eq!(dests.len(), 1);
@@ -1536,12 +1503,13 @@ fn convert_phi_to_lir(
 
 				emit_move(&mut result, idx_to_color[*cycle.last().unwrap()], save_slot.into());
             }
-        }
-    }
 
-    assert!(visited.iter().all(|v| *v));
+		}
+	}
 
-    // TODO: Use our existing Graph type for this?
+	for src in &idx_to_color {
+		assert!(edges.get(src).unwrap().is_empty());
+	}
 
     result
 }

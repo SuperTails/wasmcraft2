@@ -383,6 +383,10 @@ impl TypedSsaVarSet {
 	pub fn contains_untyped(&self, var: SsaVar) -> bool {
 		self.0.get(&var).is_some()
 	}
+
+	pub fn get(&self, var: SsaVar) -> Option<ValType> {
+		self.0.get(&var).copied()
+	}
 }
 
 impl fmt::Debug for TypedSsaVarSet {

@@ -1,6 +1,6 @@
 use std::collections::{HashSet, HashMap};
 
-use crate::{lir::{Register, DoubleRegister, DynRegister}, ssa::liveness::print_live_ranges, graph::Graph};
+use crate::{lir::{Register, DoubleRegister, DynRegister}, ssa::{liveness::print_live_ranges, opt::coalesce::{Coloring, coalesce, IFGraph}}, graph::Graph, set::DenseMap};
 
 use super::{SsaFunction, SsaVar, liveness::{NoopLivenessInfo, FullLivenessInfo}, TypedSsaVar, BlockId};
 
@@ -83,7 +83,7 @@ impl RegAlloc for NoopRegAlloc {
 
 pub struct FullRegAlloc {
 	pub const_pool: HashSet<i32>,
-	pub map: HashMap<SsaVar, u32>,
+	pub map: DenseMap<SsaVar, DynRegister>,
 	func: u32,
 	temp: u32,
 }
@@ -187,6 +187,7 @@ mod register_set {
 }
 
 use register_set::*;
+use wasmparser::ValType;
 
 fn try_merge(sets: &mut RegisterSet, dst: &TypedSsaVar, src: &TypedSsaVar, interf_graph: &Graph) {
 	if sets.get_idx(*dst) == sets.get_idx(*src) {
@@ -211,11 +212,48 @@ impl FullRegAlloc {
 	pub fn analyze(func: &SsaFunction, liveness: &FullLivenessInfo) -> Self {
 		println!("Starting regalloc for {}", func.func_id());
 
+		let func_id = func.func_id();
+
 		let interf_graph = Graph::new(func, liveness);
 
-		let mut sets = RegisterSet::new(func);
+		let mut next_temp = 0;
 
-		println!("Register sets created for {}", func.func_id());
+		let mut v_to_r = |v: TypedSsaVar| -> DynRegister {
+			if next_temp <= v.0 {
+				next_temp = v.0 + 1;
+			}
+
+			match v.1 {
+				ValType::I32 => Register::work_lo(func_id, v.0).into(),
+				ValType::I64 => DoubleRegister::Work(func_id, v.0).into(),
+				_ => todo!(),
+			}
+		};
+
+		let mut colors = DenseMap::new();
+		for (_, block) in func.iter() {
+			for arm in block.phi_node.arms() {
+				let r = v_to_r(arm.dest());
+				colors.insert(arm.dest().into_untyped(), r);
+			}
+			for instr in block.body.iter() {
+				for def in instr.defs() {
+					let r = v_to_r(def);
+					colors.insert(def.into_untyped(), r);
+				}
+			}
+		}
+
+		let mut coloring = Coloring {
+			colors,
+			precolors: HashMap::new(),
+			func_id,
+			next_temp,
+		};
+
+		let graph = IFGraph(interf_graph);
+
+		coalesce(func, &graph, &mut coloring);
 
 		/*for (block_id, block) in func.iter() {
 			for (instr_idx, instr) in block.body.iter().enumerate() {
@@ -237,19 +275,21 @@ impl FullRegAlloc {
 		println!("Coalesced into {} registers", sets.len());*/
 
 
-		FullRegAlloc { const_pool: HashSet::new(), map: sets.to_map(), func: func.func_id(), temp: 1000 }
+		FullRegAlloc { const_pool: HashSet::new(), map: coloring.colors, func: func.func_id(), temp: 1000 }
 	}
 }
 
 impl RegAlloc for FullRegAlloc {
 	fn get(&self, val: SsaVar) -> Register {
-		let rep = *self.map.get(&val).unwrap();
-		Register::work_lo(self.func, rep)
+		let rep = *self.map.get(val).unwrap();
+		let DynRegister::Single(rep) = rep else { panic!() };
+		rep
 	}
 
 	fn get_double(&self, val: SsaVar) -> DoubleRegister {
-		let rep = *self.map.get(&val).unwrap();
-		DoubleRegister::Work(self.func, rep)
+		let rep = *self.map.get(val).unwrap();
+		let DynRegister::Double(rep) = rep else { panic!() };
+		rep
 	}
 
 	fn get_const(&mut self, val: i32) -> Register {
