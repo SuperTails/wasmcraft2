@@ -4,7 +4,7 @@
 
 use std::{ops::{Index, IndexMut}, collections::HashMap};
 
-use wasmparser::{Operator, MemoryImmediate, DataKind, ElementKind, ElementItem, ExternalKind, ValType, FuncType};
+use wasmparser::{Operator, MemArg, DataKind, ElementKind, ExternalKind, ValType, FuncType, RefType, ElementItems};
 
 use crate::{wasm_file::{WasmFile, eval_const_expr_single}, ssa::{SsaBasicBlock, BlockId, SsaTerminator, TypedSsaVar, SsaInstr, SsaVarAlloc, JumpTarget, SsaProgram, SsaFunction, Memory, Table, SsaVarOrConst, PhiNode, phi_nodes_are_coherent, liveness::PredInfo, split_critical_edges, remove_redundant_phi_nodes}, CompileContext};
 
@@ -551,9 +551,9 @@ impl ValidationState<'_> {
 			}
 		}
 
-		fn make_i32_load<F>(f: F, memarg: MemoryImmediate, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
+		fn make_i32_load<F>(f: F, memarg: MemArg, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
 			where
-				F: FnOnce(MemoryImmediate, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
+				F: FnOnce(MemArg, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
 		{
 			let addr = validator.pop_value_ty(ValType::I32.into());
 			let dst = alloc.new_i32();
@@ -564,9 +564,9 @@ impl ValidationState<'_> {
 			}
 		}
 
-		fn make_i64_load<F>(f: F, memarg: MemoryImmediate, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
+		fn make_i64_load<F>(f: F, memarg: MemArg, builder: &mut SsaFuncBuilder, validator: &mut Validator, alloc: &mut SsaVarAlloc)
 			where
-				F: FnOnce(MemoryImmediate, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
+				F: FnOnce(MemArg, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
 		{
 			let addr = validator.pop_value_ty(ValType::I32.into());
 			let dst = alloc.new_i64();
@@ -577,9 +577,9 @@ impl ValidationState<'_> {
 			}
 		}
 
-		fn make_i32_store<F>(f: F, memarg: MemoryImmediate, builder: &mut SsaFuncBuilder, validator: &mut Validator, _: &mut SsaVarAlloc)
+		fn make_i32_store<F>(f: F, memarg: MemArg, builder: &mut SsaFuncBuilder, validator: &mut Validator, _: &mut SsaVarAlloc)
 			where
-				F: FnOnce(MemoryImmediate, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
+				F: FnOnce(MemArg, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
 		{
 			let src = validator.pop_value_ty(ValType::I32.into());
 			let addr = validator.pop_value_ty(ValType::I32.into());
@@ -589,9 +589,9 @@ impl ValidationState<'_> {
 			}
 		}
 
-		fn make_i64_store<F>(f: F, memarg: MemoryImmediate, builder: &mut SsaFuncBuilder, validator: &mut Validator, _: &mut SsaVarAlloc)
+		fn make_i64_store<F>(f: F, memarg: MemArg, builder: &mut SsaFuncBuilder, validator: &mut Validator, _: &mut SsaVarAlloc)
 			where
-				F: FnOnce(MemoryImmediate, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
+				F: FnOnce(MemArg, TypedSsaVar, SsaVarOrConst) -> SsaInstr,
 		{
 			let src = validator.pop_value_ty(ValType::I64.into());
 			let addr = validator.pop_value_ty(ValType::I32.into());
@@ -838,9 +838,9 @@ impl ValidationState<'_> {
 			&Operator::Call { function_index } => {
 				let called_ty = wasm_file.func_type(function_index as usize);
 
-				let params = validator.pop_values(&called_ty.params);
+				let params = validator.pop_values(called_ty.params());
 				let params: Option<Vec<TypedSsaVar>> = params.into_iter().map(Option::from).collect::<Option<Vec<_>>>();
-				let returns = called_ty.returns.iter().map(|ty| alloc.new_typed(*ty)).collect::<Vec<_>>();
+				let returns = called_ty.results().iter().map(|ty| alloc.new_typed(*ty)).collect::<Vec<_>>();
 
 				validator.push_values(&returns);
 
@@ -948,18 +948,18 @@ impl ValidationState<'_> {
 					}
 				}
 			}
-			&Operator::CallIndirect { index, table_index, table_byte } => {
+			&Operator::CallIndirect { type_index, table_index, table_byte } => {
 				if table_byte as u32 != table_index {
 					todo!()
 				}
 
-				let called_ty = wasm_file.types.func_type(index);
+				let called_ty = wasm_file.types.func_type(type_index);
 
 				let table_entry: Option<_> = validator.pop_value_ty(ValType::I32.into()).into();
 
-				let params = validator.pop_values(&called_ty.params);
+				let params = validator.pop_values(&called_ty.params());
 				let params = params.into_iter().map(Option::from).collect::<Option<Vec<_>>>();
-				let returns = called_ty.returns.iter().map(|ty| alloc.new_typed(*ty)).collect::<Vec<_>>();
+				let returns = called_ty.results().iter().map(|ty| alloc.new_typed(*ty)).collect::<Vec<_>>();
 
 				validator.push_values(&returns);
 
@@ -972,7 +972,7 @@ impl ValidationState<'_> {
 					});
 				}
 			}
-			Operator::Block { ty } => {
+			Operator::Block { blockty: ty } => {
 				let start_types = wasm_file.types.start_types(*ty);
 				let end_types = wasm_file.types.end_types(*ty);
 
@@ -984,7 +984,7 @@ impl ValidationState<'_> {
 
 				validator.push_ctrl(control_op, &start_vals, start_types, end_types);
 			}
-			Operator::Loop { ty } => {
+			Operator::Loop { blockty: ty } => {
 				let start_types = wasm_file.types.start_types(*ty);
 				let end_types = wasm_file.types.end_types(*ty);
 
@@ -1011,7 +1011,7 @@ impl ValidationState<'_> {
 
 				make_params(builder, validator, &start_types, alloc);
 			}
-			Operator::If { ty } => {
+			Operator::If { blockty: ty } => {
 				let start_types = wasm_file.types.start_types(*ty);
 				let end_types = wasm_file.types.end_types(*ty);
 
@@ -1161,10 +1161,10 @@ impl ValidationState<'_> {
 				let new_block = builder.alloc_block();
 				builder.set_block(new_block);
 			}
-			Operator::BrTable { table } => {
+			Operator::BrTable { targets } => {
 				let cond: Option<_> = validator.pop_value_ty(ValType::I32.into()).into();
 
-				let default_frame = &validator.control_stack[TopIndex(table.default() as usize)];
+				let default_frame = &validator.control_stack[TopIndex(targets.default() as usize)];
 				let default_label = default_frame.operator.target_label();
 				let default_label_types = default_frame.label_types().to_owned();
 
@@ -1180,7 +1180,7 @@ impl ValidationState<'_> {
 						label: default_label, 
 					};
 
-					let arms = table.targets().map(|arm| {
+					let arms = targets.targets().map(|arm| {
 						let arm = arm.unwrap();
 						let arm_frame = &validator.control_stack[TopIndex(arm as usize)];
 						let arm_label_types = arm_frame.label_types();
@@ -1271,14 +1271,14 @@ impl ValidationState<'_> {
 fn add_prologue(builder: &mut SsaFuncBuilder, func_ty: &FuncType) {
 	let start_locals = builder.current_locals.clone();
 
-	let params = start_locals.iter().copied().zip(func_ty.params.iter().copied());
+	let params = start_locals.iter().copied().zip(func_ty.params().iter().copied());
 	for (param_idx, (param_var, param_ty)) in params.into_iter().enumerate() {
 		assert_eq!(param_var.ty(), param_ty);
 
 		builder.current_block_mut().body.push(SsaInstr::ParamGet(param_var, param_idx as u32));
 	}
 
-	for local in start_locals.iter().skip(func_ty.params.len()) {
+	for local in start_locals.iter().skip(func_ty.params().len()) {
 		match local.ty() {
 			ValType::I32 => {
 				builder.current_block_mut().body.push(SsaInstr::I32Set(*local, 0));
@@ -1303,7 +1303,7 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 	let locals = wasm_file.func_locals(func);
 
 	let start_block = builder.alloc_block_with_locals(&locals, &mut alloc);
-	let end_block = builder.alloc_block_with_locals_and_end_types(&locals, &func_ty.returns, &mut alloc);
+	let end_block = builder.alloc_block_with_locals_and_end_types(&locals, &func_ty.results(), &mut alloc);
 
 	builder.set_block(start_block);
 
@@ -1313,7 +1313,7 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 
 	let mut validator = Validator::default();
 
-	validator.push_ctrl(ControlOp::Block(end_block), &[], Box::new([]), func_ty.returns.clone());
+	validator.push_ctrl(ControlOp::Block(end_block), &[], Box::new([]), func_ty.results().to_owned().into_boxed_slice());
 
 	let mut state = ValidationState {
 		wasm_file,
@@ -1375,7 +1375,9 @@ pub fn validate(wasm_file: &WasmFile, func: usize) -> SsaFunction {
 		}
 	}*/
 
-	let mut func = SsaFunction::new(blocks, func_ty.params.clone(), func_ty.returns.clone());
+	let params = func_ty.params().to_owned().into_boxed_slice();
+	let returns = func_ty.results().to_owned().into_boxed_slice();
+	let mut func = SsaFunction::new(blocks, params, returns);
 
 	crate::ssa::opt::dead_block_removal::dead_block_removal(&mut func);
 
@@ -1404,7 +1406,7 @@ pub fn wasm_to_ssa(ctx: &CompileContext, wasm_file: &WasmFile) -> SsaProgram {
 	}).collect();
 
 	let mut tables = wasm_file.tables.tables.iter().map(|table_ty| {
-		if table_ty.element_type != ValType::FuncRef {
+		if table_ty.element_type != RefType::FUNCREF {
 			todo!()
 		}
 
@@ -1415,27 +1417,27 @@ pub fn wasm_to_ssa(ctx: &CompileContext, wasm_file: &WasmFile) -> SsaProgram {
 	}).collect::<Vec<_>>();
 
 	for elem in wasm_file.elements.elements.iter() {
-		if elem.ty != ValType::FuncRef {
+		if elem.ty != RefType::FUNCREF {
 			todo!()
 		}
 
 		match elem.kind {
 			ElementKind::Active { table_index, offset_expr } => {
-				let table = &mut tables[table_index as usize];
+				let table = &mut tables[table_index.unwrap_or(0) as usize];
 
 				let offset = eval_const_expr_single(&offset_expr);
 				let offset = offset.into_i32().unwrap();
 
-				for (idx, item) in elem.items.get_items_reader().unwrap().into_iter().enumerate() {
-					let item = item.unwrap();
-
-					if let ElementItem::Func(item) = item {
-						let index = idx + offset as usize;
-						assert!(table.elements[index].is_none());
-						table.elements[index] = Some(item as usize);
-					} else {
-						todo!()
+				match elem.items.clone() {
+					ElementItems::Functions(items) => {
+						for (idx, item) in items.into_iter().enumerate() {
+							let item = item.unwrap();
+							let index = idx + offset as usize;
+							assert!(table.elements[index].is_none());
+							table.elements[index] = Some(item as usize);
+						}
 					}
+					ElementItems::Expressions(_) => todo!(),
 				}
 			}
 			ElementKind::Passive => todo!(),
@@ -1488,6 +1490,9 @@ pub fn wasm_to_ssa(ctx: &CompileContext, wasm_file: &WasmFile) -> SsaProgram {
 
 	for func in program.code.iter_mut() {
 		remove_redundant_phi_nodes(func);
+	}
+
+	for func in program.code.iter_mut() {
 		split_critical_edges(func);
 	}
 

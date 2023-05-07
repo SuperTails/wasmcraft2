@@ -153,7 +153,7 @@ async fn eval(expr: &SExpr, test_state: Option<&mut TestState<'_>>) -> Vec<Typed
 			set_params(&mut test_state.server, &func_params).await;
 
 			let func_idx = test_state.wasm_file.find_func(func_name).unwrap();
-			let return_tys = &test_state.wasm_file.func_type(func_idx).returns;
+			let return_tys = &test_state.wasm_file.func_type(func_idx).results();
 			let func_name = get_mc_id(BlockId { func: func_idx, block: 0 });
 
 			println!("Calling func {func_name} with params {:?}", func_params);

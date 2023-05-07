@@ -27,6 +27,8 @@ command_parser = { git = "https://github.com/Inky-developer/command-parser" }
 hashers = "*"
 clap = { version = "3.2.11", features = ["derive"] }
 bit-set = "0.5.3"
+disjoint-sets = "0.4.2"
+union-find-rs = "0.2.1"
 
 [dev-dependencies]
 rcon = { version = "0", features = ["rt-async-std"] }

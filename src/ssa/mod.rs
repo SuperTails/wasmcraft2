@@ -9,7 +9,7 @@ pub mod opt;
 
 use std::{collections::{HashMap, HashSet}, fmt};
 
-use wasmparser::{MemoryImmediate, ValType};
+use wasmparser::{MemArg, ValType};
 
 use crate::{block_id_map::LocalBlockMap, set::PairMap};
 
@@ -291,8 +291,7 @@ fn get_ty_index(ty: ValType) -> u32 {
 		ValType::F32 => 2,
 		ValType::F64 => 3,
 		ValType::V128 => 4,
-		ValType::FuncRef => 5,
-		ValType::ExternRef => 6,
+		ValType::Ref(_) => todo!(),
 	}
 }
 
@@ -477,18 +476,18 @@ pub enum SsaInstr {
 	// loads: dst, addr
 	// stores: src, addr
 
-	Load64(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
-	Load32S(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
-	Load32U(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
-	Load16S(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
-	Load16U(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
-	Load8S(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
-	Load8U(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
+	Load64(MemArg, TypedSsaVar, SsaVarOrConst),
+	Load32S(MemArg, TypedSsaVar, SsaVarOrConst),
+	Load32U(MemArg, TypedSsaVar, SsaVarOrConst),
+	Load16S(MemArg, TypedSsaVar, SsaVarOrConst),
+	Load16U(MemArg, TypedSsaVar, SsaVarOrConst),
+	Load8S(MemArg, TypedSsaVar, SsaVarOrConst),
+	Load8U(MemArg, TypedSsaVar, SsaVarOrConst),
 
-	Store64(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
-	Store32(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
-	Store16(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
-	Store8(MemoryImmediate, TypedSsaVar, SsaVarOrConst),
+	Store64(MemArg, TypedSsaVar, SsaVarOrConst),
+	Store32(MemArg, TypedSsaVar, SsaVarOrConst),
+	Store16(MemArg, TypedSsaVar, SsaVarOrConst),
+	Store8(MemArg, TypedSsaVar, SsaVarOrConst),
 
 	// variable instructions
 
@@ -1025,8 +1024,16 @@ impl SsaInstr {
 				}
 			}
 
-			SsaInstr::Rotl(_, lhs, _) => todo!(),
-			SsaInstr::Rotr(_, lhs, _) => todo!(),
+			SsaInstr::Rotl(_, lhs, rhs) |
+			SsaInstr::Rotr(_, lhs, rhs) => {
+				if lhs.0 == old.0 {
+					lhs.0 = new.0;
+				}
+
+				if rhs.0 == old.0 {
+					rhs.0 = new.0;
+				}
+			}
 
 			SsaInstr::GlobalGet(_, _) => {}
 			SsaInstr::LocalGet(_, _) => {}

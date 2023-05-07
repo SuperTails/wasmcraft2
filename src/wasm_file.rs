@@ -1,4 +1,4 @@
-use wasmparser::{Data, Element, Export, FuncType, Global, Import, MemoryType, Operator, Parser, Payload, TableType, BlockType, ExternalKind, GlobalType, ConstExpr, ValType, Type, TypeRef};
+use wasmparser::{Data, Element, Export, FuncType, Global, Import, MemoryType, Operator, Parser, Payload, TableType, BlockType, ExternalKind, GlobalType, ConstExpr, ValType, Type, TypeRef, TableInit};
 
 use crate::ssa::interp::TypedValue;
 
@@ -174,7 +174,7 @@ impl TypeList {
             BlockType::Type(_) => Vec::new().into_boxed_slice(),
             BlockType::FuncType(i) => {
                 let ty = &self.func_type(i);
-                ty.params.clone()
+                ty.params().to_owned().into_boxed_slice()
             }
         }
     }
@@ -185,7 +185,7 @@ impl TypeList {
             BlockType::Type(t) => vec![t].into_boxed_slice(),
             BlockType::FuncType(i) => {
                 let ty = &self.func_type(i);
-                ty.returns.clone()
+                ty.results().to_owned().into_boxed_slice()
             }
         }
     }
@@ -256,7 +256,7 @@ impl<'a> WasmFile<'a> {
         let mut result = Vec::new();
 
         let func_ty = self.func_type(func_idx);
-        result.extend(func_ty.params.iter().copied());
+        result.extend(func_ty.params().iter().copied());
 
         let body = self.func_body(func_idx);
         for &(count, local_ty) in body.locals.iter() {
@@ -371,7 +371,10 @@ impl<'a> From<&'a [u8]> for WasmFile<'a> {
                 Payload::TableSection(t) => {
                     for table in t {
                         let table = table.unwrap();
-                        tables.add_table(table);
+                        tables.add_table(table.ty);
+                        if !matches!(table.init, TableInit::RefNull) {
+                            todo!("{:?}", table.init);
+                        }
                     }
                 }
                 Payload::ElementSection(e) => {

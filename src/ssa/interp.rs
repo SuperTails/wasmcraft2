@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use wasmparser::{ValType, MemoryImmediate};
+use wasmparser::{ValType, MemArg};
 
 use crate::{ssa::{TypedSsaVar, const_prop::state_matches}, block_id_map::LocalBlockMap};
 
@@ -429,7 +429,7 @@ impl SsaInterpreter {
 				var_context.insert(dst.into_untyped(), result);
 			}
 
-			fn do_store_op(memarg: MemoryImmediate, src: TypedSsaVar, addr: SsaVarOrConst, size: usize, var_context: &mut VarContext, memory: &mut [Memory]) {
+			fn do_store_op(memarg: MemArg, src: TypedSsaVar, addr: SsaVarOrConst, size: usize, var_context: &mut VarContext, memory: &mut [Memory]) {
 				let offset = addr.eval(var_context).unwrap();
 				let offset = offset.into_i32().unwrap();
 				let addr = memarg.offset as usize + offset as usize;
@@ -444,7 +444,7 @@ impl SsaInterpreter {
 				}
 			}
 
-			fn do_load_op(memarg: MemoryImmediate, dst: TypedSsaVar, addr: SsaVarOrConst, f: impl FnOnce(i64) -> i32, g: impl FnOnce(i64) -> i64, size: usize, var_context: &mut VarContext, memory: &mut [Memory]) {
+			fn do_load_op(memarg: MemArg, dst: TypedSsaVar, addr: SsaVarOrConst, f: impl FnOnce(i64) -> i32, g: impl FnOnce(i64) -> i64, size: usize, var_context: &mut VarContext, memory: &mut [Memory]) {
 				let offset = addr.eval(var_context).unwrap();
 				let offset = offset.into_i32().unwrap();
 				let addr = memarg.offset as usize + offset as usize;

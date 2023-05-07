@@ -1,6 +1,6 @@
 use std::{collections::{HashSet, HashMap, VecDeque, BTreeSet}, fmt};
 
-use wasmparser::{MemoryImmediate, ValType};
+use wasmparser::{MemArg, ValType};
 
 use crate::{lir::{Register, LirInstr, DoubleRegister, LirBasicBlock, LirProgram, LirFunction, LirTerminator, Condition, Half, LirJumpTarget, DynRegister}, ssa::{TypedSsaVar, SsaVarOrConst, liveness::{FullLivenessInfo, DomTree, PredInfo}, const_prop::{StaticState, self}, SsaTerminator, no_critical_edges, phi_nodes_are_coherent}, jump_mode, JumpMode, CompileContext, block_id_map::LocalBlockMap};
 
@@ -245,7 +245,7 @@ fn lower_block(
 		}
 	}
 
-	fn do_store<F>(mem: &MemoryImmediate, src: TypedSsaVar, addr2: SsaVarOrConst, block: &mut Vec<LirInstr>, ra: &mut dyn RegAlloc, static_values: &StaticState, f: F)
+	fn do_store<F>(mem: &MemArg, src: TypedSsaVar, addr2: SsaVarOrConst, block: &mut Vec<LirInstr>, ra: &mut dyn RegAlloc, static_values: &StaticState, f: F)
 		where
 			F: FnOnce(Register, RegisterWithInfo) -> LirInstr
 	{
@@ -276,7 +276,7 @@ fn lower_block(
 		}
 	}
 
-	fn do_load_trunc(mem: &MemoryImmediate, dst: TypedSsaVar, addr: SsaVarOrConst, bits: u32, signed: bool, block: &mut Vec<LirInstr>, ra: &mut dyn RegAlloc, static_values: &StaticState)
+	fn do_load_trunc(mem: &MemArg, dst: TypedSsaVar, addr: SsaVarOrConst, bits: u32, signed: bool, block: &mut Vec<LirInstr>, ra: &mut dyn RegAlloc, static_values: &StaticState)
 	{
 		assert_eq!(mem.memory, 0);
 

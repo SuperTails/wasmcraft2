@@ -308,7 +308,7 @@ pub mod wasm_suite_prelude {
 				set_params(&mut test_state.interp, &func_params);
 
 				let func_idx = test_state.wasm_file.find_func(func_name).unwrap_or_else(|| panic!("couldn't find {:?}", func_name));
-				let return_tys = &test_state.wasm_file.func_type(func_idx).returns;
+				let return_tys = &test_state.wasm_file.func_type(func_idx).results();
 
 				let mc_func_name = format!("wasmrunner:{func_name}");
 				let (_, mc_func_name) = FunctionIdent::parse_from_command(&mc_func_name).unwrap();
