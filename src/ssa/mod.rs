@@ -139,6 +139,18 @@ impl PhiNode {
 	}
 }
 
+impl fmt::Display for PhiNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let srcs = self.sources().map(|(s, _)| s).collect::<Vec<_>>();
+		writeln!(f, "    {:?}", srcs)?;
+		for arm in self.arms() {
+			write!(f, "{} <- ", arm.dest())?;
+			writeln!(f, "{:?}", arm.sources().collect::<Vec<_>>())?;
+		}
+		Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub struct SsaBasicBlock {
 	pub phi_node: PhiNode,

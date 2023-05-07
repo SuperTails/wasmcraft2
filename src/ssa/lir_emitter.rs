@@ -372,6 +372,8 @@ fn lower_block(
 		}
 	}
 
+	let old_block_id = block_id;
+
 	let mut new_block_id = block_id;
 
 	let mut block = Vec::new();
@@ -810,7 +812,7 @@ fn lower_block(
 			super::SsaInstr::Call { function_index, params, returns } => {
 				emit_copy_to_params(&mut block, params, ra);
 
-				let mut to_save = li.live_out_body(block_id, instr_idx).clone();
+				let mut to_save = li.live_out_body(old_block_id, instr_idx).clone();
 				for &return_var in returns.iter() {
 					to_save.remove_typed(return_var).unwrap();
 				}
@@ -849,7 +851,7 @@ fn lower_block(
 			super::SsaInstr::CallIndirect { table_index, table_entry, params, returns } => {
 				emit_copy_to_params(&mut block, params, ra);
 
-				let mut to_save = li.live_out_body(block_id, instr_idx).clone();
+				let mut to_save = li.live_out_body(old_block_id, instr_idx).clone();
 				for &return_var in returns.iter() {
 					to_save.remove_typed(return_var).unwrap();
 				}
@@ -1017,7 +1019,7 @@ fn lower_block(
 		let phi_node = &parent_func.get(succ).phi_node;
 
 		if !phi_node.is_empty() {
-			let instrs = convert_phi_to_lir(phi_node, block_id, ra);
+			let instrs = convert_phi_to_lir(phi_node, old_block_id, ra);
 
 			block.extend(instrs);
 		}
@@ -1405,9 +1407,6 @@ fn convert_phi_to_lir(
 	};
 
     //println!("SOURCE BLOCK IS {source}");
-
-	println!("{:?}", phi_node);
-	println!("{:?}", source);
 
 	let dests = phi_node.dests.iter().map(|reg| ra.get_typed(*reg));
 	let sources = phi_node.vars_from(source.block).unwrap().iter().map(|reg| ra.get_typed(*reg));
